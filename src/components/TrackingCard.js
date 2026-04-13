@@ -12,7 +12,14 @@ import { Ionicons } from '@expo/vector-icons';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-function discountPct(item) {
+// Returns the best available discount percentage for display.
+// Priority: marketingDiscountPct (Tech Spec V7) > static priceDrop fallback.
+// Positive = discount (price below average), negative = price above average.
+// Returns null when no signal is available.
+function resolveDiscountPct(item) {
+  if (typeof item.marketingDiscountPct === 'number' && item.marketingDiscountPct !== 0) {
+    return item.marketingDiscountPct;
+  }
   const orig = (item.currentPrice || 0) + (item.priceDrop || 0);
   if (!item.priceDrop || !orig) return null;
   return Math.round((item.priceDrop / orig) * 100);
@@ -115,10 +122,11 @@ export function TrackingCard({
   onLongPressActivate,
   onPress,
 }) {
-  const pct    = discountPct(item);
-  const orig   = (item.currentPrice || 0) + (item.priceDrop || 0);
-  const itemId = item.productId ?? item.savedId;
-  const isList = viewMode === 'list';
+  const pct       = resolveDiscountPct(item);
+  const orig      = (item.currentPrice || 0) + (item.priceDrop || 0);
+  const itemId    = item.productId ?? item.savedId;
+  const isList    = viewMode === 'list';
+  const isCompact = viewMode === 'grid3';
 
   const handlePress = () => {
     if (isEditMode) { onToggleSelect(itemId); } else { onPress?.(); }
@@ -176,15 +184,70 @@ export function TrackingCard({
               {typeof item.currentPrice === 'number' && item.currentPrice > 0
                 ? `₩${item.currentPrice.toLocaleString('ko-KR')}` : '—'}
             </Text>
-            {pct != null && <Text style={styles.trendBadge}>▼ {pct}%</Text>}
+            {pct != null && pct !== 0 && (
+              <Text style={[styles.trendBadge, pct < 0 && styles.trendBadgeUp]}>
+                {pct > 0 ? `▼ ${pct}%` : `▲ ${Math.abs(pct)}%`}
+              </Text>
+            )}
           </View>
-          <TargetPriceBar currentPrice={item.currentPrice} targetPrice={item.targetPrice} />
         </View>
       </TouchableOpacity>
     );
   }
 
-  // Grid card
+  // Compact grid card (3-column)
+  if (isCompact) {
+    return (
+      <TouchableOpacity
+        style={[styles.compactCard, isSelected && styles.cardSelected]}
+        onPress={handlePress}
+        onLongPress={handleLongPress}
+        delayLongPress={350}
+        activeOpacity={isEditMode ? 0.7 : 0.85}
+      >
+        <View style={styles.compactImageWrap}>
+          {item.image ? (
+            <Image source={{ uri: item.image }} style={styles.image} resizeMode="cover" />
+          ) : (
+            <View style={[styles.image, styles.imageFallback]}>
+              <Text style={{ fontSize: 20 }}>🛍️</Text>
+            </View>
+          )}
+          {/* Discount badge — bottom-left */}
+          {pct != null && pct !== 0 && (
+            <View style={[styles.compactDiscountBadge, pct < 0 && styles.compactDiscountBadgeUp]}>
+              <Text style={styles.compactDiscountText}>
+                {pct > 0 ? `▼${pct}%` : `▲${Math.abs(pct)}%`}
+              </Text>
+            </View>
+          )}
+          {/* Status icon row — top-right */}
+          {(item.isFavorite || item.isPriceAlertOn || item.isRestockAlertOn) && (
+            <View style={styles.compactStatusRow}>
+              {item.isFavorite     && <Ionicons name="star"          size={10} color="#f59e0b" />}
+              {item.isPriceAlertOn && <Ionicons name="notifications" size={10} color="#3b82f6" />}
+              {item.isRestockAlertOn && <Ionicons name="cube"        size={10} color="#10b981" />}
+            </View>
+          )}
+          {isEditMode && (
+            <View style={[styles.checkbox, isSelected && styles.checkboxSelected]}>
+              {isSelected && <Text style={styles.checkboxMark}>✓</Text>}
+            </View>
+          )}
+        </View>
+        <View style={styles.compactBody}>
+          {item.isRocket && <Text style={styles.compactRocket}>🚀</Text>}
+          <Text style={styles.compactName} numberOfLines={2}>{item.name || '상품'}</Text>
+          <Text style={styles.compactPrice}>
+            {typeof item.currentPrice === 'number' && item.currentPrice > 0
+              ? `₩${item.currentPrice.toLocaleString('ko-KR')}` : '—'}
+          </Text>
+        </View>
+      </TouchableOpacity>
+    );
+  }
+
+  // Standard grid card (2-column)
   return (
     <TouchableOpacity
       style={[styles.gridCard, isSelected && styles.cardSelected]}
@@ -222,8 +285,11 @@ export function TrackingCard({
               ? `₩${item.currentPrice.toLocaleString('ko-KR')}` : '—'}
           </Text>
         </View>
-        {pct != null && <Text style={styles.trendBadge}>▼ {pct}%</Text>}
-        <TargetPriceBar currentPrice={item.currentPrice} targetPrice={item.targetPrice} />
+        {pct != null && pct !== 0 && (
+          <Text style={[styles.trendBadge, pct < 0 && styles.trendBadgeUp]}>
+            {pct > 0 ? `▼ ${pct}%` : `▲ ${Math.abs(pct)}%`}
+          </Text>
+        )}
       </View>
     </TouchableOpacity>
   );
@@ -241,22 +307,23 @@ const styles = StyleSheet.create({
       android: { elevation: 2 },
     }),
   },
-  imageWrap:     { width: '100%', aspectRatio: 1, backgroundColor: '#f1f5f9' },
+  imageWrap:     { width: '100%', aspectRatio: 1.2, backgroundColor: '#f1f5f9' },
   image:         { width: '100%', height: '100%' },
   imageFallback: { alignItems: 'center', justifyContent: 'center' },
-  body:          { padding: 10 },
+  body:          { padding: 8 },
 
   // List card
   listCard: {
     flexDirection: 'row', alignItems: 'center',
-    paddingHorizontal: 16, paddingVertical: 12,
+    paddingHorizontal: 16, paddingVertical: 8,
+    marginBottom: 8,
     borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: '#f1f5f9',
     backgroundColor: '#fff',
   },
-  listImageWrap: { width: 72, height: 72, borderRadius: 10, overflow: 'hidden', backgroundColor: '#f1f5f9', flexShrink: 0 },
+  listImageWrap: { width: 80, height: 80, borderRadius: 10, overflow: 'hidden', backgroundColor: '#f1f5f9', flexShrink: 0 },
   listImage:     { width: '100%', height: '100%' },
-  listBody:      { flex: 1, marginLeft: 12 },
-  listStatusRow: { flexDirection: 'row', gap: 4, flexWrap: 'wrap', marginBottom: 4 },
+  listBody:      { flex: 1, marginLeft: 10 },
+  listStatusRow: { flexDirection: 'row', gap: 4, flexWrap: 'wrap', marginBottom: 2 },
 
   cardSelected: { borderColor: '#3b82f6', borderWidth: 2, opacity: 0.92 },
 
@@ -305,11 +372,40 @@ const styles = StyleSheet.create({
   },
   targetFill:    { height: '100%', borderRadius: 3 },
 
+  // Compact card (grid3 — 3-column)
+  compactCard: {
+    width: '31%', borderRadius: 8, backgroundColor: '#fff',
+    borderWidth: 1, borderColor: '#f1f5f9', overflow: 'hidden',
+    ...Platform.select({
+      ios:     { shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.05, shadowRadius: 3 },
+      android: { elevation: 1 },
+    }),
+  },
+  compactImageWrap: { width: '100%', aspectRatio: 1, backgroundColor: '#f1f5f9' },
+  compactBody:      { paddingHorizontal: 5, paddingVertical: 4 },
+  compactName:      { fontSize: 11, fontWeight: '600', color: '#334155', lineHeight: 15, marginBottom: 2 },
+  compactPrice:     { fontSize: 12, fontWeight: '800', color: '#0f172a' },
+  compactRocket:    { fontSize: 9, marginBottom: 1 },
+  compactDiscountBadge: {
+    position: 'absolute', bottom: 4, left: 4,
+    backgroundColor: 'rgba(59,130,246,0.88)',
+    borderRadius: 4, paddingHorizontal: 4, paddingVertical: 1,
+  },
+  compactDiscountText:    { fontSize: 9, fontWeight: '800', color: '#fff' },
+  compactDiscountBadgeUp: { backgroundColor: 'rgba(239,68,68,0.88)' },
+  compactStatusRow: {
+    position: 'absolute', top: 4, right: 4,
+    flexDirection: 'row', gap: 2,
+    backgroundColor: 'rgba(255,255,255,0.85)',
+    borderRadius: 6, paddingHorizontal: 3, paddingVertical: 2,
+  },
+
   // Shared body typography
-  sourceBadge:  { fontSize: 10, fontWeight: '700', color: '#64748b', marginBottom: 4 },
-  name:         { fontSize: 13, fontWeight: '600', color: '#334155', lineHeight: 18, marginBottom: 6 },
+  sourceBadge:  { fontSize: 10, fontWeight: '700', color: '#64748b', marginBottom: 2 },
+  name:         { fontSize: 13, fontWeight: '600', color: '#334155', lineHeight: 18, marginBottom: 4 },
   priceRow:     { flexDirection: 'row', alignItems: 'center', gap: 4, flexWrap: 'wrap' },
   origPrice:    { fontSize: 11, color: '#cbd5e1', textDecorationLine: 'line-through' },
   currentPrice: { fontSize: 16, fontWeight: '800', color: '#0f172a' },
-  trendBadge:   { fontSize: 12, fontWeight: '800', color: '#3b82f6', marginTop: 2 },
+  trendBadge:    { fontSize: 12, fontWeight: '800', color: '#3b82f6', marginTop: 2 },
+  trendBadgeUp:  { color: '#ef4444' },
 });

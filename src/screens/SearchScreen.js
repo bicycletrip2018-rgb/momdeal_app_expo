@@ -9,12 +9,14 @@ import {
   Keyboard,
   ScrollView,
   StyleSheet,
+  Pressable,
   Text,
   TextInput,
   TouchableOpacity,
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { FontAwesome5 } from '@expo/vector-icons';
 import { httpsCallable } from 'firebase/functions';
 import { functions } from '../firebase/config';
 import { logSearchQuery, searchProducts } from '../services/searchService';
@@ -130,11 +132,13 @@ const MOCK_SEARCH_RESULTS = [
 ];
 
 const FILTER_CHIPS = [
-  { id: 'discount', label: '🔥 할인율 높은 순' },
-  { id: 'lowest',   label: '📉 역대 최저가 근접' },
-  { id: 'peers',    label: '👶 또래가 많이 담은 순' },
-  { id: 'rating',   label: '⭐ 별점 높은 순' },
+  { id: 'discount', label: '할인율' },
+  { id: 'lowest',   label: '역대 최저가' },
+  { id: 'peers',    label: '아이 또래 인기' },
+  { id: 'rating',   label: '별점' },
 ];
+
+const TOTAL_PRODUCT_COUNT = 124;
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -173,7 +177,7 @@ function SearchHeader({ inputRef, searchQuery, onChange, onSubmit, onClear, onBa
             onChangeText={onChange}
             onSubmitEditing={onSubmit}
             returnKeyType="search"
-            autoFocus={true}
+            autoFocus={false}
             autoCorrect={false}
             autoCapitalize="none"
           />
@@ -262,13 +266,62 @@ function DiscoveryView({ recentList, onSelectKeyword, onDeleteRecent, onClearAll
   );
 }
 
+// ── Community dummy posts ─────────────────────────────────────────────────────
+
+const COMMUNITY_POSTS = [
+  { id: 1, category: '질문', title: '아기방 홈카메라 안테나 방향 어떻게 두시나요?',          author: '초보맘_강남',    tier: '새싹맘',  commentCount: 12, viewCount:  340, likeCount:  5, isLiked: false, createdAt: new Date() },
+  { id: 2, category: '꿀팁', title: '수신율 대박인 홈카메라 외장 안테나 확장기 추천',        author: '장비병아빠',      tier: '열심맘',  commentCount: 45, viewCount: 1205, likeCount: 89, isLiked: true,  createdAt: new Date(Date.now() - 3600000) },
+  { id: 3, category: '후기', title: '맘카페 국민 안테나 달아봤습니다 ㅋㅋ 신세계네요',      author: '쌍둥이맘_부산',  tier: '프로맘',  commentCount:  8, viewCount:  215, likeCount: 15, isLiked: false, createdAt: new Date(Date.now() - 86400000) },
+  { id: 4, category: '핫딜', title: '홈카메라 전용 안테나 역대급 할인이요!! 당장 쟁이세요', author: '핫딜요정',        tier: '프로맘',  commentCount: 22, viewCount:  890, likeCount: 42, isLiked: false, createdAt: new Date(Date.now() - 7200000) },
+];
+
 // ── Commerce Result Card ──────────────────────────────────────────────────────
 
 const INTEGRATED_BADGES = [
-  { label: '🏆 인기 1위',   color: '#d97706', bg: '#fef3c7' },
+  { label: '🏆 또래인기 1위', color: '#d97706', bg: '#fef3c7' },
   { label: '📉 역대 최저가', color: '#2563eb', bg: '#dbeafe' },
   { label: '🔥 가격 급락',  color: '#dc2626', bg: '#fee2e2' },
 ];
+
+// ── Community Posts — Time Decay (Gravity) Ranking ───────────────────────────
+
+const DUMMY_COMMUNITY_POSTS = [
+  { id: 'c1', board: '🔥 핫딜제보', title: '맘님들 팸퍼스 특대형 역대 최저가 떴어요! 당장 쟁이세요.', author: '익명의 세이브루맘', commentCount: 12, viewCount: 340, likeCount: 32, createdAt: new Date() },
+  { id: 'c2', board: '💬 후기',    title: '에디슨 젖병 써보신 분 후기 좀요',                          author: '절약맘_서울',       commentCount:  8, viewCount: 215, likeCount: 15, createdAt: new Date(Date.now() - 2 * 60 * 60 * 1000) },
+  { id: 'c3', board: '❓ 질문',    title: '아이클레어 로션 민감성 피부에 괜찮나요?',                    author: '두아이맘_경기',      commentCount:  5, viewCount: 178, likeCount:  9, createdAt: new Date(Date.now() - 48 * 60 * 60 * 1000) },
+  { id: 'c4', board: '💡 꿀팁',    title: '기저귀 할인 시즌 미리 쟁여두는 꿀팁 정리',                  author: '준맘_부산',          commentCount: 20, viewCount: 510, likeCount: 41, createdAt: new Date(Date.now() - 5 * 60 * 60 * 1000) },
+  { id: 'c5', board: '💬 후기',    title: '하기스 네이처메이드 신생아용 한 달 써본 솔직 후기',           author: '첫아이맘',           commentCount: 17, viewCount: 430, likeCount: 28, createdAt: new Date(Date.now() - 26 * 60 * 60 * 1000) },
+];
+
+function tierMeta(tier) {
+  if (tier === '새싹맘') return { icon: 'leaf',  color: '#16a34a' };
+  if (tier === '열심맘') return { icon: 'fire',  color: '#ea580c' };
+  return                        { icon: 'crown', color: '#3b82f6' };
+}
+
+function calculatePostScore(post) {
+  const ageInHours = (Date.now() - post.createdAt.getTime()) / (1000 * 60 * 60);
+  const baseScore  = (post.likeCount * 4) + (post.commentCount * 3) + (post.viewCount * 2);
+  return baseScore / Math.pow(ageInHours + 2, 1.5);
+}
+
+function formatPostDate(dateString) {
+  const date = new Date(dateString);
+  const now = new Date();
+  const isToday =
+    date.getFullYear() === now.getFullYear() &&
+    date.getMonth() === now.getMonth() &&
+    date.getDate() === now.getDate();
+  if (isToday) {
+    const hh = String(date.getHours()).padStart(2, '0');
+    const mm = String(date.getMinutes()).padStart(2, '0');
+    return `${hh}:${mm}`;
+  }
+  const yyyy = date.getFullYear();
+  const mo   = String(date.getMonth() + 1).padStart(2, '0');
+  const dd   = String(date.getDate()).padStart(2, '0');
+  return `${yyyy}.${mo}.${dd}`;
+}
 
 function ResultCard({ item, isTracked, onTrack, badge, navigation }) {
   const hasValidImage   = typeof item.image === 'string' && item.image.startsWith('http');
@@ -348,7 +401,9 @@ export default function SearchScreen({ navigation }) {
   const [searchQuery,    setSearchQuery]    = useState('');
   const [isSearching,    setIsSearching]    = useState(false);
   const [activeFilter,   setActiveFilter]   = useState('discount');
-  const [activeTab,      setActiveTab]      = useState('통합');
+  const [showSortInfo,       setShowSortInfo]       = useState(false);
+  const [activeTab,          setActiveTab]          = useState('통합');
+  const [communityCategory,  setCommunityCategory]  = useState('전체');
   const [recentList,     setRecentList]     = useState(RECENT_SEARCHES);
   const [results,        setResults]        = useState([]);
   const [loading,        setLoading]        = useState(false);
@@ -503,7 +558,7 @@ export default function SearchScreen({ navigation }) {
               <TouchableOpacity
                 key={tab}
                 onPress={() => setActiveTab(tab)}
-                style={{ flex: 1, paddingVertical: 14, alignItems: 'center', borderBottomWidth: activeTab === tab ? 2 : 0, borderColor: '#0f172a' }}
+                style={{ flex: 1, paddingVertical: 10, alignItems: 'center', borderBottomWidth: activeTab === tab ? 2 : 0, borderColor: '#0f172a' }}
                 activeOpacity={0.8}
               >
                 <Text style={{ fontSize: 15, fontWeight: activeTab === tab ? 'bold' : 'normal', color: activeTab === tab ? '#0f172a' : '#64748b' }}>
@@ -521,97 +576,134 @@ export default function SearchScreen({ navigation }) {
               <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
                 {/* Product Section */}
                 <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 16, marginTop: 16, marginBottom: 8 }}>
-                  <Text style={{ fontSize: 16, fontWeight: 'bold', color: '#0f172a' }}>상품 검색 결과 <Text style={{ color: '#3b82f6', fontSize: 14, fontWeight: 'bold' }}>124건</Text></Text>
+                  <Text style={{ fontSize: 18, fontWeight: 'bold', color: '#0f172a' }}>상품 검색 결과 <Text style={{ color: '#3b82f6', fontSize: 14, fontWeight: 'bold' }}>{TOTAL_PRODUCT_COUNT}개</Text></Text>
                   <TouchableOpacity onPress={() => setActiveTab('상품')}>
-                    <Text style={{ fontSize: 13, color: '#3b82f6', fontWeight: '500' }}>상품 전체보기 ›</Text>
+                    <Text style={{ fontSize: 14, color: '#64748b' }}>전체보기 {'>'}</Text>
                   </TouchableOpacity>
                 </View>
-                {results.slice(0, 3).map((item, idx) => (
-                  <ResultCard
-                    key={String(item.id ?? item.productGroupId)}
-                    item={item}
-                    isTracked={globalTrackedItems.some((t) => t.productId === item.id)}
-                    onTrack={handleTrack}
-                    badge={INTEGRATED_BADGES[idx]}
-                    navigation={navigation}
-                  />
-                ))}
+                <View style={{ paddingHorizontal: 16 }}>
+                  {results.slice(0, 3).map((item, idx) => (
+                    <ResultCard
+                      key={String(item.id ?? item.productGroupId)}
+                      item={item}
+                      isTracked={globalTrackedItems.some((t) => t.productId === item.id)}
+                      onTrack={handleTrack}
+                      badge={INTEGRATED_BADGES[idx]}
+                      navigation={navigation}
+                    />
+                  ))}
+                </View>
 
-                {/* CTA Banner */}
-                <TouchableOpacity
-                  onPress={() => navigation.navigate('관심상품')}
-                  style={{
-                    flexDirection: 'row',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
-                    backgroundColor: '#f8fafc',
-                    marginHorizontal: 16,
-                    marginTop: 8,
-                    marginBottom: 16,
-                    paddingVertical: 14,
-                    paddingHorizontal: 16,
-                    borderRadius: 8,
-                    borderWidth: 1,
-                    borderColor: '#e2e8f0',
-                  }}
-                >
-                  <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}>
-                    <Text style={{ fontSize: 18, marginRight: 8 }}>🔗</Text>
-                    <View>
-                      <Text style={{ fontSize: 14, fontWeight: 'bold', color: '#1e293b' }}>원하는 상품이 없나요?</Text>
-                      <Text style={{ fontSize: 12, color: '#64748b', marginTop: 2 }}>링크를 추가해 가격을 추적해보세요</Text>
+                {/* CTA Banner — only shown when results are sparse */}
+                {results.length <= 3 && (
+                  <TouchableOpacity
+                    onPress={() => navigation.navigate('관심상품')}
+                    style={{
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      backgroundColor: '#f8fafc',
+                      marginHorizontal: 16,
+                      marginTop: 8,
+                      marginBottom: 16,
+                      paddingVertical: 14,
+                      paddingHorizontal: 16,
+                      borderRadius: 8,
+                      borderWidth: 1,
+                      borderColor: '#e2e8f0',
+                    }}
+                  >
+                    <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}>
+                      <Text style={{ fontSize: 18, marginRight: 8 }}>🔗</Text>
+                      <View>
+                        <Text style={{ fontSize: 14, fontWeight: 'bold', color: '#1e293b' }}>원하는 상품이 없나요?</Text>
+                        <Text style={{ fontSize: 12, color: '#64748b', marginTop: 2 }}>링크를 추가해 가격을 추적해보세요</Text>
+                      </View>
                     </View>
-                  </View>
-                  <View style={{ backgroundColor: '#fff', paddingVertical: 6, paddingHorizontal: 12, borderRadius: 16, borderWidth: 1, borderColor: '#cbd5e1' }}>
-                    <Text style={{ fontSize: 12, color: '#3b82f6', fontWeight: 'bold' }}>추가하기</Text>
-                  </View>
-                </TouchableOpacity>
+                    <View style={{ backgroundColor: '#fff', paddingVertical: 6, paddingHorizontal: 12, borderRadius: 16, borderWidth: 1, borderColor: '#cbd5e1' }}>
+                      <Text style={{ fontSize: 12, color: '#3b82f6', fontWeight: 'bold' }}>추가하기</Text>
+                    </View>
+                  </TouchableOpacity>
+                )}
+
+                {/* Section divider between products and community */}
+                <View style={{ height: 8, backgroundColor: '#f1f5f9', width: '100%', marginTop: 16, marginBottom: 24 }} />
 
                 {/* Community Section */}
-                <Text style={{ paddingHorizontal: 16, fontSize: 16, fontWeight: 'bold', color: '#0f172a', marginTop: 8, marginBottom: 8 }}>커뮤니티 인기글</Text>
-                <View style={{ padding: 16, backgroundColor: '#fff', borderBottomWidth: 1, borderColor: '#f1f5f9' }}>
-                  <Text style={{ fontSize: 12, color: '#3b82f6', fontWeight: 'bold', marginBottom: 6 }}>🔥 핫딜제보</Text>
-                  <Text style={{ fontSize: 15, color: '#1e293b', fontWeight: '500', marginBottom: 4, lineHeight: 22 }}>맘님들 팸퍼스 특대형 역대 최저가 떴어요! 당장 쟁이세요.</Text>
-                  <Text style={{ fontSize: 12, color: '#94a3b8' }}>댓글 12 · 조회 340</Text>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 16, marginTop: 0, marginBottom: 8 }}>
+                  <Text style={{ fontSize: 18, fontWeight: 'bold', color: '#0f172a' }}>커뮤니티 인기글 <Text style={{ color: '#3b82f6', fontSize: 14, fontWeight: 'bold' }}>89건</Text></Text>
+                  <TouchableOpacity onPress={() => setActiveTab('커뮤니티')} activeOpacity={0.8}>
+                    <Text style={{ fontSize: 14, color: '#64748b' }}>전체보기 {'>'}</Text>
+                  </TouchableOpacity>
                 </View>
-                <View style={{ padding: 16, backgroundColor: '#fff', borderBottomWidth: 1, borderColor: '#f1f5f9' }}>
-                  <Text style={{ fontSize: 12, color: '#3b82f6', fontWeight: 'bold', marginBottom: 6 }}>💬 후기</Text>
-                  <Text style={{ fontSize: 15, color: '#1e293b', fontWeight: '500', marginBottom: 4, lineHeight: 22 }}>에디슨 젖병 써보신 분 후기 좀요</Text>
-                  <Text style={{ fontSize: 12, color: '#94a3b8' }}>댓글 8 · 조회 215</Text>
-                </View>
-                <View style={{ padding: 16, backgroundColor: '#fff', borderBottomWidth: 1, borderColor: '#f1f5f9', marginBottom: 24 }}>
-                  <Text style={{ fontSize: 12, color: '#3b82f6', fontWeight: 'bold', marginBottom: 6 }}>❓ 질문</Text>
-                  <Text style={{ fontSize: 15, color: '#1e293b', fontWeight: '500', marginBottom: 4, lineHeight: 22 }}>아이클레어 로션 민감성 피부에 괜찮나요?</Text>
-                  <Text style={{ fontSize: 12, color: '#94a3b8' }}>댓글 5 · 조회 178</Text>
-                </View>
+                {[...DUMMY_COMMUNITY_POSTS]
+                  .sort((a, b) => calculatePostScore(b) - calculatePostScore(a))
+                  .slice(0, 3)
+                  .map((post, i, arr) => (
+                    <View
+                      key={post.id}
+                      style={{ paddingHorizontal: 16, paddingVertical: 10, backgroundColor: '#fff', borderBottomWidth: 1, borderColor: '#f1f5f9', marginBottom: i === arr.length - 1 ? 16 : 0 }}
+                    >
+                      <Text style={{ fontSize: 12, color: '#3b82f6', fontWeight: 'bold', marginBottom: 4 }}>{post.board}</Text>
+                      <Text style={{ fontSize: 15, color: '#1e293b', fontWeight: '500', marginBottom: 4, lineHeight: 22 }}>{post.title}</Text>
+                      <Text style={{ fontSize: 12, color: '#94a3b8' }}>
+                        {`${post.author} · 댓글 ${post.commentCount} · 조회 ${post.viewCount} · ❤️ ${post.likeCount} · ${formatPostDate(post.createdAt)}`}
+                      </Text>
+                    </View>
+                  ))
+                }
               </ScrollView>
             )}
 
             {/* 상품 tab */}
             {activeTab === '상품' && (
               <View style={{ flex: 1 }}>
-                <ScrollView
-                  horizontal
-                  showsHorizontalScrollIndicator={false}
-                  contentContainerStyle={styles.filterRow}
-                >
-                  {FILTER_CHIPS.map((chip) => (
-                    <TouchableOpacity
-                      key={chip.id}
-                      style={[styles.filterChip, activeFilter === chip.id && styles.filterChipActive]}
-                      onPress={() => setActiveFilter(chip.id)}
-                      activeOpacity={0.8}
-                    >
-                      <Text
-                        style={[styles.filterChipText, activeFilter === chip.id && styles.filterChipTextActive]}
-                        numberOfLines={1}
-                      >
-                        {chip.label}
-                      </Text>
+                <View style={styles.filterRow}>
+                  {FILTER_CHIPS.map((chip, idx) => {
+                    const isActive = activeFilter === chip.id;
+                    return (
+                      <React.Fragment key={chip.id}>
+                        {idx > 0 && <Text style={styles.filterSep}>|</Text>}
+                        <TouchableOpacity
+                          style={[styles.filterTab, isActive && styles.filterTabActive]}
+                          onPress={() => setActiveFilter(chip.id)}
+                          activeOpacity={0.8}
+                        >
+                          <Text style={[styles.filterTabText, isActive && styles.filterTabTextActive]}>
+                            {chip.label}
+                          </Text>
+                        </TouchableOpacity>
+                      </React.Fragment>
+                    );
+                  })}
+                </View>
+                <View style={{ position: 'relative', zIndex: 10 }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingTop: 10, paddingBottom: 2 }}>
+                    <Text style={{ fontSize: 15, fontWeight: '700', color: '#1e293b' }}>
+                      상품 검색 결과 <Text style={{ color: '#3b82f6', fontWeight: 'bold' }}>{TOTAL_PRODUCT_COUNT}개</Text>
+                    </Text>
+                    <TouchableOpacity onPress={() => setShowSortInfo(!showSortInfo)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                      <Text style={{ color: '#94a3b8', marginLeft: 8, fontSize: 12, textDecorationLine: 'underline' }}>순위 기준</Text>
                     </TouchableOpacity>
-                  ))}
-                </ScrollView>
-                <Text style={styles.resultCount}>등록된 상품 결과 {results.length}개</Text>
+                  </View>
+                  {showSortInfo && (
+                    <>
+                    <Pressable style={{ position: 'absolute', top: -1000, left: -1000, right: -1000, bottom: -1000, zIndex: 40 }} onPress={() => setShowSortInfo(false)} />
+                    <View style={{
+                      position: 'absolute', top: 40, left: 16,
+                      backgroundColor: '#ffffff', padding: 12,
+                      borderRadius: 8, borderWidth: 1, borderColor: '#e2e8f0',
+                      shadowColor: '#000', shadowOpacity: 0.1, shadowRadius: 8, elevation: 5,
+                      zIndex: 50, width: '90%',
+                    }}>
+                      <Text style={{ fontSize: 12, color: '#475569', marginBottom: 6 }}>🔥 <Text style={{ fontWeight: 'bold' }}>할인율:</Text> 최근 60일 평균가 대비 할인 폭이 가장 큰 순서</Text>
+                      <Text style={{ fontSize: 12, color: '#475569', marginBottom: 6 }}>📉 <Text style={{ fontWeight: 'bold' }}>역대 최저가:</Text> 세이브루가 추적한 역대 최저 가격에 가장 근접한 순서</Text>
+                      <Text style={{ fontSize: 12, color: '#475569', marginBottom: 6 }}>👶 <Text style={{ fontWeight: 'bold' }}>아이 또래 인기:</Text> 내 아이 또래 맘들이 관심상품에 가장 많이 담은 순서</Text>
+                      <Text style={{ fontSize: 12, color: '#475569', marginBottom: 0 }}>⭐ <Text style={{ fontWeight: 'bold' }}>별점:</Text> 실제 구매자들의 누적 별점이 가장 높은 순서</Text>
+                    </View>
+                    </>
+                  )}
+                </View>
                 <FlatList
                   data={[...results].sort((a, b) => {
                     if (activeFilter === 'discount') return (b.discountRate ?? b.discount ?? 0) - (a.discountRate ?? a.discount ?? 0);
@@ -632,6 +724,7 @@ export default function SearchScreen({ navigation }) {
                   contentContainerStyle={styles.listContent}
                   showsVerticalScrollIndicator={false}
                   keyboardShouldPersistTaps="handled"
+                  onScrollBeginDrag={() => setShowSortInfo(false)}
                   ListEmptyComponent={
                     <View style={styles.emptyState}>
                       <Text style={styles.emptyStateIcon}>🔎</Text>
@@ -644,42 +737,99 @@ export default function SearchScreen({ navigation }) {
             )}
 
             {/* 커뮤니티 tab */}
-            {activeTab === '커뮤니티' && (
-              <View style={{ flex: 1, backgroundColor: '#fff' }}>
+            {activeTab === '커뮤니티' && (() => {
+              const filteredPosts = communityCategory === '전체'
+                ? COMMUNITY_POSTS
+                : COMMUNITY_POSTS.filter((p) => p.category === communityCategory);
+              return (
+                <View style={{ flex: 1, backgroundColor: '#fff' }}>
 
-                {/* Horizontal Categories */}
-                <View style={{ paddingVertical: 12, borderBottomWidth: 1, borderColor: '#f1f5f9' }}>
-                  <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 16 }}>
-                    {['전체', '질문', '꿀팁', '핫딜', '후기', '자유'].map((cat, index) => (
+                  {/* Horizontal Categories */}
+                  <View style={{ paddingVertical: 12, borderBottomWidth: 1, borderColor: '#f1f5f9' }}>
+                    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 16 }}>
+                      {['전체', '질문', '꿀팁', '핫딜', '후기', '자유'].map((cat) => {
+                        const isActive = communityCategory === cat;
+                        return (
+                          <TouchableOpacity
+                            key={cat}
+                            style={{ paddingHorizontal: 14, paddingVertical: 6, borderRadius: 20, borderWidth: 1, borderColor: isActive ? '#0f172a' : '#e2e8f0', backgroundColor: isActive ? '#0f172a' : '#fff', marginRight: 8 }}
+                            activeOpacity={0.8}
+                            onPress={() => setCommunityCategory(cat)}
+                          >
+                            <Text style={{ color: isActive ? '#fff' : '#64748b', fontWeight: isActive ? 'bold' : 'normal', fontSize: 14 }}>
+                              {cat}
+                            </Text>
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </ScrollView>
+                  </View>
+
+                  {filteredPosts.length === 0 ? (
+                    <View style={{ flex: 1, alignItems: 'center', marginTop: 80 }}>
+                      <Text style={{ fontSize: 32, marginBottom: 16 }}>💬</Text>
+                      <Text style={{ fontSize: 16, fontWeight: 'bold', color: '#1e293b' }}>
+                        해당 키워드에 대한 게시글이 없습니다.
+                      </Text>
+                      <Text style={{ fontSize: 14, color: '#94a3b8', marginTop: 8 }}>
+                        다른 키워드로 검색하거나 직접 질문을 남겨보세요.
+                      </Text>
                       <TouchableOpacity
-                        key={index}
-                        style={{ paddingHorizontal: 14, paddingVertical: 6, borderRadius: 20, borderWidth: 1, borderColor: index === 0 ? '#0f172a' : '#e2e8f0', backgroundColor: index === 0 ? '#0f172a' : '#fff', marginRight: 8 }}
-                        activeOpacity={0.8}
+                        style={{ marginTop: 24, paddingVertical: 10, paddingHorizontal: 20, borderRadius: 8, borderWidth: 1, borderColor: '#3b82f6' }}
+                        activeOpacity={0.85}
+                        onPress={() => { try { navigation.navigate('CommunityWrite'); } catch (_) {} }}
                       >
-                        <Text style={{ color: index === 0 ? '#fff' : '#64748b', fontWeight: index === 0 ? 'bold' : 'normal', fontSize: 14 }}>
-                          {cat}
-                        </Text>
+                        <Text style={{ color: '#3b82f6', fontWeight: 'bold' }}>+ 새 글 작성하기</Text>
                       </TouchableOpacity>
-                    ))}
-                  </ScrollView>
-                </View>
+                    </View>
+                  ) : (
+                    <FlatList
+                      data={filteredPosts}
+                      keyExtractor={(item) => String(item.id)}
+                      showsVerticalScrollIndicator={false}
+                      keyboardShouldPersistTaps="handled"
+                      renderItem={({ item }) => (
+                        <TouchableOpacity
+                          activeOpacity={0.85}
+                          onPress={() => { try { navigation.navigate('CommunityPost', { postId: item.id }); } catch (_) {} }}
+                          style={{ paddingHorizontal: 16, paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: '#f1f5f9' }}
+                        >
+                          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                            {/* Left column */}
+                            <View style={{ flex: 1, paddingRight: 12 }}>
+                              {communityCategory === '전체' && (
+                                <View style={{ alignSelf: 'flex-start', backgroundColor: '#f1f5f9', borderRadius: 4, paddingHorizontal: 6, paddingVertical: 2, marginBottom: 4 }}>
+                                  <Text style={{ fontSize: 11, fontWeight: 'bold', color: '#475569' }}>{item.category}</Text>
+                                </View>
+                              )}
+                              <Text style={{ fontSize: 15, fontWeight: '600', color: '#1e293b', lineHeight: 22 }} numberOfLines={2}>{item.title}</Text>
+                              <Text style={{ fontSize: 12, color: '#94a3b8', marginTop: 4 }}>
+                                <FontAwesome5 name={tierMeta(item.tier).icon} size={10} color={tierMeta(item.tier).color} />
+                                {' '}<Text style={{ fontWeight: 'bold', color: tierMeta(item.tier).color }}>{item.tier} </Text>
+                                <Text style={{ color: '#475569', fontWeight: 'normal', marginLeft: 4 }}>{item.author}</Text>
+                                {` · ${formatPostDate(item.createdAt)} · 조회 ${item.viewCount}`}
+                              </Text>
+                            </View>
+                            {/* Right column — engagement box */}
+                            <View style={{ backgroundColor: '#f1f5f9', borderRadius: 8, padding: 8, alignItems: 'center', minWidth: 50 }}>
+                              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                                <FontAwesome5 name="comment" size={11} color="#475569" />
+                                <Text style={{ fontSize: 12, color: '#475569', marginLeft: 4 }}>{item.commentCount}</Text>
+                              </View>
+                              <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4 }}>
+                                <FontAwesome5 name="heart" size={11} color="#ef4444" />
+                                <Text style={{ fontSize: 12, color: '#ef4444', marginLeft: 4 }}>{item.likeCount}</Text>
+                              </View>
+                            </View>
+                          </View>
+                        </TouchableOpacity>
+                      )}
+                    />
+                  )}
 
-                {/* Empty State */}
-                <View style={{ flex: 1, alignItems: 'center', marginTop: 80 }}>
-                  <Text style={{ fontSize: 32, marginBottom: 16 }}>💬</Text>
-                  <Text style={{ fontSize: 16, fontWeight: 'bold', color: '#1e293b' }}>
-                    해당 키워드에 대한 게시글이 없습니다.
-                  </Text>
-                  <Text style={{ fontSize: 14, color: '#94a3b8', marginTop: 8 }}>
-                    다른 키워드로 검색하거나 직접 질문을 남겨보세요.
-                  </Text>
-                  <TouchableOpacity style={{ marginTop: 24, paddingVertical: 10, paddingHorizontal: 20, borderRadius: 8, borderWidth: 1, borderColor: '#3b82f6' }} activeOpacity={0.85} onPress={() => navigation.navigate('커뮤니티', { screen: 'WritePost' })}>
-                    <Text style={{ color: '#3b82f6', fontWeight: 'bold' }}>+ 새 글 작성하기</Text>
-                  </TouchableOpacity>
                 </View>
-
-              </View>
-            )}
+              );
+            })()}
 
           </View>
         </View>
@@ -692,6 +842,25 @@ export default function SearchScreen({ navigation }) {
         </View>
       )}
 
+      {/* ── FAB — Write post (Community tab only) ── */}
+      {activeTab === '커뮤니티' && (
+        <TouchableOpacity
+          style={{
+            position: 'absolute', bottom: 16, right: 16,
+            width: 56, height: 56, borderRadius: 28,
+            backgroundColor: '#ea580c',
+            justifyContent: 'center', alignItems: 'center',
+            elevation: 5,
+            shadowColor: '#000', shadowOffset: { width: 0, height: 2 },
+            shadowOpacity: 0.25, shadowRadius: 3.84,
+          }}
+          activeOpacity={0.85}
+          onPress={() => { try { navigation.navigate('CommunityWrite'); } catch (_) {} }}
+        >
+          <FontAwesome5 name="pencil-alt" color="#fff" size={22} />
+        </TouchableOpacity>
+      )}
+
     </View>
   );
 }
@@ -702,10 +871,10 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#fff' },
 
   // ── Search header ──
-  safeHeader: { backgroundColor: '#fff', borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: '#e2e8f0' },
+  safeHeader: { backgroundColor: '#fff' },
   searchBarRow: {
     flexDirection: 'row', alignItems: 'center',
-    paddingHorizontal: 12, paddingVertical: 8, gap: 8,
+    paddingHorizontal: 12, paddingVertical: 6, gap: 8,
   },
   backBtn: { padding: 10 },
   backIcon: { fontSize: 28, color: '#334155', lineHeight: 32, fontWeight: '300' },
@@ -756,31 +925,26 @@ const styles = StyleSheet.create({
   // ── Results ──
   resultsContainer: { flex: 1 },
   filterRow: {
-    paddingLeft: 16, paddingRight: 32, paddingVertical: 10, gap: 8,
-    borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: '#f1f5f9',
+    flexDirection: 'row', justifyContent: 'center', alignItems: 'center',
+    paddingHorizontal: 16, gap: 4,
+    borderBottomWidth: 1, borderBottomColor: '#f1f5f9',
   },
-  filterChip: {
-    borderRadius: 20, borderWidth: 1, borderColor: '#e2e8f0',
-    backgroundColor: '#f8fafc',
-    paddingHorizontal: 16, paddingVertical: 10,
-    justifyContent: 'center', alignItems: 'center',
-    flexShrink: 0, alignSelf: 'center',
-    height: 38, minWidth: 100,
-  },
-  filterChipActive:     { backgroundColor: '#0f172a', borderColor: '#0f172a' },
-  filterChipText:       { fontSize: 13, fontWeight: '600', color: '#64748b', lineHeight: 18, flexShrink: 0, includeFontPadding: false },
-  filterChipTextActive: { color: '#fff' },
+  filterTab:           { paddingHorizontal: 8, paddingTop: 10, paddingBottom: 8, borderBottomWidth: 2, borderBottomColor: 'transparent' },
+  filterTabActive:     { borderBottomColor: '#3b82f6' },
+  filterTabText:       { fontSize: 14, fontWeight: '400', color: '#64748b' },
+  filterTabTextActive: { fontWeight: 'bold', color: '#3b82f6' },
+  filterSep:           { fontSize: 13, color: '#e2e8f0', paddingHorizontal: 2 },
 
   resultCount: {
     paddingHorizontal: 16, paddingTop: 10, paddingBottom: 2,
     fontSize: 15, fontWeight: '700', color: '#1e293b',
   },
-  listContent: { paddingHorizontal: 16, paddingBottom: 40 },
+  listContent: { paddingHorizontal: 16, paddingTop: 4, paddingBottom: 40 },
 
   // Commerce card
   resultCard: {
     flexDirection: 'row', gap: 12,
-    paddingVertical: 8, marginBottom: 8,
+    paddingVertical: 10, marginBottom: 4,
     borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: '#f1f5f9',
   },
   resultImageWrap: { width: 65, height: 65, position: 'relative', flexShrink: 0 },
@@ -794,7 +958,7 @@ const styles = StyleSheet.create({
   resultBody: { flex: 1, justifyContent: 'center' },
   resultName: {
     fontSize: 14, fontWeight: '500', color: '#1e293b',
-    lineHeight: 20, marginBottom: 6,
+    lineHeight: 20, marginBottom: 4,
   },
 
   priceRow: {
@@ -812,7 +976,7 @@ const styles = StyleSheet.create({
   },
   discountTagText: { fontSize: 11, fontWeight: '800', color: '#ef4444' },
 
-  reviewCount: { fontSize: 11, color: '#94a3b8', marginBottom: 8 },
+  reviewCount: { fontSize: 11, color: '#94a3b8', marginBottom: 4 },
   reviewCountPlaceholder: { height: 16, marginBottom: 8 }, // same height as reviewCount line
 
   trackBtn: {

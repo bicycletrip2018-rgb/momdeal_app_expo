@@ -1,6 +1,7 @@
-import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
+  BackHandler,
   Image,
   Linking,
   Modal,
@@ -21,7 +22,25 @@ import Svg, {
   Circle,
   Line,
   Polyline,
+  Text as SvgText,
 } from 'react-native-svg';
+
+import { doc, getDoc, setDoc } from 'firebase/firestore';
+import { auth, db } from '../firebase/config';
+import { getChildrenByUserId } from '../services/firestore/childrenRepository';
+import { getMarketingAverage } from '../services/priceTrackingService';
+
+// ─── Daily-price helpers ──────────────────────────────────────────────────────
+
+// Days to fetch per time-range tab.
+const RANGE_DAYS = { '1W': 7, '1M': 30, '2M': 60, '3M': 90 };
+
+// Convert a raw daily_prices record (YYYY-MM-DD, maxPrice, minPrice)
+// to the chart point shape { date: 'MM.DD', high, low }.
+function toDailyPt(r) {
+  const parts = r.date.split('-');
+  return { date: `${parts[1]}.${parts[2]}`, high: r.maxPrice, low: r.minPrice };
+}
 
 // ─── Mock datasets ─────────────────────────────────────────────────────────────
 // Four time ranges, each an array of { date, high, low }.
@@ -66,10 +85,10 @@ const ALL_TIME_HIGH = Math.max(...DATASETS['1Y'].map((d) => d.high));
 const ALL_TIME_LOW  = Math.min(...DATASETS['1Y'].map((d) => d.low));
 
 const TIME_TABS = [
+  { key: '1W', label: '1주일' },
   { key: '1M', label: '1개월' },
+  { key: '2M', label: '2개월' },
   { key: '3M', label: '3개월' },
-  { key: '6M', label: '6개월' },
-  { key: '1Y', label: '1년'   },
 ];
 
 // ─── Mock options (different counts/sizes of the same product) ─────────────────
@@ -87,10 +106,10 @@ const OPTIONS_PREVIEW_COUNT = 3; // show 3 by default, rest behind "더 보기"
 // ─── Mock similar products ─────────────────────────────────────────────────────
 
 const MOCK_SIMILAR = [
-  { productId: 'sim1', name: '하기스 맥스드라이 팬티형 3단계 108매', currentPrice: 31900, priceDrop: 7000, deliveryType: 'rocket' },
-  { productId: 'sim2', name: '마미포코 오가닉 밴드형 2단계 84매',    currentPrice: 22500, priceDrop: 4500, deliveryType: 'rocket' },
-  { productId: 'sim3', name: '보솜이 프리미엄 팬티형 4단계 60매',    currentPrice: 18900, priceDrop: 3000, deliveryType: 'fresh'  },
-  { productId: 'sim4', name: '귀염둥이 슈퍼드라이 밴드형 1단계 96매', currentPrice: 19800, priceDrop: 5200, deliveryType: 'rocket' },
+  { productId: 'sim1', name: '하기스 맥스드라이 팬티형 3단계 108매', currentPrice: 31900, priceDrop: 7000, deliveryType: 'rocket', badge: '🔥 핫딜'    },
+  { productId: 'sim2', name: '마미포코 오가닉 밴드형 2단계 84매',    currentPrice: 22500, priceDrop: 4500, deliveryType: 'rocket', badge: '역대 최저가' },
+  { productId: 'sim3', name: '보솜이 프리미엄 팬티형 4단계 60매',    currentPrice: 18900, priceDrop: 3000, deliveryType: 'fresh',  badge: null         },
+  { productId: 'sim4', name: '귀염둥이 슈퍼드라이 밴드형 1단계 96매', currentPrice: 19800, priceDrop: 5200, deliveryType: 'rocket', badge: '🔥 핫딜'    },
 ];
 
 // ─── Chart geometry ────────────────────────────────────────────────────────────
@@ -152,7 +171,7 @@ function GaugeBar({ current, min, max, avg }) {
 
 // ─── Price Chart ───────────────────────────────────────────────────────────────
 
-function PriceChart({ data, currentPrice, width, activeIdx, onActiveIdxChange }) {
+function PriceChart({ data, currentPrice, width, activeIdx, onActiveIdxChange, activePeriodLabel }) {
   const highs   = data.map((d) => d.high);
   const lows    = data.map((d) => d.low);
   const dataMax = Math.max(...highs);
@@ -161,10 +180,18 @@ function PriceChart({ data, currentPrice, width, activeIdx, onActiveIdxChange })
   const domMin  = dataMin - range * 0.10;
   const domMax  = dataMax + range * 0.10;
 
-  const highPts     = buildPts(data, 'high', domMin, domMax, width);
-  const lowPts      = buildPts(data, 'low',  domMin, domMax, width);
-  const currentY    = PAD_TOP + INNER_H * (1 - (currentPrice - domMin) / (domMax - domMin));
-  const showDots    = data.length <= 30;
+  const highPts  = buildPts(data, 'high', domMin, domMax, width);
+  const lowPts   = buildPts(data, 'low',  domMin, domMax, width);
+  const currentY = PAD_TOP + INNER_H * (1 - (currentPrice - domMin) / (domMax - domMin));
+  const maxLineY = PAD_TOP + INNER_H * (1 - (dataMax - domMin) / (domMax - domMin));
+  const minLineY = PAD_TOP + INNER_H * (1 - (dataMin - domMin) / (domMax - domMin));
+  const showDots = data.length <= 30;
+
+  // Keep refs in sync so PanResponder closures always read fresh values
+  const dataRef   = useRef(data);
+  const widthRef  = useRef(width);
+  dataRef.current  = data;
+  widthRef.current = width;
 
   // PanResponder: map finger pageX → nearest data index
   const chartPageX  = useRef(0);
@@ -172,20 +199,30 @@ function PriceChart({ data, currentPrice, width, activeIdx, onActiveIdxChange })
 
   const panResponder = useRef(
     PanResponder.create({
-      onStartShouldSetPanResponder:         () => true,
-      onMoveShouldSetPanResponder:          () => true,
-      onStartShouldSetPanResponderCapture:  () => true,
+      // Claim touch starts so tooltip fires on tap/drag.
+      // Allow parent ScrollView to steal the responder on vertical swipes via
+      // onPanResponderTerminationRequest: () => true.
+      onStartShouldSetPanResponder:        () => true,
+      onStartShouldSetPanResponderCapture: () => false,
+      onMoveShouldSetPanResponder:         () => true,
+      onMoveShouldSetPanResponderCapture:  () => false,
+      onPanResponderTerminationRequest:    () => true,  // release on vertical scroll steal
+      onPanResponderTerminate:             () => onActiveIdxChange(null),
       onPanResponderGrant: (evt) => {
+        const d      = dataRef.current;
+        const w      = widthRef.current;
         const relX   = evt.nativeEvent.pageX - chartPageX.current - PAD_X;
-        const usable = width - PAD_X * 2;
-        const idx    = Math.round((relX / usable) * (data.length - 1));
-        onActiveIdxChange(Math.min(data.length - 1, Math.max(0, idx)));
+        const usable = w - PAD_X * 2;
+        const idx    = Math.round((relX / usable) * (d.length - 1));
+        onActiveIdxChange(Math.min(d.length - 1, Math.max(0, idx)));
       },
       onPanResponderMove: (evt) => {
+        const d      = dataRef.current;
+        const w      = widthRef.current;
         const relX   = evt.nativeEvent.pageX - chartPageX.current - PAD_X;
-        const usable = width - PAD_X * 2;
-        const idx    = Math.round((relX / usable) * (data.length - 1));
-        onActiveIdxChange(Math.min(data.length - 1, Math.max(0, idx)));
+        const usable = w - PAD_X * 2;
+        const idx    = Math.round((relX / usable) * (d.length - 1));
+        onActiveIdxChange(Math.min(d.length - 1, Math.max(0, idx)));
       },
       onPanResponderRelease:    () => onActiveIdxChange(null),
       onPanResponderTerminate:  () => onActiveIdxChange(null),
@@ -214,11 +251,41 @@ function PriceChart({ data, currentPrice, width, activeIdx, onActiveIdxChange })
         style={{ position: 'relative' }}
       >
         <Svg width={width} height={CHART_H}>
-          {/* Green dashed current-price baseline */}
+          {/* Period-max dashed reference line — slate */}
+          <Line
+            x1={0} y1={maxLineY} x2={width} y2={maxLineY}
+            stroke="#94a3b8" strokeWidth={1} strokeDasharray="4,4" opacity={0.7}
+          />
+          <SvgText
+            x={width - 4} y={maxLineY - 3}
+            textAnchor="end" fontSize={12} fontWeight="bold" fill="#334155" opacity={1}
+          >
+            {(activePeriodLabel ? activePeriodLabel + ' ' : '') + '최고가 ' + dataMax.toLocaleString('ko-KR') + '원'}
+          </SvgText>
+
+          {/* Period-min dashed reference line — red */}
+          <Line
+            x1={0} y1={minLineY} x2={width} y2={minLineY}
+            stroke="#ef4444" strokeWidth={1} strokeDasharray="4,4" opacity={0.5}
+          />
+          <SvgText
+            x={width - 4} y={minLineY - 3}
+            textAnchor="end" fontSize={12} fontWeight="bold" fill="#ef4444" opacity={1}
+          >
+            {(activePeriodLabel ? activePeriodLabel + ' ' : '') + '최저가 ' + dataMin.toLocaleString('ko-KR') + '원'}
+          </SvgText>
+
+          {/* Current-price dashed baseline — green */}
           <Line
             x1={0} y1={currentY} x2={width} y2={currentY}
             stroke="#22c55e" strokeWidth={1.5} strokeDasharray="5,5"
           />
+          <SvgText
+            x={width - 4} y={currentY - 3}
+            textAnchor="end" fontSize={12} fontWeight="bold" fill="#16a34a"
+          >
+            {'현재가 ' + currentPrice.toLocaleString('ko-KR') + '원'}
+          </SvgText>
 
           {/* Scrub vertical rule (drawn behind data lines) */}
           {activeH && (
@@ -278,11 +345,30 @@ function PriceChart({ data, currentPrice, width, activeIdx, onActiveIdxChange })
         )}
       </View>
 
-      {/* X-axis: first / mid / last label */}
-      <View style={styles.xAxis}>
-        <Text style={styles.xAxisLabel}>{data[0].date}</Text>
-        <Text style={styles.xAxisLabel}>{data[Math.floor(data.length / 2)].date}</Text>
-        <Text style={styles.xAxisLabel}>{data[data.length - 1].date}</Text>
+      {/* X-axis: one label every ~6 points, absolutely positioned to match data x coords */}
+      <View style={[styles.xAxis, { position: 'relative', height: 16 }]}>
+        {(() => {
+          const stepSize = Math.max(1, Math.ceil(data.length / 6));
+          return data.map((d, i) => {
+            const isLast   = i === data.length - 1;
+            const isPeriod = i % stepSize === 0;
+            // Always show first and last; show every stepSize-th in between
+            if (!isPeriod && !isLast) return null;
+            // Skip last if it's too close to the previous visible tick
+            const prevVisible = Math.floor((data.length - 2) / stepSize) * stepSize;
+            if (isLast && (data.length - 1 - prevVisible) < 3 && data.length > 4) return null;
+            const pt  = highPts[i];
+            const lft = pt ? Math.max(0, pt.x - 18) : undefined;
+            return (
+              <Text
+                key={i}
+                style={[styles.xAxisLabel, { position: 'absolute', left: lft }]}
+              >
+                {d.date}
+              </Text>
+            );
+          });
+        })()}
       </View>
     </View>
   );
@@ -310,16 +396,18 @@ function OptionRow({ option, isLast, navigation }) {
         <View style={styles.optionBody}>
           <Text style={styles.optionTitle} numberOfLines={1}>{option.title}</Text>
           <View style={styles.optionPriceRow}>
-            <Text style={styles.optionPrice}>₩{option.price.toLocaleString('ko-KR')}</Text>
-            <Text style={styles.optionDiscount}>▼ {option.discountPct}%</Text>
+            <Text style={styles.optionPrice} numberOfLines={1}>₩{option.price.toLocaleString('ko-KR')}</Text>
+            <View style={styles.optionDiscountBadge}>
+              <Text style={styles.optionDiscountBadgeText}>▼ {option.discountPct}%</Text>
+            </View>
           </View>
           <Text style={styles.optionUnit}>{option.unitText}</Text>
         </View>
       </TouchableOpacity>
 
-      {/* Add button — pill text style */}
+      {/* Add button — circular + icon */}
       <TouchableOpacity style={styles.optionAddBtn} activeOpacity={0.75}>
-        <Text style={styles.optionAddBtnText}>상품 추가</Text>
+        <Ionicons name="add" size={20} color="#3b82f6" />
       </TouchableOpacity>
     </View>
   );
@@ -385,9 +473,14 @@ function SimilarProductCard({ item }) {
 
   return (
     <View style={styles.simCard}>
-      {/* Image placeholder */}
+      {/* Image area with optional badge overlay */}
       <View style={styles.simImageWrap}>
         <Ionicons name="cube-outline" size={28} color="#94a3b8" />
+        {item.badge && (
+          <View style={styles.simBadge}>
+            <Text style={styles.simBadgeText}>{item.badge}</Text>
+          </View>
+        )}
       </View>
       <View style={styles.simBody}>
         <Text style={styles.simSource}>C 쿠팡</Text>
@@ -398,8 +491,14 @@ function SimilarProductCard({ item }) {
           <Text style={[styles.simDelivery, { color: '#16a34a' }]}>🌿 로켓프레시</Text>
         )}
         <Text style={styles.simName} numberOfLines={2}>{item.name}</Text>
-        <Text style={styles.simPrice}>₩{item.currentPrice.toLocaleString('ko-KR')}</Text>
-        {pct != null && <Text style={styles.simDiscount}>▼ {pct}%</Text>}
+        <View style={styles.simPriceRow}>
+          <Text style={styles.simPrice} numberOfLines={1}>₩{item.currentPrice.toLocaleString('ko-KR')}</Text>
+          {pct != null && (
+            <View style={styles.simDiscountBadge}>
+              <Text style={styles.simDiscountBadgeText}>▼ {pct}%</Text>
+            </View>
+          )}
+        </View>
       </View>
     </View>
   );
@@ -421,7 +520,7 @@ export default function DetailScreen({ route, navigation }) {
   const displayItem = item || product || mockItem;
   const displayFrom = from || 'Ranking';
 
-  const [timeRange,           setTimeRange]           = useState('1M');
+  const [timeRange,           setTimeRange]           = useState('2M');
   const [activeTooltipIdx,    setActiveTooltipIdx]    = useState(null);
   const [chartWidth,          setChartWidth]          = useState(0);
   const [showAllOptions,      setShowAllOptions]      = useState(false);
@@ -430,6 +529,108 @@ export default function DetailScreen({ route, navigation }) {
   const [targetPriceInput,    setTargetPriceInput]    = useState('');
   const [isSaved,             setIsSaved]             = useState(false);
   const [toastVisible,        setToastVisible]        = useState(false);
+
+  // Selected child's name for personalized tracking text
+  const [childName, setChildName] = useState('우리 아이');
+
+  useEffect(() => {
+    const backHandler = BackHandler.addEventListener('hardwareBackPress', () => {
+      navigation.goBack();
+      return true;
+    });
+    return () => backHandler.remove();
+  }, [navigation]);
+
+  useEffect(() => {
+    const load = async () => {
+      try {
+        const uid = auth.currentUser?.uid;
+        if (!uid) return;
+        const userSnap = await getDoc(doc(db, 'users', uid));
+        const selectedChildId = userSnap.exists() ? userSnap.data().selectedChildId ?? null : null;
+        const children = await getChildrenByUserId(uid);
+        const child = (selectedChildId ? children.find((c) => c.id === selectedChildId) : null) ?? children[0] ?? null;
+        if (child?.name) setChildName(child.name);
+      } catch (_) {}
+    };
+    load();
+  }, []);
+
+  // Real price data from Firebase daily_prices subcollection.
+  // Stored newest-first (raw from Firestore); reversed to chronological when used.
+  const [rawDailyPrices, setRawDailyPrices] = useState(null); // null = not yet loaded
+
+  const loadDailyPrices = useCallback(async () => {
+    const pid = displayItem?.productId;
+    if (!pid) return;
+    try {
+      // Fetch up to 1 year so all time-range tabs can slice from one request.
+      const result = await getMarketingAverage(pid, 365);
+      if (result?.dailyPrices?.length > 0) {
+        // dailyPrices is newest-first from Firestore; reverse to oldest-first for chart.
+        setRawDailyPrices([...result.dailyPrices].reverse());
+      }
+    } catch (e) {
+      console.log('[DetailScreen] daily prices fetch failed:', e);
+    }
+  }, [displayItem?.productId]);
+
+  useEffect(() => { loadDailyPrices(); }, [loadDailyPrices]);
+
+  const [isInjecting, setIsInjecting] = useState(false);
+
+  const injectMockData = useCallback(async () => {
+    const pid = displayItem?.productId;
+    if (!pid) {
+      Alert.alert('오류', '상품 ID가 없습니다. 관심상품에서 진입해야 합니다.');
+      return;
+    }
+    setIsInjecting(true);
+    try {
+      const base     = displayItem.currentPrice || 50000;
+      const today    = new Date();
+      const writes   = [];
+
+      for (let i = 59; i >= 0; i--) {
+        const dt = new Date(today);
+        dt.setDate(today.getDate() - i);
+        const dateKey = dt.toISOString().slice(0, 10);
+
+        // Simulate a price arc: rises to peak around day 30, then drops toward current
+        const t       = i / 59;                             // 1 = oldest, 0 = today
+        const arc     = t < 0.5
+          ? 0.85 + (t / 0.5) * 0.30                        // rise: 0.85 → 1.15
+          : 1.15 - ((t - 0.5) / 0.5) * 0.25;              // fall: 1.15 → 0.90
+        const noise   = (Math.sin(i * 2.3) * 0.04 + Math.cos(i * 1.1) * 0.03);
+        const midMult = Math.max(0.80, Math.min(1.30, arc + noise));
+
+        const mid      = Math.round(base * midMult / 100) * 100;
+        const spread   = Math.round(base * 0.07 / 100) * 100; // ~7% spread
+        const maxPrice = mid + spread;
+        const minPrice = Math.max(Math.round(base * 0.70), mid - spread);
+
+        writes.push(
+          setDoc(
+            doc(db, 'products', pid, 'daily_prices', dateKey),
+            { maxPrice, minPrice, date: dateKey }
+          )
+        );
+      }
+
+      // Write in batches of 10 to avoid overwhelming Firestore
+      for (let b = 0; b < writes.length; b += 10) {
+        await Promise.all(writes.slice(b, b + 10));
+      }
+
+      await loadDailyPrices();
+      Alert.alert('✅ 완료', '60일치 가상 가격 데이터가 Firebase에 주입되었습니다. 차트를 확인하세요!');
+    } catch (e) {
+      console.error('[Injector] failed:', e);
+      Alert.alert('오류', `데이터 주입 실패: ${e.message}`);
+    } finally {
+      setIsInjecting(false);
+    }
+  }, [displayItem?.productId, displayItem?.currentPrice, loadDailyPrices]);
 
   useLayoutEffect(() => {
     navigation.setOptions({
@@ -456,34 +657,46 @@ export default function DetailScreen({ route, navigation }) {
   const currentPrice  = displayItem.currentPrice || 67590;
   const unitPriceText = '장당 768원';
 
-  const data = DATASETS[timeRange];
+  // Slice rawDailyPrices to the selected time range (already oldest-first).
+  // Falls back to DATASETS mock when Firebase data isn't available.
+  const { data, currentHigh, currentLow, currentAverage } = useMemo(() => {
+    const dayLimit = RANGE_DAYS[timeRange];
 
-  // Dynamic price stats — recalculated whenever timeRange changes
-  const { currentHigh, currentLow, currentAverage } = useMemo(() => {
-    const activeData = DATASETS[timeRange];
+    if (rawDailyPrices && rawDailyPrices.length > 0) {
+      // Take the last `dayLimit` entries (the most recent N days).
+      const slice = rawDailyPrices.slice(-dayLimit);
+      const pts   = slice.map(toDailyPt);
+      const high  = Math.max(...slice.map((r) => r.maxPrice));
+      const low   = Math.min(...slice.map((r) => r.minPrice));
+      const avg   = Math.round(
+        slice.reduce((s, r) => s + (r.maxPrice + r.minPrice) / 2, 0) / slice.length
+      );
+      return { data: pts, currentHigh: high, currentLow: low, currentAverage: avg };
+    }
+
+    // Fallback: mock DATASETS (map new keys to closest mock series)
+    const dsKey      = timeRange === '1W' ? '1M' : timeRange === '2M' ? '3M' : timeRange === '3M' ? '3M' : '1M';
+    const activeData = DATASETS[dsKey];
     const high = Math.max(...activeData.map((d) => d.high));
     const low  = Math.min(...activeData.map((d) => d.low));
     const avg  = Math.round(
       activeData.reduce((sum, d) => sum + (d.high + d.low) / 2, 0) / activeData.length
     );
-    return { currentHigh: high, currentLow: low, currentAverage: avg };
-  }, [timeRange]);
+    return { data: activeData, currentHigh: high, currentLow: low, currentAverage: avg };
+  }, [timeRange, rawDailyPrices]);
 
-  const discountPct = Math.round((1 - currentPrice / currentHigh) * 100);
+  // Marketing discount: how much cheaper than average (Tech Spec V7 formula).
+  // Falls back to period-high comparison when no average data.
+  const marketingDiscountPct = currentAverage > 0
+    ? Math.round(((currentAverage - currentPrice) / currentAverage) * 100)
+    : null;
+  const discountPct = marketingDiscountPct ?? Math.round((1 - currentPrice / currentHigh) * 100);
   const pricePct    = currentHigh > currentLow
     ? Math.min(1, Math.max(0, (currentPrice - currentLow) / (currentHigh - currentLow)))
     : 0;
 
   return (
     <SafeAreaView edges={['bottom']} style={styles.container}>
-
-      {/* ── Top nav bar: back only ── */}
-      <View style={styles.topNav}>
-        <TouchableOpacity onPress={() => navigation.goBack()} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }} activeOpacity={0.7}>
-          <Ionicons name="chevron-back" size={26} color="#0f172a" />
-        </TouchableOpacity>
-        <View style={{ flex: 1 }} />
-      </View>
 
       <ScrollView
         showsVerticalScrollIndicator={false}
@@ -555,19 +768,21 @@ export default function DetailScreen({ route, navigation }) {
           </View>
         </View>
 
-        {/* ── FOMO Banner (Ranking entry only) ── */}
+        {/* ── Tracking banner — inside Hero, below price block ── */}
         {displayFrom === 'Ranking' && (
-          <View style={styles.fomoBanner}>
+          <View style={[styles.fomoBanner, { marginTop: 0, marginBottom: 0 }]}>
             <Text style={styles.fomoBannerText}>
-              🔥 현재 142명의 육아 동지들이 이 가격을 지켜보고 있어요!
+              🔥 현재 {displayItem.trackingCount || 1}명의 '{childName}'와(과) 유사 환경의 세이브루맘들이 이 상품에 관심이 있습니다.
             </Text>
           </View>
         )}
 
+        <View style={{ height: 8, backgroundColor: '#f1f5f9', width: '100%', marginTop: 8, marginBottom: 8 }} />
+
         {/* ── Social Proof / Mom-cafe Summary (Ranking entry only) ── */}
         {displayFrom === 'Ranking' && (
           <View style={styles.socialProofSection}>
-            <Text style={styles.socialProofTitle}>맘카페 실시간 반응 💬</Text>
+            <Text style={styles.socialProofTitle}>✨ 구매자 반응 AI 요약</Text>
             <View style={styles.socialProofCard}>
               <Text style={styles.socialProofText}>
                 "최근 리뉴얼된 초슬림 라인이라 흡수력이 훨씬 좋아졌다는 평이 많아요! 지금 역대 최저가 근접했으니 무조건 쟁여야 할 타이밍입니다."
@@ -611,8 +826,27 @@ export default function DetailScreen({ route, navigation }) {
 
         </View>
 
+        <View style={styles.sectionDivider} />
+
         {/* ── Chart section ── */}
         <View style={styles.chartSection}>
+
+          {/* Chart header: title + last-updated timestamp */}
+          <View style={styles.chartHeader}>
+            <Text style={styles.chartHeaderTitle}>세이브루 가격 그래프</Text>
+            <Text style={styles.chartHeaderTs}>
+              마지막 업데이트{' '}
+              {(() => {
+                const now = new Date();
+                const yy  = String(now.getFullYear()).slice(-2);
+                const mm  = String(now.getMonth() + 1).padStart(2, '0');
+                const dd  = String(now.getDate()).padStart(2, '0');
+                const hh  = String(now.getHours()).padStart(2, '0');
+                const min = String(now.getMinutes()).padStart(2, '0');
+                return `${yy}.${mm}.${dd} ${hh}:${min}`;
+              })()}
+            </Text>
+          </View>
 
           {/* Time range pill tabs */}
           <View style={styles.timeTabs}>
@@ -650,6 +884,7 @@ export default function DetailScreen({ route, navigation }) {
                 width={chartWidth}
                 activeIdx={activeTooltipIdx}
                 onActiveIdxChange={setActiveTooltipIdx}
+                activePeriodLabel={TIME_TABS.find((t) => t.key === timeRange)?.label ?? timeRange}
               />
             )}
           </View>
@@ -658,23 +893,24 @@ export default function DetailScreen({ route, navigation }) {
           <View style={styles.legend}>
             <View style={styles.legendItem}>
               <View style={[styles.legendLine, { backgroundColor: '#3b82f6' }]} />
-              <Text style={styles.legendText}>일별 최고가</Text>
+              <Text style={styles.legendText}>최고가</Text>
             </View>
             <View style={styles.legendItem}>
               <View style={[styles.legendLine, { backgroundColor: '#ef4444' }]} />
-              <Text style={styles.legendText}>일별 최저가</Text>
+              <Text style={styles.legendText}>최저가</Text>
             </View>
             <View style={styles.legendItem}>
               <View style={[styles.legendDash, { borderColor: '#22c55e' }]} />
               <Text style={styles.legendText}>현재가</Text>
             </View>
+            <View style={styles.legendItem}>
+              <View style={[styles.legendDash, { borderColor: '#94a3b8' }]} />
+              <Text style={styles.legendText}>기간최고</Text>
+            </View>
           </View>
         </View>
 
-        {/* ── Social Proof CTA ── */}
-        <View style={styles.sectionWrap}>
-          <SocialProofCard pricePct={pricePct} currentPrice={currentPrice} />
-        </View>
+        <View style={styles.sectionDivider} />
 
         {/* ── Accordion Options ── */}
         <View style={styles.sectionWrap}>
@@ -705,6 +941,8 @@ export default function DetailScreen({ route, navigation }) {
           )}
         </View>
 
+        <View style={styles.sectionDivider} />
+
         {/* ── Similar Products ── */}
         <View style={[styles.sectionWrap, { paddingHorizontal: 0 }]}>
           <Text style={[styles.sectionTitle, { paddingHorizontal: 16 }]}>해당 상품과 비슷한 상품</Text>
@@ -718,6 +956,35 @@ export default function DetailScreen({ route, navigation }) {
             ))}
           </ScrollView>
         </View>
+
+        {/* ── Legal / Disclosure Footer ── */}
+        <View style={styles.legalFooter}>
+          {[
+            '역대 최고/최저가는 세이브루가 수집한 기간 내의 데이터입니다.',
+            '세이브루의 상품 및 가격 정보는 쇼핑몰의 실제 내용과 다를 수 있습니다. 구매 시 쇼핑몰의 실제 정보를 꼭 확인하세요.',
+            '실제 상품의 내용을 확인하지 못하고 구매하여 발생한 손실, 손해에 대한 책임은 이용자 본인에게 있습니다.',
+            '해당 버튼을 통해 구매 시 세이브루에 일정액의 수수료가 제공될 수 있습니다. (쿠팡 파트너스 활동의 일환)',
+          ].map((line, i) => (
+            <Text key={i} style={styles.legalLine}>• {line}</Text>
+          ))}
+        </View>
+
+        {/* ── [DEV] Mock Data Injector ── */}
+        <TouchableOpacity
+          style={styles.devInjectorBtn}
+          onPress={injectMockData}
+          disabled={isInjecting}
+          activeOpacity={0.75}
+        >
+          <Text style={styles.devInjectorText}>
+            {isInjecting ? '⏳ 주입 중...' : '[개발자 테스트용] 60일 가상 데이터 주입'}
+          </Text>
+          {!isInjecting && (
+            <Text style={styles.devInjectorSub}>
+              현재 차트: {rawDailyPrices ? `실제 데이터 ${rawDailyPrices.length}일` : '목업 데이터'}
+            </Text>
+          )}
+        </TouchableOpacity>
 
       </ScrollView>
 
@@ -763,7 +1030,7 @@ export default function DetailScreen({ route, navigation }) {
             {/* Reassurance banner */}
             <View style={styles.alertReassuranceBanner}>
               <Text style={styles.alertReassuranceText}>
-                {`원하시는 평균가 대비 할인율 가격에 알림을 드립니다! (${timeRange.replace('M', '개월').replace('Y', '년')} 기준)`}
+                {`원하시는 평균가 대비 할인율 가격에 알림을 드립니다! (${TIME_TABS.find(t => t.key === timeRange)?.label ?? timeRange} 기준)`}
               </Text>
             </View>
 
@@ -857,6 +1124,27 @@ const styles = StyleSheet.create({
   container:    { flex: 1, backgroundColor: '#f8fafc' },
   scrollContent: { paddingBottom: 96 },
 
+  // Dev injector button
+  // Legal footer
+  legalFooter: {
+    marginHorizontal: 16, marginTop: 24, marginBottom: 8,
+    backgroundColor: '#f8fafc', borderRadius: 8,
+    paddingHorizontal: 14, paddingVertical: 12,
+  },
+  legalLine: {
+    fontSize: 11, color: '#94a3b8', lineHeight: 17, marginBottom: 4,
+  },
+
+  devInjectorBtn: {
+    margin: 16, marginTop: 24,
+    backgroundColor: '#1e293b', borderRadius: 10,
+    paddingVertical: 14, paddingHorizontal: 16,
+    alignItems: 'center',
+    borderWidth: 1, borderColor: '#334155',
+  },
+  devInjectorText: { fontSize: 13, fontWeight: '700', color: '#f59e0b', textAlign: 'center' },
+  devInjectorSub:  { fontSize: 11, color: '#94a3b8', marginTop: 4, textAlign: 'center' },
+
   // Top nav bar
   topNav: {
     flexDirection: 'row', alignItems: 'center',
@@ -872,25 +1160,26 @@ const styles = StyleSheet.create({
 
   // FOMO banner — Ranking entry only
   fomoBanner: {
-    marginTop: 16, marginHorizontal: 20,
-    backgroundColor: '#fef2f2', padding: 12, borderRadius: 8,
+    marginTop: 8, marginHorizontal: 16,
+    backgroundColor: '#fef2f2', padding: 10, borderRadius: 8,
     flexDirection: 'row', alignItems: 'center',
   },
   fomoBannerText: { color: '#ef4444', fontWeight: 'bold', fontSize: 13, flex: 1, lineHeight: 18 },
 
   // Social Proof section — Ranking entry only
   socialProofSection: {
-    paddingHorizontal: 20, paddingTop: 20, paddingBottom: 20,
-    borderBottomWidth: 8, borderBottomColor: '#f1f5f9',
+    paddingHorizontal: 16, paddingTop: 0, paddingBottom: 8, marginTop: 0, marginBottom: 8,
   },
-  socialProofTitle: { fontSize: 16, fontWeight: 'bold', color: '#0f172a', marginBottom: 12 },
-  socialProofCard:  { backgroundColor: '#f8fafc', padding: 16, borderRadius: 12 },
-  socialProofText:  { fontSize: 14, lineHeight: 22, color: '#334155' },
+  socialProofTitle: { fontSize: 18, fontWeight: '700', color: '#0f172a', marginBottom: 8, marginTop: 0, paddingTop: 0 },
+  socialProofCard: {
+    backgroundColor: '#f8fafc', borderRadius: 12, padding: 16,
+  },
+  socialProofText:  { fontSize: 13, lineHeight: 20, color: '#475569', fontStyle: 'italic' },
 
   // Product header — two-column layout
   header: {
     flexDirection: 'row', alignItems: 'flex-start',
-    paddingHorizontal: 16, paddingTop: 16, paddingBottom: 16,
+    paddingHorizontal: 16, paddingTop: 10, paddingBottom: 10,
   },
   heroImage: {
     width: 120, height: 120, borderRadius: 8, marginRight: 14, flexShrink: 0,
@@ -920,8 +1209,8 @@ const styles = StyleSheet.create({
 
   // CTA card
   ctaCard: {
-    marginHorizontal: 16, marginBottom: 16,
-    backgroundColor: '#0f172a', borderRadius: 16, padding: 20, gap: 14,
+    marginHorizontal: 16, marginBottom: 8,
+    backgroundColor: '#0f172a', borderRadius: 16, padding: 14, gap: 10,
     ...Platform.select({
       ios:     { shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.22, shadowRadius: 10 },
       android: { elevation: 6 },
@@ -978,6 +1267,12 @@ const styles = StyleSheet.create({
 
   // Chart section
   chartSection: { marginHorizontal: 16 },
+  chartHeader: {
+    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
+    marginBottom: 8,
+  },
+  chartHeaderTitle: { fontSize: 18, fontWeight: '700', color: '#0f172a' },
+  chartHeaderTs:    { fontSize: 11, color: '#94a3b8' },
 
   // Annotation row
   annotationRow: {
@@ -1043,8 +1338,9 @@ const styles = StyleSheet.create({
   legendText: { fontSize: 11, color: '#64748b' },
 
   // ── Section wrapper ────────────────────────────────────────────────────────────
-  sectionWrap:  { paddingHorizontal: 16, marginBottom: 20 },
-  sectionTitle: { fontSize: 16, fontWeight: '800', color: '#0f172a', marginBottom: 12 },
+  sectionWrap:  { paddingHorizontal: 16, marginBottom: 10 },
+  sectionTitle:   { fontSize: 18, fontWeight: '700', color: '#0f172a', marginBottom: 12 },
+  sectionDivider: { height: 8, backgroundColor: '#f1f5f9', width: '100%', marginVertical: 20 },
 
   // ── Accordion options ──────────────────────────────────────────────────────────
   optionList: {
@@ -1063,18 +1359,18 @@ const styles = StyleSheet.create({
     backgroundColor: '#f1f5f9',
     alignItems: 'center', justifyContent: 'center', flexShrink: 0,
   },
-  optionBody:      { flex: 1, gap: 2 },
-  optionTitle:     { fontSize: 13, fontWeight: '600', color: '#334155' },
-  optionPriceRow:  { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  optionPrice:     { fontSize: 15, fontWeight: '800', color: '#0f172a' },
-  optionDiscount:  { fontSize: 12, fontWeight: '700', color: '#ef4444' },
-  optionUnit:      { fontSize: 11, color: '#3b82f6', fontWeight: '600' },
+  optionBody:           { flex: 1, gap: 2 },
+  optionTitle:          { fontSize: 13, fontWeight: '600', color: '#334155' },
+  optionPriceRow:       { flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'nowrap' },
+  optionPrice:          { fontSize: 14, fontWeight: '800', color: '#0f172a', flexShrink: 1 },
+  optionDiscountBadge:  { backgroundColor: '#fef2f2', borderRadius: 4, paddingHorizontal: 5, paddingVertical: 2, flexShrink: 0 },
+  optionDiscountBadgeText: { fontSize: 11, fontWeight: '700', color: '#ef4444' },
+  optionUnit:           { fontSize: 11, color: '#3b82f6', fontWeight: '600' },
   optionAddBtn: {
-    backgroundColor: '#eff6ff', borderRadius: 6,
-    paddingHorizontal: 12, paddingVertical: 8,
+    width: 36, height: 36, borderRadius: 18,
+    backgroundColor: '#eff6ff',
     alignItems: 'center', justifyContent: 'center', flexShrink: 0,
   },
-  optionAddBtnText: { fontSize: 12, fontWeight: '700', color: '#3b82f6' },
   optionShowMoreBtn: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
     gap: 4, paddingVertical: 12,
@@ -1120,13 +1416,26 @@ const styles = StyleSheet.create({
     width: '100%', aspectRatio: 1,
     backgroundColor: '#f1f5f9',
     alignItems: 'center', justifyContent: 'center',
+    position: 'relative',
   },
-  simBody:     { padding: 8, gap: 2 },
+  simBadge: {
+    position: 'absolute', top: 6, left: 6,
+    backgroundColor: '#ef4444', borderRadius: 4,
+    paddingHorizontal: 6, paddingVertical: 3,
+  },
+  simBadgeText: { fontSize: 10, fontWeight: '800', color: '#fff' },
+  simBody:     { padding: 8, gap: 1 },
   simSource:   { fontSize: 10, fontWeight: '700', color: '#94a3b8' },
-  simDelivery: { fontSize: 10, fontWeight: '700', color: '#3b82f6', marginBottom: 2 },
-  simName:     { fontSize: 12, fontWeight: '600', color: '#334155', lineHeight: 17 },
-  simPrice:    { fontSize: 14, fontWeight: '800', color: '#0f172a', marginTop: 4 },
-  simDiscount: { fontSize: 11, fontWeight: '700', color: '#ef4444' },
+  simDelivery: { fontSize: 10, fontWeight: '700', color: '#3b82f6', marginBottom: 1 },
+  simName:     { fontSize: 12, fontWeight: '600', color: '#334155', lineHeight: 16, marginBottom: 4 },
+  simPriceRow: { flexDirection: 'row', alignItems: 'center', gap: 4, flexWrap: 'nowrap' },
+  simPrice:    { fontSize: 13, fontWeight: '800', color: '#0f172a', flexShrink: 1 },
+  simDiscountBadge: {
+    flexShrink: 0,
+    backgroundColor: '#ef4444', borderRadius: 4,
+    paddingHorizontal: 5, paddingVertical: 2,
+  },
+  simDiscountBadgeText: { fontSize: 11, fontWeight: '800', color: '#fff' },
 
   // ── Toast ─────────────────────────────────────────────────────────────────────
   toastBox: {

@@ -192,6 +192,8 @@ export default function ProductDetail({ route, navigation }) {
   const coupangProduct = route?.params?.coupangProduct ?? null;
   // Item object passed directly from RankingScreen / fetchAffiliateAndNavigate
   const routeItem = route?.params?.item ?? null;
+  // Item passed from CategoryScreen (dummy items with no Firestore doc)
+  const passedItem = route?.params?.item || route?.params?.productData || null;
   // Source screen — used for conditional UX (e.g. auto-activate alert from Ranking)
   const source = route?.params?.source || route?.params?.from || null;
 
@@ -309,6 +311,38 @@ export default function ProductDetail({ route, navigation }) {
             isRocket: coupangProduct.isRocket ?? false,
           });
         }
+      } else {
+        // No Firestore doc and no coupangProduct — inject rich dummy so graph UI always renders
+        const dummyFallback = {
+          id: productId || 'unknown',
+          productId: productId || 'unknown',
+          name: route.params?.productData?.name || route.params?.item?.name || fallbackName || '샘플 기저귀/분유 특대형',
+          brand: route.params?.productData?.brand || route.params?.item?.brand || '세이브루 샘플',
+          currentPrice: route.params?.productData?.price || route.params?.item?.price || 31900,
+          originalPrice: route.params?.productData?.originalPrice || route.params?.item?.originalPrice || 40500,
+          discount: route.params?.productData?.discount || route.params?.item?.discount || 21,
+          lowestPrice: 23700,
+          averagePrice: 32240,
+          image: 'https://via.placeholder.com/400',
+          history: [
+            { date: '10/01', price: 40500 },
+            { date: '10/10', price: 32240 },
+            { date: '10/20', price: 31900 },
+          ],
+          isRocket: true,
+          unitPrice: route.params?.productData?.unitPrice || route.params?.item?.unitPrice || '장당 362원',
+          status: 'active',
+          stageTags: [],
+          categoryTags: [],
+        };
+        setProduct(dummyFallback);
+        setOffer({
+          price: dummyFallback.currentPrice,
+          affiliateUrl: null,
+          sellerType: 'coupang',
+          deliveryType: 'rocket',
+          isRocket: true,
+        });
       }
       if (!offersSnap.empty) {
         const snapshots = offersSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
@@ -363,6 +397,33 @@ export default function ProductDetail({ route, navigation }) {
   useEffect(() => {
     fetchData();
   }, [productId]);
+
+  // Fallback: if no Firestore doc was found (e.g. dummy Category items), use passedItem
+  useEffect(() => {
+    if (!loading && !product && passedItem) {
+      const enriched = { ...passedItem };
+      if (!enriched.history) {
+        enriched.history = [
+          { date: '10/01', price: enriched.originalPrice || enriched.price + 5000 },
+          { date: '10/05', price: enriched.price + 2000 },
+          { date: '10/10', price: enriched.price },
+        ];
+        enriched.lowestPrice = enriched.price;
+        enriched.averagePrice = enriched.originalPrice || enriched.price + 3000;
+      }
+      enriched.id = enriched.id || productId;
+      enriched.productId = enriched.productId || productId;
+      enriched.name = enriched.name || fallbackName;
+      enriched.currentPrice = enriched.currentPrice ?? enriched.price ?? 0;
+      enriched.status = enriched.status || 'active';
+      enriched.stageTags = enriched.stageTags || [];
+      enriched.categoryTags = enriched.categoryTags || [];
+      setProduct(enriched);
+      if (enriched.price) {
+        setOffer({ price: enriched.price, affiliateUrl: enriched.affiliateUrl ?? null, sellerType: 'coupang', deliveryType: 'normal', isRocket: false });
+      }
+    }
+  }, [loading, product, passedItem]);
 
   // A/B test: log product_view once when loading finishes
   useEffect(() => {

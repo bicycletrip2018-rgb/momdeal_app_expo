@@ -11,6 +11,77 @@ import { fetchCoupangProductMetadata } from '../services/productMetadataService'
 import { generateProductTags } from '../services/productTagService';
 import { recordPrice } from '../services/priceTrackingService';
 import { checkPriceAlerts } from '../services/priceAlertService';
+import CryptoJS from 'crypto-js';
+
+// ─── Coupang Partners API ─────────────────────────────────────────────────────
+const ACCESS_KEY = process.env.EXPO_PUBLIC_COUPANG_ACCESS_KEY;
+const SECRET_KEY = process.env.EXPO_PUBLIC_COUPANG_SECRET_KEY;
+
+const generateHmac = (method, url, secretKey, accessKey) => {
+  const parts = url.split(/\?/);
+  const [path, query = ''] = parts;
+
+  const now = new Date();
+  const year    = String(now.getUTCFullYear()).slice(-2);
+  const month   = String(now.getUTCMonth() + 1).padStart(2, '0');
+  const day     = String(now.getUTCDate()).padStart(2, '0');
+  const hours   = String(now.getUTCHours()).padStart(2, '0');
+  const minutes = String(now.getUTCMinutes()).padStart(2, '0');
+  const seconds = String(now.getUTCSeconds()).padStart(2, '0');
+
+  const datetime = `${year}${month}${day}T${hours}${minutes}${seconds}Z`;
+
+  const message = datetime + method + path + query;
+  const signature = CryptoJS.HmacSHA256(message, secretKey).toString(CryptoJS.enc.Hex);
+
+  return `CEA algorithm=HmacSHA256, access-key=${accessKey}, signed-date=${datetime}, signature=${signature}`;
+};
+
+const getPartnersLink = async (originalUrl) => {
+  if (!ACCESS_KEY || !SECRET_KEY || ACCESS_KEY.includes('여기에') || ACCESS_KEY === '') {
+    console.log('🚨 [Partners] API keys missing in .env');
+    return { url: originalUrl, success: false, error: 'API 키가 설정되지 않았습니다 (.env 확인 필요)' };
+  }
+  try {
+    const method = 'POST';
+    const domain = 'https://api-gateway.coupang.com';
+    const path   = '/v2/providers/affiliate_open_api/apis/openapi/v1/deeplink';
+    const authorization = generateHmac(method, path, SECRET_KEY, ACCESS_KEY);
+
+    const response = await fetch(domain + path, {
+      method,
+      headers: { 'Authorization': authorization, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ coupangUrls: [originalUrl] }),
+    });
+    const data = await response.json();
+    if (data.rCode === '0' && data.data?.length > 0) {
+      return { url: data.data[0].shortenUrl, success: true, error: null };
+    }
+    return { url: originalUrl, success: false, error: data.rMessage || JSON.stringify(data) };
+  } catch (error) {
+    console.error('[Partners] API Error:', error);
+    return { url: originalUrl, success: false, error: error.message };
+  }
+};
+
+const scrapeOgTags = async (url) => {
+  try {
+    const res = await fetch(url, {
+      headers: { 'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_6)' },
+    });
+    const html = await res.text();
+    const titleMatch = html.match(/<meta[^>]*property="og:title"[^>]*content="([^"]*)"[^>]*>/i);
+    const imageMatch = html.match(/<meta[^>]*property="og:image"[^>]*content="([^"]*)"[^>]*>/i);
+    let title = titleMatch ? titleMatch[1] : '쿠팡 상품';
+    let image = imageMatch ? imageMatch[1] : '';
+    if (image.startsWith('//')) image = 'https:' + image;
+    const isRocket = title.includes('로켓') || html.includes('로켓배송');
+    return { title, image, isRocket };
+  } catch (error) {
+    console.log('[OG Scrape] Failed:', error);
+    return { title: '쿠팡 상품', image: '', isRocket: false };
+  }
+};
 
 const PRODUCT_GROUP_ID_REGEX = /\/v[mp]\/products\/(\d+)/i;
 const ITEM_ID_REGEX = /[?&]itemId=(\d+)/i;
@@ -118,6 +189,13 @@ export async function registerCoupangProduct(inputUrl) {
     }
   }
 
+  // ── Hybrid: OG scrape for UI + Partners API for monetized link ──────────────
+  const [ogData, monetizedResult] = await Promise.all([
+    scrapeOgTags(url),
+    getPartnersLink(url),
+  ]);
+  const monetizedUrl = monetizedResult.url;
+
   const productGroupId = extractProductGroupId(url);
 
   if (!productGroupId) {
@@ -133,12 +211,15 @@ export async function registerCoupangProduct(inputUrl) {
   if (!productSnap.exists()) {
     await setDoc(productRef, {
       productGroupId,
-      name: 'unknown',
+      name: ogData.title !== '쿠팡 상품' ? ogData.title : 'unknown',
       brand: '',
       category: '',
       currentPrice: 0,
       status: 'active',
       source: 'coupang',
+      image: ogData.image || '',
+      affiliateUrl: monetizedUrl,
+      isRocket: ogData.isRocket,
       tags: [],
       stageTags: [],
       problemTags: [],
@@ -152,7 +233,11 @@ export async function registerCoupangProduct(inputUrl) {
       updatedAt: serverTimestamp(),
     });
   } else {
-    await updateDoc(productRef, { updatedAt: serverTimestamp() });
+    await updateDoc(productRef, {
+      affiliateUrl: monetizedUrl,
+      updatedAt: serverTimestamp(),
+      ...(ogData.image ? { image: ogData.image } : {}),
+    });
   }
 
   // ── 2. Metadata (fetched early so optionKey can be derived before arrays) ──
@@ -300,5 +385,14 @@ export async function registerCoupangProduct(inputUrl) {
   recordPrice(productGroupId, currentPrice, 'coupang').catch(() => {});
   checkPriceAlerts(productGroupId).catch(() => {});
 
-  return { ok: true, productGroupId };
+  return {
+    ok: true,
+    productGroupId,
+    name: ogData.title,
+    image: ogData.image,
+    isRocket: ogData.isRocket,
+    affiliateUrl: monetizedUrl,
+    isMonetized: monetizedResult.success,
+    apiError: monetizedResult.error,
+  };
 }

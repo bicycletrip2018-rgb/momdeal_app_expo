@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Alert,
+  AppState,
   FlatList,
   Image,
   Linking,
@@ -13,10 +14,14 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { useTracking } from '../context/TrackingContext';
+import * as Clipboard from 'expo-clipboard';
+import * as IntentLauncher from 'expo-intent-launcher';
+import { registerCoupangProduct } from '../utils/registerCoupangProduct';
 import { TrackingCard } from '../components/TrackingCard';
 
 // ─── Curation categories ──────────────────────────────────────────────────────
@@ -75,17 +80,19 @@ function CurationCard({ category, images, count, onPress }) {
 // ─── Screen ───────────────────────────────────────────────────────────────────
 
 export default function TrackingListScreen({ navigation }) {
-  const { globalTrackedItems, removeTrackedItem, updateTrackedItems } = useTracking();
+  const { globalTrackedItems, addTrackedItem, removeTrackedItem, updateTrackedItems } = useTracking();
 
   const [isEditMode,        setIsEditMode]        = useState(false);
   const [selectedIds,       setSelectedIds]       = useState([]);
-  const [viewMode,          setViewMode]          = useState('grid');
+  const [viewMode,          setViewMode]          = useState('list');
   const [showTooltip,       setShowTooltip]       = useState(false);
   const [showOnlyFavorites,  setShowOnlyFavorites]  = useState(false);
   const [sortOption,         setSortOption]         = useState('최신순');
   const [isSortModalVisible,   setIsSortModalVisible]   = useState(false);
   const [isFilterModalVisible, setIsFilterModalVisible] = useState(false);
   const [isTutorialVisible,    setIsTutorialVisible]    = useState(false);
+  const [showModal,  setShowModal]  = useState(false);
+  const [skipModal,  setSkipModal]  = useState(false);
 
   // Items shown in the FlatList — favorites filter applied when active.
   const listData = showOnlyFavorites
@@ -112,6 +119,66 @@ export default function TrackingListScreen({ navigation }) {
         return arr;
     }
   }, [listData, sortOption]);
+
+  // Load skipModal preference from AsyncStorage
+  useEffect(() => {
+    AsyncStorage.getItem('skipCoupangModal').then((val) => setSkipModal(val === 'true'));
+  }, []);
+
+
+  // Auto-detect Coupang link when app comes to foreground
+  useEffect(() => {
+    const handleAppStateChange = async (nextAppState) => {
+      if (nextAppState === 'active') {
+        const hasString = await Clipboard.hasStringAsync();
+        if (hasString) {
+          const text = await Clipboard.getStringAsync();
+          if (text.includes('coupang.com')) {
+            Alert.alert(
+              '알림',
+              '복사한 쿠팡 상품을 등록할까요?',
+              [
+                { text: '아니오', style: 'cancel' },
+                {
+                  text: '예',
+                  onPress: async () => {
+                    try {
+                      console.log('데이터 파싱 시작: ', text);
+                      const result = await registerCoupangProduct(text);
+                      if (result && result.ok) {
+                        addTrackedItem({
+                          productId: result.productGroupId,
+                          name: result.name || '쿠팡 상품',
+                          coupangUrl: result.affiliateUrl || text,
+                          image: result.image || null,
+                          isRocket: result.isRocket || false,
+                          currentPrice: null,
+                          deliveryType: result.isRocket ? 'rocket' : null,
+                        });
+                        if (result.isMonetized) {
+                          Alert.alert('🎉 수익화 연동 성공', '상품이 추가되었으며, 쿠팡 파트너스 수익화 링크로 완벽하게 변환되었습니다!');
+                        } else {
+                          Alert.alert('⚠️ 상품 추가됨 (수익화 실패)', `파트너스 링크 변환에 실패했습니다.\n\n쿠팡 서버 응답: ${result.apiError}`);
+                        }
+                      } else {
+                        throw new Error(result?.errorMessage || '상품 데이터를 가져오지 못했습니다.');
+                      }
+                    } catch (error) {
+                      console.error('Scraping Error: ', error);
+                      Alert.alert('오류', '상품 정보를 불러오는데 실패했습니다. 링크를 다시 확인해주세요.');
+                    }
+                  },
+                },
+              ]
+            );
+            await Clipboard.setStringAsync('');
+          }
+        }
+      }
+    };
+    const subscription = AppState.addEventListener('change', handleAppStateChange);
+    return () => subscription.remove();
+  }, []);
 
   // Dismiss tooltip whenever the screen goes out of focus (tab switch, navigation)
   useFocusEffect(useCallback(() => {
@@ -245,6 +312,7 @@ export default function TrackingListScreen({ navigation }) {
       {/* Section divider */}
       <View style={styles.curationDivider} />
 
+
       {/* Empty state — shown inside list when favorites filter yields nothing */}
       {sortedData.length === 0 && showOnlyFavorites && (
         <View style={styles.emptyState}>
@@ -288,12 +356,12 @@ export default function TrackingListScreen({ navigation }) {
           </TouchableOpacity>
 
           <TouchableOpacity
-            onPress={() => setViewMode((v) => v === 'grid' ? 'list' : 'grid')}
+            onPress={() => setViewMode((v) => v === 'list' ? 'grid2' : v === 'grid2' ? 'grid3' : 'list')}
             hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
             activeOpacity={0.7}
           >
             <Ionicons
-              name={viewMode === 'grid' ? 'list-outline' : 'grid-outline'}
+              name={viewMode === 'list' ? 'list-outline' : viewMode === 'grid2' ? 'grid-outline' : 'apps-outline'}
               size={20} color="#64748b"
             />
           </TouchableOpacity>
@@ -314,8 +382,51 @@ export default function TrackingListScreen({ navigation }) {
     </View>
   );
 
-  const isGrid = viewMode === 'grid';
-  const isEmpty = globalTrackedItems.length === 0;
+  const numColumns = viewMode === 'list' ? 1 : viewMode === 'grid2' ? 2 : 3;
+  const isEmpty    = globalTrackedItems.length === 0;
+
+  const openCoupangApp = async () => {
+    console.log('🚀 [DeepLink] Attempting Native App Launch...');
+    try {
+      if (Platform.OS === 'android') {
+        await IntentLauncher.startActivityAsync('android.intent.action.VIEW', {
+          data: 'coupang://home',
+          packageName: 'com.coupang.mobile',
+        });
+      } else {
+        await Linking.openURL('coupang://');
+      }
+    } catch (error) {
+      console.error('🚨 [DeepLink] Native Launch Failed: ', error);
+      Alert.alert(
+        '연결 실패',
+        '쿠팡 앱을 열 수 없습니다. 스마트폰에 쿠팡 앱이 설치되어 있는지 확인해 주세요.'
+      );
+    }
+  };
+
+  const handlePasteLink = async () => {
+    try {
+      const hasString = await Clipboard.hasStringAsync();
+      if (!hasString) {
+        Alert.alert('알림', '클립보드에 복사된 텍스트가 없습니다.');
+        return;
+      }
+      const copiedText = await Clipboard.getStringAsync();
+      console.log('Copied Text: ', copiedText);
+
+      if (!copiedText.includes('coupang.com')) {
+        Alert.alert('알림', '유효한 쿠팡 상품 링크가 아닙니다.\n복사된 내용: ' + copiedText.substring(0, 20) + '...');
+        return;
+      }
+
+      Alert.alert('성공', '쿠팡 링크를 확인했습니다! (API 연동 대기중)\n' + copiedText);
+      setShowModal(false);
+    } catch (error) {
+      console.error('Clipboard Error: ', error);
+      Alert.alert('에러 발생', '클립보드를 읽는 중 문제가 발생했습니다.');
+    }
+  };
 
   // Skeleton add card appended at the end (only when items exist)
   const listDataWithAdd = isEmpty ? [] : [...sortedData, { isAddPlaceholder: true }];
@@ -323,19 +434,32 @@ export default function TrackingListScreen({ navigation }) {
   return (
     <SafeAreaView edges={['bottom']} style={styles.container}>
 
-      {/* ── Zero-state: full-screen CTA when no items tracked ── */}
+      {/* ── Zero-state: Saveroo Magic Onboarding ── */}
       {isEmpty ? (
         <View style={styles.zeroState}>
-          <Ionicons name="cube-outline" size={64} color="#cbd5e1" style={{ marginBottom: 24 }} />
-          <Text style={styles.zeroStateTitle}>
-            {'아직 찜한 상품이 없어요!\n쿠팡에서 핫딜을 찾아 세이브루에 추가해보세요.'}
+          <Text style={{ fontSize: 18, fontWeight: '800', color: '#0f172a', textAlign: 'center', marginBottom: 24, lineHeight: 26 }}>
+            {'똑똑한 엄마들의 최저가 비서,\n세이브루 👶'}
           </Text>
+
+          {[
+            { step: '1', text: '쿠팡 앱에서 사고 싶은 육아템을 고른다.' },
+            { step: '2', text: '공유하기 버튼을 눌러 링크를 복사한다.' },
+            { step: '3', text: '세이브루로 돌아오면 자동으로 가격 추적 시작!' },
+          ].map(({ step, text }) => (
+            <View key={step} style={{ flexDirection: 'row', alignItems: 'flex-start', marginBottom: 14, width: '100%' }}>
+              <View style={{ width: 28, height: 28, borderRadius: 14, backgroundColor: '#3b82f6', alignItems: 'center', justifyContent: 'center', marginRight: 12, flexShrink: 0 }}>
+                <Text style={{ color: '#fff', fontWeight: '800', fontSize: 13 }}>{step}</Text>
+              </View>
+              <Text style={{ fontSize: 14, color: '#334155', lineHeight: 22, flex: 1 }}>{text}</Text>
+            </View>
+          ))}
+
           <TouchableOpacity
-            style={styles.zeroStateCta}
+            style={[styles.zeroStateCta, { marginTop: 8 }]}
             activeOpacity={0.82}
-            onPress={() => Linking.openURL('coupang://').catch(() => Linking.openURL('https://m.coupang.com'))}
+            onPress={() => Linking.openURL('https://m.coupang.com')}
           >
-            <Text style={styles.zeroStateCtaText}>+ 쿠팡 앱 열고 상품 찾기</Text>
+            <Text style={styles.zeroStateCtaText}>🚀 지금 쿠팡에서 상품 골라오기</Text>
           </TouchableOpacity>
         </View>
       ) : (
@@ -343,8 +467,8 @@ export default function TrackingListScreen({ navigation }) {
         key={viewMode}
         data={listDataWithAdd}
         keyExtractor={(item) => item.isAddPlaceholder ? '__add__' : String(item.productId ?? item.savedId)}
-        numColumns={isGrid ? 2 : 1}
-        columnWrapperStyle={isGrid ? styles.columnWrapper : undefined}
+        numColumns={numColumns}
+        columnWrapperStyle={viewMode !== 'list' ? (viewMode === 'grid3' ? styles.columnWrapperCompact : styles.columnWrapper) : undefined}
         ListHeaderComponent={SummaryBar}
         contentContainerStyle={[
           styles.listContent,
@@ -354,7 +478,7 @@ export default function TrackingListScreen({ navigation }) {
         extraData={{ isEditMode, selectedIds, viewMode, showOnlyFavorites, sortOption, globalTrackedItems }}
         renderItem={({ item }) => {
           if (item.isAddPlaceholder) {
-            if (isGrid) {
+            if (viewMode === 'grid2') {
               return (
                 <TouchableOpacity
                   style={styles.addCard}
@@ -363,6 +487,18 @@ export default function TrackingListScreen({ navigation }) {
                 >
                   <Ionicons name="add-circle-outline" size={32} color="#94a3b8" />
                   <Text style={styles.addCardText}>상품 추가</Text>
+                </TouchableOpacity>
+              );
+            }
+            if (viewMode === 'grid3') {
+              return (
+                <TouchableOpacity
+                  style={styles.addCardCompact}
+                  activeOpacity={0.7}
+                  onPress={() => Linking.openURL('coupang://').catch(() => Linking.openURL('https://m.coupang.com'))}
+                >
+                  <Ionicons name="add-circle-outline" size={20} color="#94a3b8" />
+                  <Text style={styles.addCardTextCompact}>추가</Text>
                 </TouchableOpacity>
               );
             }
@@ -509,6 +645,63 @@ export default function TrackingListScreen({ navigation }) {
         </View>
       </Modal>
 
+      {/* ── FAB ── */}
+      {!isEditMode && (
+        <TouchableOpacity
+          style={styles.fab}
+          onPress={() => { console.log('🔘 FAB Clicked'); if (skipModal) { openCoupangApp(); } else { setShowModal(true); } }}
+          activeOpacity={0.85}
+        >
+          <Text style={{ color: '#ffffff', fontWeight: 'bold', fontSize: 15 }}>+ 상품 추가</Text>
+        </TouchableOpacity>
+      )}
+
+      {/* ── Add Product Modal ── */}
+      <Modal
+        visible={showModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowModal(false)}
+      >
+        <Pressable style={styles.fabModalOverlay} onPress={() => setShowModal(false)}>
+          <Pressable style={styles.fabModalCard} onPress={(e) => e.stopPropagation?.()}>
+            <Text style={styles.fabModalTitle}>상품 추가 방법</Text>
+            {[
+              { icon: 'phone-portrait-outline', text: '1. 쿠팡 앱에서 원하는 상품을 여세요.' },
+              { icon: 'share-social-outline',   text: "2. 공유하기 버튼을 누르고 'URL 복사'를 선택하세요." },
+              { icon: 'sparkles-outline',        text: '3. 세이브루로 돌아오면 자동으로 추가됩니다!' },
+            ].map(({ icon, text }, i) => (
+              <View key={i} style={{ flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: 14 }}>
+                <Ionicons name={icon} size={24} color="#64748b" />
+                <Text style={{ fontSize: 14, color: '#334155', flex: 1, lineHeight: 20 }}>{text}</Text>
+              </View>
+            ))}
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 8 }}>
+              <TouchableOpacity
+                onPress={() => {
+                  const newValue = !skipModal;
+                  AsyncStorage.setItem('skipCoupangModal', String(newValue));
+                  setSkipModal(newValue);
+                }}
+                style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}
+                activeOpacity={0.7}
+              >
+                <Text style={{ fontSize: 13, color: skipModal ? '#3b82f6' : '#94a3b8' }}>
+                  {skipModal ? '✅' : '⬜'} 다시 보지 않음
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={{ backgroundColor: '#3b82f6', paddingVertical: 10, paddingHorizontal: 20, borderRadius: 8 }}
+                onPress={() => { console.log('🔘 Modal Button Clicked'); setShowModal(false); setTimeout(() => openCoupangApp(), 300); }}
+                activeOpacity={0.85}
+              >
+                <Text style={{ color: '#fff', fontWeight: 'bold', fontSize: 14 }}>쿠팡으로 이동</Text>
+              </TouchableOpacity>
+            </View>
+          </Pressable>
+        </Pressable>
+      </Modal>
+
       {/* ── Toggle switchboard action bar (edit mode only) ── */}
       {isEditMode && (
         <View style={styles.floatingBar}>
@@ -627,14 +820,16 @@ const styles = StyleSheet.create({
   guideBtnText:  { fontSize: 12, fontWeight: '600', color: '#64748b' },
 
   // Grid
-  columnWrapper: { justifyContent: 'space-between', paddingHorizontal: 16, marginBottom: 16, marginTop: 16 },
+  columnWrapper:        { justifyContent: 'space-between', paddingHorizontal: 16, marginBottom: 16, marginTop: 16 },
+  columnWrapperCompact: { justifyContent: 'flex-start', gap: 6, paddingHorizontal: 8, marginBottom: 8, marginTop: 8 },
 
   // Add skeleton card
   addCard: {
-    flex: 1, margin: 8, minHeight: 220, borderRadius: 12,
+    width: '48%', borderRadius: 12,
     borderWidth: 2, borderStyle: 'dashed', borderColor: '#cbd5e1',
     backgroundColor: '#f8fafc',
     alignItems: 'center', justifyContent: 'center', gap: 8,
+    aspectRatio: 0.75,
   },
   addCardList: {
     flexDirection: 'row', alignItems: 'center', gap: 10,
@@ -644,6 +839,14 @@ const styles = StyleSheet.create({
     marginHorizontal: 16, marginTop: 8, borderRadius: 10,
   },
   addCardText: { fontSize: 14, fontWeight: '600', color: '#64748b' },
+  addCardCompact: {
+    width: '31%', borderRadius: 8,
+    borderWidth: 2, borderStyle: 'dashed', borderColor: '#cbd5e1',
+    backgroundColor: '#f8fafc',
+    alignItems: 'center', justifyContent: 'center', gap: 4,
+    aspectRatio: 1,
+  },
+  addCardTextCompact: { fontSize: 11, fontWeight: '600', color: '#94a3b8' },
 
   // Empty state
   emptyState: { alignItems: 'center', paddingTop: 80 },
@@ -706,6 +909,31 @@ const styles = StyleSheet.create({
     ...Platform.select({ android: { elevation: 5 } }),
   },
   curationBadgeText: { fontSize: 10, fontWeight: '800', color: '#fff' },
+
+  // FAB
+  fab: {
+    position: 'absolute', right: 20, bottom: 20,
+    height: 52, borderRadius: 26,
+    paddingHorizontal: 20,
+    flexDirection: 'row', alignItems: 'center',
+    backgroundColor: '#3b82f6',
+    elevation: 5,
+    shadowColor: '#000', shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3, shadowRadius: 4,
+  },
+  fabModalOverlay: {
+    flex: 1, backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'center', alignItems: 'center',
+    paddingHorizontal: 24,
+  },
+  fabModalCard: {
+    backgroundColor: '#fff', borderRadius: 16,
+    padding: 24, width: '100%',
+  },
+  fabModalTitle: {
+    fontSize: 18, fontWeight: '800', color: '#0f172a',
+    marginBottom: 20,
+  },
 
   // ── Bottom sheet modals ──────────────────────────────────────────────────────
   modalOverlay: {

@@ -482,7 +482,9 @@ export default function ChildAddScreen({ navigation, route }) {
   const [productInterestNote, setProductInterestNote] = useState(initChild?.productInterestNote ?? '');
   const hasCustomInterest = productInterests.includes('기타 (직접 입력)');
 
-  const [saving, setSaving] = useState(false);
+  const [saving,            setSaving]            = useState(false);
+  const [showSuccessModal,  setShowSuccessModal]  = useState(false);
+  const [successMessage,    setSuccessMessage]    = useState('');
 
   // ── Generic toggle helpers ────────────────────────────────────────────────
   const makeToggleMulti = (setter) => (val) =>
@@ -580,14 +582,12 @@ export default function ChildAddScreen({ navigation, route }) {
       const payload = buildPayload();
       if (isEditMode) {
         await updateChild(childId, payload);
-        Alert.alert('수정 완료', '아이 정보가 업데이트되었습니다.', [
-          { text: '확인', onPress: () => navigation.goBack() },
-        ]);
+        setSuccessMessage('아이 정보가 업데이트되었습니다.');
+        setShowSuccessModal(true);
       } else {
         await createChild({ userId: auth.currentUser?.uid || '', ...payload });
-        Alert.alert('등록 완료', '아이 정보가 저장되었습니다.', [
-          { text: '확인', onPress: () => navigation.goBack() },
-        ]);
+        setSuccessMessage('아이 정보가 저장되었습니다.');
+        setShowSuccessModal(true);
       }
     } catch (error) {
       console.log('ChildAddScreen submit error:', error);
@@ -848,20 +848,6 @@ export default function ChildAddScreen({ navigation, route }) {
                 ))}
               </View>
 
-              {/* Universal: 사는 곳 */}
-              <View style={styles.cardDivider} />
-              <SectionLabel text="사는 곳" note="(선택)" />
-              <TouchableOpacity
-                style={styles.datePickerTrigger}
-                onPress={() => setShowRegionPicker(true)}
-                activeOpacity={0.8}
-              >
-                <Text style={region ? styles.datePickerValue : styles.datePickerPlaceholder}>
-                  {region || '지역을 선택해 주세요'}
-                </Text>
-                <Text style={{ fontSize: 14, color: '#94a3b8' }}>›</Text>
-              </TouchableOpacity>
-
               {/* Age-specific fields */}
               {renderAgeSpecificFields()}
             </View>
@@ -961,6 +947,32 @@ export default function ChildAddScreen({ navigation, route }) {
         onSelect={setRegion}
         onClose={() => setShowRegionPicker(false)}
       />
+
+      {/* ── Success Modal ── */}
+      <Modal
+        visible={showSuccessModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowSuccessModal(false)}
+      >
+        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center', paddingHorizontal: 32 }}>
+          <View style={{ backgroundColor: '#fff', borderRadius: 20, padding: 28, width: '100%', alignItems: 'center', shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.15, shadowRadius: 12, elevation: 8 }}>
+            <View style={{ width: 64, height: 64, borderRadius: 32, backgroundColor: '#dcfce7', alignItems: 'center', justifyContent: 'center', marginBottom: 16 }}>
+              <Text style={{ fontSize: 32 }}>✅</Text>
+            </View>
+            <Text style={{ fontWeight: 'bold', fontSize: 18, color: '#0f172a', textAlign: 'center', marginBottom: 24 }}>
+              {successMessage}
+            </Text>
+            <TouchableOpacity
+              style={{ backgroundColor: '#3b82f6', borderRadius: 12, paddingVertical: 14, width: '100%', alignItems: 'center' }}
+              activeOpacity={0.85}
+              onPress={() => { setShowSuccessModal(false); navigation.goBack(); }}
+            >
+              <Text style={{ color: '#fff', fontWeight: 'bold', fontSize: 16 }}>확인</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }

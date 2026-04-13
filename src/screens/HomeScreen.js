@@ -1,5 +1,10 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useContext, useEffect, useRef, useState } from 'react';
+import { useNavigation } from '@react-navigation/native';
+import { DeepLinkContext } from '../contexts/DeepLinkContext';
+import { useNotification } from '../context/NotificationContext';
+import { FontAwesome5 } from '@expo/vector-icons';
 import {
+  Animated,
   ActivityIndicator,
   Alert,
   FlatList,
@@ -28,14 +33,15 @@ const SNAP_INTERVAL = CARD_WIDTH + CARD_GAP;
 // ─── Dummy data ───────────────────────────────────────────────────────────────
 
 const SHORTCUTS = [
-  { emoji: '🔥', label: '오늘의 특가' },
-  { emoji: '🍼', label: '기저귀·분유' },
-  { emoji: '💬', label: '커뮤니티' },
-  { emoji: '🎁', label: '이벤트' },
-  { emoji: '⭐', label: '베스트' },
+  { icon: 'chart-line', color: '#ef4444', bg: '#fee2e2', label: '역대 최저가' },
+  { icon: 'baby',       color: '#6366f1', bg: '#ede9fe', label: '기저귀·분유' },
+  { icon: 'comments',   color: '#3b82f6', bg: '#dbeafe', label: '실시간 맘톡' },
+  { icon: 'gift',       color: '#8b5cf6', bg: '#f3e8ff', label: '무료 체험단' },
+  { icon: 'trophy',     color: '#d97706', bg: '#fef3c7', label: '또래 랭킹'  },
 ];
 
-const MOCK_TRACKED = [
+const MOCK_TRACKED = []; /* temporarily cleared for PM empty-state review */
+const _MOCK_TRACKED_BACKUP = [
   {
     id: 'pt1', emoji: '🧷', bg: '#fef9c3',
     brand: '하기스', name: '네이처메이드 기저귀 신생아 100매',
@@ -51,11 +57,11 @@ const MOCK_TRACKED = [
 ];
 
 const MOCK_UGC = [
-  { id: 'u1', emoji: '🛁', bg: '#bfdbfe', user: '별이맘', caption: '이거 대박이에요 진짜!', tag: '아기욕조' },
-  { id: 'u2', emoji: '🧸', bg: '#fbcfe8', user: '콩이맘', caption: '14개월 최애템 공유', tag: '봉제인형' },
-  { id: 'u3', emoji: '🥣', bg: '#bbf7d0', user: '하나맘', caption: '이유식 스타터 세트 후기', tag: '이유식용기' },
-  { id: 'u4', emoji: '👟', bg: '#fde68a', user: '솔이맘', caption: '첫걸음마 신발 사이즈 팁', tag: '걸음마신발' },
-  { id: 'u5', emoji: '🌡️', bg: '#ddd6fe', user: '하늘맘', caption: '체온계 비교 후기 총정리', tag: '체온계' },
+  { id: 'u1', image: 'https://via.placeholder.com/150/e2e8f0/64748b?text=Baby+Bath', title: '슈너글 아기욕조',      author: '별이맘', review: '이거 대박이에요 진짜! 허리 안 아픔',      tag: '아기욕조'  },
+  { id: 'u2', image: 'https://via.placeholder.com/150/e2e8f0/64748b?text=Jellycat',  title: '젤리캣 버니 L',       author: '콩이맘', review: '애착인형으로 최고. 벌써 두 개째',        tag: '봉제인형'  },
+  { id: 'u3', image: 'https://via.placeholder.com/150/e2e8f0/64748b?text=Baby+Food', title: '로코유 이유식 식판',   author: '하나맘', review: '디자인 너무 예쁘고 열탕 소독 편해요',    tag: '이유식용기' },
+  { id: 'u4', image: 'https://via.placeholder.com/150/e2e8f0/64748b?text=Shoes',     title: '닥터마틴 첫걸음마화',  author: '솔이맘', review: '첫걸음마 신발 사이즈 팁 공유해요',      tag: '걸음마신발' },
+  { id: 'u5', image: 'https://via.placeholder.com/150/e2e8f0/64748b?text=Thermom',   title: '브라운 비접촉 체온계', author: '하늘맘', review: '체온계 비교 후기 총정리',              tag: '체온계'    },
 ];
 
 const MOCK_TIME_SALE = [
@@ -66,10 +72,10 @@ const MOCK_TIME_SALE = [
 ];
 
 const WISH_GRID = [
-  { id: 'w1', emoji: '🎵', bg: '#fce7f3', name: '오볼 링 딸랑이',     price: 12900, discount: 20 },
-  { id: 'w2', emoji: '🛁', bg: '#e0f2fe', name: '에어텁 아기 욕조',   price: 29900, discount: 30 },
-  { id: 'w3', emoji: '🧸', bg: '#fef9c3', name: '라이언 봉제인형 L',  price: 18900, discount: 15 },
-  { id: 'w4', emoji: '📚', bg: '#f0fdf4', name: '보드북 세트 5종',    price: 14900, discount: 25 },
+  { id: 'w1', image: 'https://via.placeholder.com/150', brand: '브이텍',    name: '걸음마 학습기 한영버전',      price: 45000,  discount: 20 },
+  { id: 'w2', image: 'https://via.placeholder.com/150', brand: '스토케',    name: '트립트랩 하이체어 네츄럴',    price: 340000, discount: 5  },
+  { id: 'w3', image: 'https://via.placeholder.com/150', brand: '타이니러브', name: '수더앤그루브 모빌',          price: 78000,  discount: 15 },
+  { id: 'w4', image: 'https://via.placeholder.com/150', brand: '블루래빗',   name: '토이북 전집 세트',           price: 299000, discount: 30 },
 ];
 
 const TAG_COLOR = { 질문: '#eff6ff', 꿀팁: '#f0fdf4', 후기: '#fef9c3' };
@@ -95,9 +101,25 @@ function useTimer(initialSeconds) {
   return `${h}:${m}:${s}`;
 }
 
+function useBlinkAnim() {
+  const opacity = useRef(new Animated.Value(1)).current;
+  useEffect(() => {
+    const anim = Animated.loop(
+      Animated.sequence([
+        Animated.timing(opacity, { toValue: 0.4, duration: 600, useNativeDriver: true }),
+        Animated.timing(opacity, { toValue: 1,   duration: 600, useNativeDriver: true }),
+      ])
+    );
+    anim.start();
+    return () => anim.stop();
+  }, [opacity]);
+  return opacity;
+}
+
 // ─── 2. Hero Section ──────────────────────────────────────────────────────────
 
 function HeroSection({ child, childLoading }) {
+  const navigation = useNavigation();
   const name     = child?.name     || null;
   const ageMonth = child?.ageMonth ?? null;
 
@@ -115,16 +137,18 @@ function HeroSection({ child, childLoading }) {
               {name ? `☀️ ${name} 맘님, 안녕하세요!` : '☀️ 안녕하세요!'}
             </Text>
             <Text style={styles.heroSub}>
-              {name && ageMonth !== null
-                ? `${ageMonth}개월 맞춤 핫딜 큐레이션`
-                : '오늘의 베스트 육아 상품을 확인해보세요'}
+              세이브루 이용자는 평균 월 84,000원 아꼈어요!
             </Text>
           </>
         )}
         <View style={styles.heroCtaRow}>
-          <View style={styles.heroPill}>
-            <Text style={styles.heroPillText}>📦 지금 바로 확인하기</Text>
-          </View>
+          <TouchableOpacity activeOpacity={0.8} onPress={() => navigation.navigate('ProfileSettings')}>
+            <View style={[styles.heroPill, { paddingVertical: 8, marginVertical: 4 }]}>
+              <Text style={styles.heroPillText}>
+                {name && ageMonth !== null ? `${ageMonth}개월 맞춤 큐레이션하기` : '맞춤 큐레이션하기'}
+              </Text>
+            </View>
+          </TouchableOpacity>
         </View>
       </View>
       <View style={styles.heroCircle1} />
@@ -135,13 +159,34 @@ function HeroSection({ child, childLoading }) {
 
 // ─── 3. Shortcuts ─────────────────────────────────────────────────────────────
 
-function ShortcutRow() {
+const SHORTCUT_ACTIONS = [
+  (nav) => nav.navigate('Search',    { initialQuery: '', filter: 'max_discount' }),
+  (nav) => nav.navigate('Category'),
+  (nav) => nav.navigate('커뮤니티'),
+  (nav) => nav.navigate('TrialGuide'),
+  null, // handled inline via DeepLinkContext
+];
+
+function ShortcutRow({ navigation }) {
+  const { setDeepLinkIntent } = useContext(DeepLinkContext);
   return (
     <View style={styles.shortcutSection}>
-      {SHORTCUTS.map((s) => (
-        <TouchableOpacity key={s.label} style={styles.shortcutItem} activeOpacity={0.75}>
-          <View style={styles.shortcutCircle}>
-            <Text style={styles.shortcutEmoji}>{s.emoji}</Text>
+      {SHORTCUTS.map((s, idx) => (
+        <TouchableOpacity
+          key={s.label}
+          style={styles.shortcutItem}
+          activeOpacity={0.75}
+          onPress={() => {
+            if (idx === 4) {
+              setDeepLinkIntent({ targetTab: 'frequent', enableCustom: true, targetAge: '67개월' });
+              navigation.navigate('랭킹');
+            } else {
+              try { SHORTCUT_ACTIONS[idx](navigation); } catch (_) {}
+            }
+          }}
+        >
+          <View style={[styles.shortcutCircle, { backgroundColor: s.bg }]}>
+            <FontAwesome5 name={s.icon} size={20} color={s.color} />
           </View>
           <Text style={styles.shortcutLabel} numberOfLines={1}>{s.label}</Text>
         </TouchableOpacity>
@@ -188,87 +233,85 @@ function InsightBadge({ topText, bottomText, badgeBg, badgeColor }) {
   );
 }
 
-function PriceTrackingWidget({ navigation }) {
-  // Sort: items at/below lowestPrice first, then by descending discount vs averagePrice
+const EMPTY_HOT_ITEMS = [
+  { id: 'eh1', brand: '팸퍼스', name: '하이드로케어 기저귀 특대형 88매', currentPrice: 30500, originalPrice: 46900, discountPct: 35, bg: '#fef9c3', emoji: '🧷' },
+  { id: 'eh2', brand: '젤리캣', name: '바쉬풀 버니 미디엄 M 사이즈',     currentPrice: 35900, originalPrice: 44900, discountPct: 20, bg: '#fbcfe8', emoji: '🧸' },
+];
+
+function PriceTrackingWidget({ navigation, trackedItems = MOCK_TRACKED }) {
+  // Sort by largest discount rate (originalPrice → currentPrice) descending
   const sortedTracked = React.useMemo(() => {
-    return [...MOCK_TRACKED].sort((a, b) => {
-      const aHit = a.currentPrice <= a.lowestPrice ? 1 : 0;
-      const bHit = b.currentPrice <= b.lowestPrice ? 1 : 0;
-      if (aHit !== bHit) return bHit - aHit; // hit items first
-      const pctA = (a.averagePrice - a.currentPrice) / a.averagePrice;
-      const pctB = (b.averagePrice - b.currentPrice) / b.averagePrice;
-      return pctB - pctA; // highest discount first
+    return [...trackedItems].sort((a, b) => {
+      const pctA = a.originalPrice > 0 ? (a.originalPrice - a.currentPrice) / a.originalPrice : 0;
+      const pctB = b.originalPrice > 0 ? (b.originalPrice - b.currentPrice) / b.originalPrice : 0;
+      return pctB - pctA;
     });
-  }, []);
+  }, [trackedItems]);
+
+  const isEmpty = trackedItems.length === 0;
 
   return (
     <View style={styles.section}>
       <View style={styles.sectionHeaderRow}>
         <Text style={styles.sectionTitle}>📉 나의 가격 추적 현황</Text>
-        <TouchableOpacity
-          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-          onPress={() => navigation.navigate('관심상품')}
-        >
+        <TouchableOpacity hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }} onPress={() => navigation.navigate('관심상품')}>
           <Text style={styles.sectionViewAll}>전체보기 ›</Text>
         </TouchableOpacity>
       </View>
-      <Text style={styles.sectionSub}>가격이 떨어지면 즉시 알림을 드려요</Text>
+      <Text style={[styles.sectionSub, { marginBottom: 2 }]}>가격이 떨어지면 즉시 알림을 드려요</Text>
 
-      {sortedTracked.map((item) => {
-        const diffPct = Math.round(Math.abs(1 - item.currentPrice / item.averagePrice) * 100);
-        let topText, bottomText, badgeBg, badgeColor;
-
-        if (item.currentPrice <= item.lowestPrice) {
-          bottomText = '🔥 역대 최저가 도달'; badgeBg = '#fef2f2'; badgeColor = '#ef4444';
-        } else if (item.currentPrice < item.averagePrice) {
-          bottomText = '📉 평균가 하락';      badgeBg = '#eff6ff'; badgeColor = '#3b82f6';
-        } else if (item.currentPrice === item.averagePrice) {
-          bottomText = '➖ 평균가 유지';      badgeBg = '#f1f5f9'; badgeColor = '#64748b';
-        } else if (item.currentPrice >= item.highestPrice) {
-          bottomText = '🚨 역대 최고가';      badgeBg = '#475569'; badgeColor = '#ffffff';
-        } else {
-          bottomText = '📈 평균가 이상';      badgeBg = '#f1f5f9'; badgeColor = '#64748b';
-        }
-
-        const aboveAvg  = item.currentPrice > item.averagePrice;
-        const belowAvg  = item.currentPrice < item.averagePrice;
-
-        return (
+      {isEmpty ? (
+        /* ── Empty State (PM spec) ── */
+        <View style={{ backgroundColor: '#f8fafc', borderRadius: 12, padding: 14, alignItems: 'center', marginTop: 2, borderWidth: 1, borderColor: '#e2e8f0' }}>
+          <Text style={{ fontSize: 13, color: '#64748b', marginBottom: 10 }}>추적 중인 상품이 없습니다.</Text>
           <TouchableOpacity
-            key={item.id} style={styles.trackCard} activeOpacity={0.88}
-            onPress={() => navigation.navigate('Detail', { item })}
+            style={{ backgroundColor: '#3b82f6', paddingVertical: 10, paddingHorizontal: 16, borderRadius: 8 }}
+            activeOpacity={0.85}
+            onPress={() => navigation.navigate('관심상품')}
           >
-            {/* Thumb */}
-            <View style={[styles.trackThumb, { backgroundColor: item.bg }]}>
-              <Text style={styles.trackEmoji}>{item.emoji}</Text>
-            </View>
-
-            {/* Info */}
-            <View style={styles.trackInfo}>
-              <Text style={styles.trackBrand}>{item.brand}</Text>
-              <Text style={styles.trackName} numberOfLines={1}>{item.name}</Text>
-              <View style={styles.trackPriceRow}>
-                <Text style={styles.trackPrice}>₩{item.currentPrice.toLocaleString('ko-KR')}</Text>
-                {belowAvg && (
-                  <Text style={{ color: '#3b82f6', fontWeight: 'bold', marginLeft: 6, fontSize: 14 }}>▼ {diffPct}%</Text>
-                )}
-                {aboveAvg && (
-                  <Text style={{ color: '#ef4444', fontWeight: 'bold', marginLeft: 6, fontSize: 14 }}>▲ {diffPct}%</Text>
-                )}
-              </View>
-              <Text style={styles.trackOriginal}>정가 ₩{item.originalPrice.toLocaleString('ko-KR')}</Text>
-            </View>
-
-            {/* Qualitative state badge (no numbers) */}
-            <InsightBadge
-              topText=""
-              bottomText={bottomText}
-              badgeBg={badgeBg}
-              badgeColor={badgeColor}
-            />
+            <Text style={{ color: '#fff', fontSize: 13, fontWeight: '600' }}>+ 상품 추가하러 가기</Text>
           </TouchableOpacity>
-        );
-      })}
+        </View>
+      ) : (
+        sortedTracked.map((item) => {
+          const diffPct = Math.round(Math.abs(1 - item.currentPrice / item.averagePrice) * 100);
+          let bottomText, badgeBg, badgeColor;
+
+          if (item.currentPrice <= item.lowestPrice) {
+            bottomText = '🔥 역대 최저가 도달'; badgeBg = '#fef2f2'; badgeColor = '#ef4444';
+          } else if (item.currentPrice < item.averagePrice) {
+            bottomText = '📉 평균가 하락';      badgeBg = '#eff6ff'; badgeColor = '#3b82f6';
+          } else if (item.currentPrice === item.averagePrice) {
+            bottomText = '➖ 평균가 유지';      badgeBg = '#f1f5f9'; badgeColor = '#64748b';
+          } else if (item.currentPrice >= item.highestPrice) {
+            bottomText = '🚨 역대 최고가';      badgeBg = '#475569'; badgeColor = '#ffffff';
+          } else {
+            bottomText = '📈 평균가 이상';      badgeBg = '#f1f5f9'; badgeColor = '#64748b';
+          }
+
+          const aboveAvg = item.currentPrice > item.averagePrice;
+          const belowAvg = item.currentPrice < item.averagePrice;
+
+          return (
+            <TouchableOpacity key={item.id} style={styles.trackCard} activeOpacity={0.88} onPress={() => navigation.navigate('Detail', { item })}>
+              <View style={[styles.trackThumb, { backgroundColor: item.bg }]}>
+                <Text style={styles.trackEmoji}>{item.emoji}</Text>
+              </View>
+              <View style={styles.trackInfo}>
+                <Text style={styles.trackBrand}>{item.brand}</Text>
+                <Text style={styles.trackName} numberOfLines={1}>{item.name}</Text>
+                <View style={styles.trackPriceRow}>
+                  <Text style={styles.trackPrice}>₩{item.currentPrice.toLocaleString('ko-KR')}</Text>
+                  {belowAvg && <Text style={{ color: '#3b82f6', fontWeight: 'bold', marginLeft: 6, fontSize: 14 }}>▼ {diffPct}%</Text>}
+                  {aboveAvg && <Text style={{ color: '#ef4444', fontWeight: 'bold', marginLeft: 6, fontSize: 14 }}>▲ {diffPct}%</Text>}
+                </View>
+                <Text style={styles.trackOriginal}>정가 ₩{item.originalPrice.toLocaleString('ko-KR')}</Text>
+              </View>
+              <InsightBadge topText="" bottomText={bottomText} badgeBg={badgeBg} badgeColor={badgeColor} />
+            </TouchableOpacity>
+          );
+        })
+      )}
     </View>
   );
 }
@@ -303,19 +346,19 @@ function UGCGallery({ navigation }) {
             activeOpacity={0.88}
             onPress={() => navigation.navigate('Detail', { item })}
           >
-            {/* Large "photo" area */}
-            <View style={[styles.ugcPhoto, { backgroundColor: item.bg }]}>
-              <Text style={styles.ugcPhotoEmoji}>{item.emoji}</Text>
+            {/* Square image card */}
+            <View style={styles.ugcPhoto}>
+              <Image source={{ uri: item.image }} style={{ width: 140, height: 140 }} resizeMode="cover" />
 
-              {/* Bottom overlay: user + caption */}
-              <View style={styles.ugcOverlay}>
-                <Text style={styles.ugcUser}>{item.user}</Text>
-                <Text style={styles.ugcCaption} numberOfLines={1}>{item.caption}</Text>
-              </View>
-
-              {/* Bottom-right: shoppable tag */}
+              {/* Top-left: category badge */}
               <View style={styles.ugcTagBtn}>
                 <Text style={styles.ugcTagBtnText}>+ {item.tag}</Text>
+              </View>
+
+              {/* Bottom overlay (40% height dim): author + review */}
+              <View style={styles.ugcOverlay}>
+                <Text style={styles.ugcUser}>{item.author}</Text>
+                <Text style={styles.ugcCaption} numberOfLines={1}>{item.review}</Text>
               </View>
             </View>
           </TouchableOpacity>
@@ -329,14 +372,15 @@ function UGCGallery({ navigation }) {
 
 function TimeSaleSection({ navigation }) {
   const timeLabel = useTimer(46138); // ~12h 48m 58s
+  const blinkOpacity = useBlinkAnim();
 
   return (
     <View style={styles.section}>
       <View style={styles.timeSaleHeader}>
         <Text style={styles.sectionTitle}>⏰ 로켓배송 마감 임박 타임세일</Text>
-        <View style={styles.timerBadge}>
+        <Animated.View style={[styles.timerBadge, { opacity: blinkOpacity }]}>
           <Text style={styles.timerText}>{timeLabel} 남음</Text>
-        </View>
+        </Animated.View>
       </View>
       <Text style={[styles.sectionSub]}>마감 전 구매 시 당일 배송 보장</Text>
 
@@ -357,26 +401,31 @@ function TimeSaleSection({ navigation }) {
               <View style={styles.timeSaleDiscountPill}>
                 <Text style={styles.timeSaleDiscountPillText}>-{item.discount}%</Text>
               </View>
-              {/* Stock urgency strip */}
+              {/* Stock urgency strip + progress bar */}
               <View style={styles.timeSaleStockStrip}>
                 <Text style={styles.timeSaleStockText}>⏰ {item.stock}개 남음</Text>
+                <View style={styles.stockBarTrack}>
+                  <View style={[styles.stockBarFill, { width: `${Math.min(100, Math.round((item.stock / 30) * 100))}%` }]} />
+                </View>
               </View>
             </View>
 
             {/* Info */}
             <View style={styles.timeSaleInfo}>
-              <Text style={styles.timeSaleBrand}>{item.brand}</Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 4 }}>
+                <Text style={styles.timeSaleBrand}>{item.brand}</Text>
+                {item.isRocket && (
+                  <View style={[styles.rocketBadge, { marginLeft: 6, marginTop: 0 }]}>
+                    <Text style={styles.rocketBadgeText}>🚀 로켓배송</Text>
+                  </View>
+                )}
+              </View>
               <Text style={styles.timeSaleName} numberOfLines={2}>{item.name}</Text>
               <View style={styles.timeSalePriceRow}>
                 <Text style={styles.timeSaleDiscount}>{item.discount}%</Text>
                 <Text style={styles.timeSalePrice}>₩{item.price.toLocaleString('ko-KR')}</Text>
               </View>
               <Text style={styles.timeSaleOriginal}>₩{item.originalPrice.toLocaleString('ko-KR')}</Text>
-              {item.isRocket && (
-                <View style={styles.rocketBadge}>
-                  <Text style={styles.rocketBadgeText}>🚀 로켓배송</Text>
-                </View>
-              )}
             </View>
           </TouchableOpacity>
         ))}
@@ -395,7 +444,7 @@ function PersonalizedGrid({ child, navigation }) {
     <View style={styles.section}>
       <View style={styles.sectionHeaderRow}>
         <Text style={styles.sectionTitle} numberOfLines={2}>
-          ✨ {ageMonth}개월 {gender}들이 이번 주{'\n'}가장 많이 담은 위시리스트
+          🎁 {ageMonth}개월 맘들이 탐내는 위시템
         </Text>
         <TouchableOpacity
           hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
@@ -404,6 +453,7 @@ function PersonalizedGrid({ child, navigation }) {
           <Text style={styles.sectionViewAll}>랭킹 보기 ›</Text>
         </TouchableOpacity>
       </View>
+      <Text style={styles.sectionSub}>눈여겨보던 고가 육아템, 역대급 할인 폭으로 득템할 기회✨</Text>
 
       <View style={styles.wishGrid}>
         {WISH_GRID.map((item) => (
@@ -413,14 +463,36 @@ function PersonalizedGrid({ child, navigation }) {
             activeOpacity={0.88}
             onPress={() => recordProductAction({ userId: auth.currentUser?.uid, productId: item.id, productGroupId: item.id, actionType: 'click' })}
           >
-            <View style={[styles.wishThumb, { backgroundColor: item.bg }]}>
-              <Text style={styles.wishEmoji}>{item.emoji}</Text>
+            <View style={styles.wishThumb}>
+              <Image source={{ uri: item.image }} style={{ width: '100%', height: '100%' }} resizeMode="cover" />
               <View style={styles.wishDiscountPill}>
                 <Text style={styles.wishDiscountText}>-{item.discount}%</Text>
               </View>
             </View>
-            <Text style={styles.wishName} numberOfLines={2}>{item.name}</Text>
-            <Text style={styles.wishPrice}>₩{item.price.toLocaleString('ko-KR')}</Text>
+            <View style={{ paddingHorizontal: 8, paddingTop: 6 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 4 }}>
+                <Text style={styles.wishBrand} numberOfLines={1}>{item.brand}</Text>
+                {item.isRocket && (
+                  <View style={[styles.rocketBadge, { marginLeft: 6, marginTop: 0 }]}>
+                    <Text style={styles.rocketBadgeText}>🚀 로켓배송</Text>
+                  </View>
+                )}
+              </View>
+              <Text style={styles.wishName} numberOfLines={2}>{item.name}</Text>
+              <View style={{ marginTop: 4 }}>
+                <View style={{ flexDirection: 'row', alignItems: 'baseline' }}>
+                  <Text style={{ fontSize: 14, fontWeight: 'bold', color: '#ef4444', marginRight: 4 }}>
+                    {item.discount || 15}%
+                  </Text>
+                  <Text style={{ fontSize: 14, fontWeight: 'bold', color: '#0f172a' }}>
+                    ₩{item.price.toLocaleString('ko-KR')}
+                  </Text>
+                </View>
+                <Text style={{ fontSize: 11, color: '#94a3b8', textDecorationLine: 'line-through', marginTop: 2 }}>
+                  ₩{(item.originalPrice ?? Math.round(item.price * (1 + (item.discount || 15) / 100))).toLocaleString('ko-KR')}
+                </Text>
+              </View>
+            </View>
           </TouchableOpacity>
         ))}
       </View>
@@ -496,30 +568,30 @@ function ProductCard({ item, index, navigation }) {
               <Text style={styles.lowestPriceText}>🔥 역대 최저가</Text>
             </View>
           )}
-          <TouchableOpacity
-            style={styles.cardAddBtn}
-            hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
-            onPress={() =>
-              recordProductAction({
-                userId: auth.currentUser?.uid,
-                productId: item.productId,
-                productGroupId: item.productId,
-                actionType: 'track',
-              })
-            }
-            activeOpacity={0.8}
-          >
-            <Text style={styles.cardAddBtnText}>+</Text>
-          </TouchableOpacity>
         </View>
         <View style={styles.cardInfo}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 4 }}>
+            <Text style={styles.cardBrand} numberOfLines={1}>{item.brand || '브랜드'}</Text>
+            {item.isRocket && (
+              <View style={[styles.rocketBadge, { marginLeft: 6, marginTop: 0 }]}>
+                <Text style={styles.rocketBadgeText}>🚀 로켓배송</Text>
+              </View>
+            )}
+          </View>
           <Text style={styles.cardName} numberOfLines={2}>{item.name || '이름 없음'}</Text>
-          <Text style={styles.cardPrice}>{price}</Text>
-          {item.isRocket && (
-            <View style={styles.cardRocket}>
-              <Text style={styles.cardRocketText}>로켓배송</Text>
+          <View style={{ marginTop: 4 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'baseline' }}>
+              <Text style={{ fontSize: 14, fontWeight: 'bold', color: '#ef4444', marginRight: 4 }}>
+                {item.discount || 15}%
+              </Text>
+              <Text style={{ fontSize: 14, fontWeight: 'bold', color: '#0f172a' }}>
+                ₩{(item.price ?? item.currentPrice ?? 0).toLocaleString('ko-KR')}
+              </Text>
             </View>
-          )}
+            <Text style={{ fontSize: 11, color: '#94a3b8', textDecorationLine: 'line-through', marginTop: 2 }}>
+              ₩{(item.originalPrice ?? Math.round((item.price ?? item.currentPrice ?? 0) * 1.15)).toLocaleString('ko-KR')}
+            </Text>
+          </View>
         </View>
       </TouchableOpacity>
     </View>
@@ -529,6 +601,8 @@ function ProductCard({ item, index, navigation }) {
 // ─── Screen ───────────────────────────────────────────────────────────────────
 
 export default function HomeScreen({ navigation }) {
+  const { unreadCount } = useNotification();
+  const { setDeepLinkIntent } = useContext(DeepLinkContext);
   const [child,            setChild]            = useState(null);
   const [childLoading,     setChildLoading]     = useState(true);
   const [curation,         setCuration]         = useState([]);
@@ -583,6 +657,7 @@ export default function HomeScreen({ navigation }) {
         tabName="Home"
         placeholder="기저귀 최저가를 검색해보세요"
         navigation={navigation}
+        unreadCount={unreadCount}
       />
 
       {/* ── Main scrollable feed ── */}
@@ -603,7 +678,7 @@ export default function HomeScreen({ navigation }) {
         <HeroSection child={child} childLoading={childLoading} />
 
         {/* 2. Shortcuts */}
-        <ShortcutRow />
+        <ShortcutRow navigation={navigation} />
 
         {/* 3. Onboarding Nudge (only when no child profile) */}
         {showNudge && <OnboardingNudge navigation={navigation} />}
@@ -622,17 +697,24 @@ export default function HomeScreen({ navigation }) {
           <View style={styles.sectionHeaderRow}>
             <Text style={styles.sectionTitle}>
               {child?.name && child?.ageMonth != null
-                ? `${child.ageMonth}개월 또래 맘들의 장바구니`
-                : '또래 맘들의 실시간 장바구니'}
+                ? `📦 ${child.ageMonth}개월 또래 맘들의 쟁여템`
+                : '📦 또래 맘들의 실시간 쟁여템'}
             </Text>
             <TouchableOpacity
-              onPress={() => navigation.navigate('랭킹')}
+              onPress={() => {
+                setDeepLinkIntent({
+                  targetTab: 'frequent',
+                  enableCustom: true,
+                  targetAge: child?.ageMonth ? `${child.ageMonth}개월` : '67개월',
+                });
+                navigation.navigate('랭킹');
+              }}
               hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
             >
               <Text style={styles.sectionViewAll}>더보기 ›</Text>
             </TouchableOpacity>
           </View>
-          <Text style={styles.sectionSub}>출산·유아동 카테고리 인기 상품</Text>
+          <Text style={styles.sectionSub}>자주 사는 필수 소모품, 지금이 역대 최저가🔥</Text>
 
           {curationLoading ? (
             <View style={styles.curationLoading}>
@@ -684,16 +766,17 @@ const styles = StyleSheet.create({
 
   // ── Hero ────────────────────────────────────────────────────────────────────
   hero: {
-    margin: 12, height: 160, borderRadius: 18,
+    marginHorizontal: 12, marginTop: 4, marginBottom: 4,
+    minHeight: 0, height: 'auto', borderRadius: 18,
     backgroundColor: '#1d4ed8', overflow: 'hidden', justifyContent: 'center',
   },
-  heroInner: { padding: 20, zIndex: 1 },
+  heroInner: { paddingHorizontal: 20, paddingVertical: 16, zIndex: 1 },
   heroGreeting: { fontSize: 18, fontWeight: '900', color: '#fff', marginBottom: 4 },
   heroSub: { fontSize: 13, color: 'rgba(255,255,255,0.85)', marginBottom: 14, lineHeight: 19 },
   heroCtaRow: { flexDirection: 'row' },
   heroPill: {
     backgroundColor: '#fff', borderRadius: 20,
-    paddingHorizontal: 14, paddingVertical: 7,
+    paddingHorizontal: 14, paddingVertical: 5,
   },
   heroPillText: { fontSize: 13, fontWeight: '700', color: '#1d4ed8' },
   heroCircle1: {
@@ -714,14 +797,13 @@ const styles = StyleSheet.create({
     paddingVertical: 16, paddingHorizontal: 8,
     borderBottomWidth: 1, borderBottomColor: '#f1f5f9',
   },
-  shortcutItem: { alignItems: 'center', gap: 6 },
+  shortcutItem: { alignItems: 'center', gap: 2 },
   shortcutCircle: {
-    width: 52, height: 52, borderRadius: 26,
-    backgroundColor: '#eff6ff', alignItems: 'center', justifyContent: 'center',
-    borderWidth: 1, borderColor: '#dbeafe',
+    width: 50, height: 50, borderRadius: 25,
+    backgroundColor: '#f1f5f9', alignItems: 'center', justifyContent: 'center',
+    marginBottom: 2,
   },
-  shortcutEmoji: { fontSize: 22 },
-  shortcutLabel: { fontSize: 11, fontWeight: '600', color: '#475569', maxWidth: 52, textAlign: 'center' },
+  shortcutLabel: { fontSize: 12, fontWeight: '600', color: '#475569', maxWidth: 56, textAlign: 'center', marginTop: 2, letterSpacing: -0.5 },
 
   // ── Onboarding Nudge ────────────────────────────────────────────────────────
   nudgeBanner: {
@@ -772,6 +854,13 @@ const styles = StyleSheet.create({
   trackPriceRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 2 },
   trackPrice:    { fontSize: 14, fontWeight: '900', color: '#0f172a' },
   trackOriginal: { fontSize: 11, color: '#cbd5e1', textDecorationLine: 'line-through' },
+  trackEmptyTitle: { fontSize: 15, fontWeight: 'bold', color: '#0f172a', marginTop: 8, marginBottom: 4 },
+  trackEmptySub:   { fontSize: 13, color: '#64748b', marginBottom: 12 },
+  trackCtaBtn: {
+    backgroundColor: '#1d4ed8', borderRadius: 10,
+    paddingVertical: 14, alignItems: 'center', marginTop: 12,
+  },
+  trackCtaBtnText: { fontSize: 14, fontWeight: '800', color: '#fff' },
   lowestBadge: {
     backgroundColor: '#fee2e2', borderRadius: 6,
     paddingHorizontal: 7, paddingVertical: 3,
@@ -798,23 +887,22 @@ const styles = StyleSheet.create({
     }),
   },
   ugcPhoto: {
-    width: 140, height: 180,
-    alignItems: 'center', justifyContent: 'center',
+    width: 140, height: 140,
     borderRadius: 14, overflow: 'hidden',
   },
-  ugcPhotoEmoji: { fontSize: 56 },
   ugcOverlay: {
     position: 'absolute', bottom: 0, left: 0, right: 0,
-    backgroundColor: 'rgba(0,0,0,0.45)',
+    height: '40%',
+    backgroundColor: 'rgba(0,0,0,0.48)',
     paddingHorizontal: 8, paddingVertical: 7,
+    justifyContent: 'flex-end',
   },
   ugcUser:    { fontSize: 11, fontWeight: '700', color: '#fff', marginBottom: 1 },
   ugcCaption: { fontSize: 11, color: 'rgba(255,255,255,0.9)' },
   ugcTagBtn: {
-    position: 'absolute', bottom: 40, right: 6,
-    backgroundColor: '#fff', borderRadius: 8,
-    paddingHorizontal: 6, paddingVertical: 4,
-    borderWidth: 1, borderColor: '#e2e8f0',
+    position: 'absolute', top: 6, left: 6,
+    backgroundColor: 'rgba(255,255,255,0.85)', borderRadius: 6,
+    paddingHorizontal: 6, paddingVertical: 3,
   },
   ugcTagBtnText: { fontSize: 10, fontWeight: '800', color: '#1d4ed8' },
 
@@ -853,6 +941,13 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0,0,0,0.5)', paddingVertical: 3, alignItems: 'center',
   },
   timeSaleStockText: { fontSize: 10, fontWeight: '700', color: '#fef9c3' },
+  stockBarTrack: {
+    width: '90%', height: 3, backgroundColor: 'rgba(255,255,255,0.25)',
+    borderRadius: 2, marginTop: 3, overflow: 'hidden',
+  },
+  stockBarFill: {
+    height: 3, backgroundColor: '#ef4444', borderRadius: 2,
+  },
   timeSaleInfo:    { padding: 8, gap: 2 },
   timeSaleBrand:   { fontSize: 10, color: '#94a3b8', fontWeight: '600' },
   timeSaleName:    { fontSize: 12, fontWeight: '600', color: '#0f172a', lineHeight: 16 },
@@ -876,10 +971,9 @@ const styles = StyleSheet.create({
     borderWidth: 1, borderColor: '#e4e7ed',
   },
   wishThumb: {
-    height: 100, alignItems: 'center', justifyContent: 'center',
-    position: 'relative',
+    height: 110, position: 'relative', overflow: 'hidden',
   },
-  wishEmoji: { fontSize: 40 },
+  wishBrand: { fontSize: 10, fontWeight: '600', color: '#94a3b8' },
   wishDiscountPill: {
     position: 'absolute', top: 6, right: 6,
     backgroundColor: '#ef4444', borderRadius: 6,
@@ -887,12 +981,10 @@ const styles = StyleSheet.create({
   },
   wishDiscountText: { fontSize: 10, fontWeight: '900', color: '#fff' },
   wishName: {
-    fontSize: 12, fontWeight: '600', color: '#0f172a',
-    paddingHorizontal: 8, paddingTop: 6, lineHeight: 16,
+    fontSize: 12, fontWeight: '600', color: '#0f172a', lineHeight: 16,
   },
   wishPrice: {
-    fontSize: 13, fontWeight: '900', color: '#0f172a',
-    paddingHorizontal: 8, paddingBottom: 8, marginTop: 2,
+    fontSize: 13, fontWeight: '900', color: '#0f172a', marginTop: 2, paddingBottom: 8,
   },
 
   // ── Curation ─────────────────────────────────────────────────────────────────
@@ -934,6 +1026,7 @@ const styles = StyleSheet.create({
   },
   lowestPriceText: { fontSize: 10, fontWeight: '800', color: '#fff', letterSpacing: 0.3 },
   cardInfo: { padding: 8, gap: 3 },
+  cardBrand: { fontSize: 10, fontWeight: '600', color: '#94a3b8' },
   cardName:  { fontSize: 12, fontWeight: '600', color: '#0f172a', lineHeight: 16 },
   cardPrice: { fontSize: 13, fontWeight: '800', color: '#0f172a' },
   cardRocket: {

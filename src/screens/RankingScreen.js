@@ -1,4 +1,6 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import { useFocusEffect } from '@react-navigation/native';
+import { DeepLinkContext } from '../contexts/DeepLinkContext';
 import {
   Alert,
   FlatList,
@@ -36,11 +38,10 @@ const STAGE_LABELS = {
 // ─── Top tabs ─────────────────────────────────────────────────────────────────
 
 const TOP_TABS = [
-  { key: 'rising',   label: '🚀 급상승' },
-  { key: 'category', label: '🗂️ 카테고리별' },
-  { key: 'interest', label: '❤️ 관심' },
-  { key: 'new',      label: '✨ 신제품' },
-  { key: 'brand',    label: '🏢 브랜드' },
+  { key: 'rising',   label: '🔻 가격급락' },
+  { key: 'frequent', label: '📦 자주사는' },
+  { key: 'wishlist', label: '🎁 사고싶은' },
+  { key: 'new',      label: '🆕 신상품'   },
 ];
 
 // ─── Category filters (Coupang macro categories) ─────────────────────────────
@@ -177,10 +178,19 @@ function RankItem({ item, rank, navigation, isCustom, child }) {
           <Text style={styles.itemReviewCount}>({item.reviewCount.toLocaleString('ko-KR')})</Text>
         </View>
 
-        {/* Row 3: Discount + price */}
-        <View style={styles.itemPriceRow}>
-          <Text style={styles.itemDiscount}>{item.discount}%</Text>
-          <Text style={styles.itemPrice}>{item.price.toLocaleString('ko-KR')}원</Text>
+        {/* Row 3: Standard Price Format */}
+        <View style={{ marginTop: 4 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'baseline' }}>
+            <Text style={{ fontSize: 14, fontWeight: 'bold', color: '#ef4444', marginRight: 4 }}>
+              {item.discount || 15}%
+            </Text>
+            <Text style={{ fontSize: 14, fontWeight: 'bold', color: '#0f172a' }}>
+              ₩{item.price.toLocaleString('ko-KR')}
+            </Text>
+          </View>
+          <Text style={{ fontSize: 11, color: '#94a3b8', textDecorationLine: 'line-through', marginTop: 2 }}>
+            ₩{(item.original || item.originalPrice || Math.round(item.price * 1.15)).toLocaleString('ko-KR')}
+          </Text>
         </View>
       </View>
     </TouchableOpacity>
@@ -269,10 +279,12 @@ function CoupangCtaFooter() {
 
 // ─── Screen ───────────────────────────────────────────────────────────────────
 
-export default function RankingScreen({ navigation }) {
+export default function RankingScreen({ navigation, route }) {
+  const { deepLinkIntent, setDeepLinkIntent } = useContext(DeepLinkContext);
   const [activeTab,          setActiveTab]          = useState('rising');
   const [selectedCategory,   setSelectedCategory]   = useState('all');
   const [isCustomRanking,    setIsCustomRanking]     = useState(false);
+  const [deepLinkAge,        setDeepLinkAge]        = useState(null);
   const [child,              setChild]              = useState(null);
   const [savedIds,           setSavedIds]           = useState(() => new Set(globalFavorites));
   const [refreshing,         setRefreshing]         = useState(false);
@@ -288,6 +300,18 @@ export default function RankingScreen({ navigation }) {
       .then((snap) => { if (!snap.empty) setChild(snap.docs[0].data()); })
       .catch(() => {});
   }, []);
+
+  // ─── Deep link: DeepLinkContext intent → exact state variables ──────────────
+  useFocusEffect(
+    useCallback(() => {
+      if (deepLinkIntent) {
+        if (deepLinkIntent.targetTab) setActiveTab(deepLinkIntent.targetTab);
+        if (deepLinkIntent.enableCustom !== undefined) setIsCustomRanking(deepLinkIntent.enableCustom);
+        if (deepLinkIntent.targetAge) setDeepLinkAge(deepLinkIntent.targetAge);
+        setDeepLinkIntent(null);
+      }
+    }, [deepLinkIntent])
+  );
 
   useEffect(() => {
     const uid = auth.currentUser?.uid;
@@ -316,35 +340,46 @@ export default function RankingScreen({ navigation }) {
     });
   }, []);
 
-  // Tab + category filter, then cap at PAGE_SIZE unless showAll
+  // Consumable categories (자주사는): diapers, formula, wipes, food, living
+  const CONSUMABLE_CATEGORIES = new Set(['baby', 'food', 'living']);
+  // Durable categories (사고싶은): toys, furniture, gear, fashion, digital
+  const DURABLE_CATEGORIES = new Set(['hobby', 'home', 'digital', 'fashion', 'beauty']);
+
+  // Tab + personalized filter, then cap at PAGE_SIZE unless showAll
   const filtered = useMemo(() => {
     let base = RANKED_PRODUCTS;
-    if (activeTab === 'new') {
+    if (activeTab === 'rising') {
+      base = base.filter((p) => p.discount >= 25);
+    } else if (activeTab === 'frequent') {
+      base = base.filter((p) => CONSUMABLE_CATEGORIES.has(p.category));
+      if (isCustomRanking) base = base.filter((p) => p.reviewCount > 1000);
+    } else if (activeTab === 'wishlist') {
+      base = base.filter((p) => DURABLE_CATEGORIES.has(p.category));
+      if (isCustomRanking) base = base.filter((p) => p.rating >= 4.7);
+    } else if (activeTab === 'new') {
       base = base.filter((p) => p.rankChange === 'NEW');
-    } else if (activeTab === 'interest') {
-      base = base.filter((p) => p.rating >= 4.8 && p.reviewCount > 1000);
-    } else if (activeTab === 'brand') {
-      const seen = new Set();
-      base = base.filter((p) => { if (seen.has(p.brand)) return false; seen.add(p.brand); return true; });
     }
     if (selectedCategory !== 'all') {
       base = base.filter((p) => p.category === selectedCategory);
     }
     return showAll ? base : base.slice(0, PAGE_SIZE);
-  }, [activeTab, selectedCategory, showAll]);
+  }, [activeTab, selectedCategory, showAll, isCustomRanking]);
 
   const totalCount = useMemo(() => {
     let base = RANKED_PRODUCTS;
-    if (activeTab === 'new') {
+    if (activeTab === 'rising') {
+      base = base.filter((p) => p.discount >= 25);
+    } else if (activeTab === 'frequent') {
+      base = base.filter((p) => CONSUMABLE_CATEGORIES.has(p.category));
+      if (isCustomRanking) base = base.filter((p) => p.reviewCount > 1000);
+    } else if (activeTab === 'wishlist') {
+      base = base.filter((p) => DURABLE_CATEGORIES.has(p.category));
+      if (isCustomRanking) base = base.filter((p) => p.rating >= 4.7);
+    } else if (activeTab === 'new') {
       base = base.filter((p) => p.rankChange === 'NEW');
-    } else if (activeTab === 'interest') {
-      base = base.filter((p) => p.rating >= 4.8 && p.reviewCount > 1000);
-    } else if (activeTab === 'brand') {
-      const seen = new Set();
-      base = base.filter((p) => { if (seen.has(p.brand)) return false; seen.add(p.brand); return true; });
     }
     return base.filter((p) => selectedCategory === 'all' || p.category === selectedCategory).length;
-  }, [activeTab, selectedCategory]);
+  }, [activeTab, selectedCategory, isCustomRanking]);
 
   const ListHeader = useCallback(() => (
     <View>
@@ -414,7 +449,11 @@ export default function RankingScreen({ navigation }) {
             activeOpacity={0.8}
           >
             <Text style={[styles.pillToggleBtnText, isCustomRanking && styles.pillToggleBtnTextActive]}>
-              {child ? `👶 우리 아이(${STAGE_LABELS[child.stage] || child.ageMonth + '개월'}) 맞춤` : '👶 또래 맞춤'}
+              {deepLinkAge
+                ? `👶 ${deepLinkAge} 맞춤`
+                : child
+                  ? `👶 우리 아이(${STAGE_LABELS[child.stage] || child.ageMonth + '개월'}) 맞춤`
+                  : '👶 또래 맞춤'}
             </Text>
           </TouchableOpacity>
         </View>

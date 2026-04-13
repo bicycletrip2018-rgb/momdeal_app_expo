@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  BackHandler,
   FlatList,
   Image,
   KeyboardAvoidingView,
@@ -248,6 +249,14 @@ export default function PostDetailScreen({ route, navigation }) {
   const inputRef = useRef(null);
 
   const imageUrls = route.params.imageUrls ?? [];
+
+  useEffect(() => {
+    const backHandler = BackHandler.addEventListener('hardwareBackPress', () => {
+      navigation.goBack();
+      return true;
+    });
+    return () => backHandler.remove();
+  }, [navigation]);
 
   useEffect(() => {
     if (uid) {

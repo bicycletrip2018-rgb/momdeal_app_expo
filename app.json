@@ -14,7 +14,10 @@
     },
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.saveroo.app"
+      "bundleIdentifier": "com.saveroo.app",
+      "infoPlist": {
+        "LSApplicationQueriesSchemes": ["coupang"]
+      }
     },
     "android": {
       "adaptiveIcon": {
@@ -22,7 +25,14 @@
         "backgroundColor": "#ffffff"
       },
       "edgeToEdgeEnabled": true,
-      "package": "com.saveroo.app"
+      "package": "com.saveroo.app",
+      "intentFilters": [
+        {
+          "action": "android.intent.action.VIEW",
+          "data": [{ "scheme": "coupang" }],
+          "category": ["android.intent.category.BROWSABLE", "android.intent.category.DEFAULT"]
+        }
+      ]
     },
     "web": {
       "favicon": "./assets/favicon.png"

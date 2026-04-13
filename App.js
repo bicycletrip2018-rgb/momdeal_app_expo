@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { DeepLinkProvider } from './src/contexts/DeepLinkContext';
 import { ActivityIndicator, Text, TouchableOpacity, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
@@ -33,12 +34,16 @@ import RewardClaimScreen from './src/screens/RewardClaimScreen';
 import TrackingListScreen from './src/screens/TrackingListScreen';
 import CurationDetailScreen from './src/screens/CurationDetailScreen';
 import DetailScreen from './src/screens/DetailScreen';
+import CategoryScreen from './src/screens/CategoryScreen';
 import OnboardingScreen from './src/screens/OnboardingScreen';
+import TrialGuideScreen from './src/screens/TrialGuideScreen';
+import ProfileSettingsScreen from './src/screens/ProfileSettingsScreen';
 import useAuthSync from './src/hooks/useAuthSync';
 import { onAuthStateChanged } from 'firebase/auth';
 import { auth } from './src/firebase/config';
 import { getChildrenByUserId } from './src/services/firestore/childrenRepository';
 import { TrackingProvider } from './src/context/TrackingContext';
+import { NotificationProvider } from './src/context/NotificationContext';
 
 const Tab = createBottomTabNavigator();
 const Stack = createNativeStackNavigator();
@@ -81,6 +86,26 @@ function PriceStack() {
         name="ReviewWrite"
         component={ReviewWriteScreen}
         options={{ title: '리뷰 작성' }}
+      />
+      <Stack.Screen
+        name="Category"
+        component={CategoryScreen}
+        options={{ title: '기저귀·분유' }}
+      />
+      <Stack.Screen
+        name="ProductDetail"
+        component={ProductDetail}
+        options={{ title: '상품 상세' }}
+      />
+      <Stack.Screen
+        name="TrialGuide"
+        component={TrialGuideScreen}
+        options={{ title: '무료 체험단 가이드', headerBackTitleVisible: false }}
+      />
+      <Stack.Screen
+        name="ProfileSettings"
+        component={ProfileSettingsScreen}
+        options={{ title: '맞춤 정보 설정' }}
       />
     </Stack.Navigator>
   );
@@ -329,8 +354,10 @@ export default function App() {
   }
 
   return (
+    <DeepLinkProvider>
     <SafeAreaProvider>
     <TrackingProvider>
+    <NotificationProvider>
     <View style={{ flex: 1 }}>
       <NavigationContainer>
         {!onboardingDone ? (
@@ -351,7 +378,9 @@ export default function App() {
         )}
       </NavigationContainer>
     </View>
+    </NotificationProvider>
     </TrackingProvider>
     </SafeAreaProvider>
+    </DeepLinkProvider>
   );
 }

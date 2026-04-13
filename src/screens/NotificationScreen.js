@@ -1,13 +1,15 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
-  FlatList,
+  SectionList,
   StyleSheet,
   Text,
   TouchableOpacity,
   View,
 } from 'react-native';
-import { useFocusEffect } from '@react-navigation/native';
+import { FontAwesome5 } from '@expo/vector-icons';
+import { useNotification } from '../context/NotificationContext';
+import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import {
   addDoc,
   collection,
@@ -37,55 +39,93 @@ async function logNotificationOpen(userId, item) {
   } catch (_) {}
 }
 
+// ─── Dummy fallback data (shown when Firestore returns nothing) ───────────────
+
+const MOCK_NOTIFICATIONS = [
+  {
+    id: 'mn1', type: 'price', isToday: true,
+    category: '가격·재입고', time: '2시간 전',
+    title: '관심상품 [팸퍼스 기저귀] 역대 최저가 도달!',
+    desc: '팸퍼스 하이드로케어 기저귀 특대형 88매',
+    isRead: false, createdAt: null,
+  },
+  {
+    id: 'mn2', type: 'community', isToday: true,
+    category: '맘톡·활동', time: '5시간 전',
+    title: "내 글에 👑프로맘 핫딜요정님이 댓글을 남겼습니다.",
+    desc: '',
+    isRead: false, createdAt: null,
+  },
+  {
+    id: 'mn3', type: 'ranking', isToday: false,
+    category: '또래 맞춤', time: '어제',
+    title: '67개월 남아들이 많이 담은 장난감 랭킹 업데이트!',
+    desc: '지금 바로 확인해보세요',
+    isRead: true, createdAt: null,
+  },
+  {
+    id: 'mn4', type: 'event', isToday: false,
+    category: '혜택·이벤트', time: '어제',
+    title: '하기스 네이처메이드 무료 체험단 당첨!',
+    desc: '배송지 정보를 입력해주세요',
+    isRead: true, createdAt: null,
+  },
+];
+
 // ─── Notification row ──────────────────────────────────────────────────────────
 
-function NotifIcon({ type }) {
-  if (type === 'price_drop') return <Text style={styles.notifIconText}>📉</Text>;
-  if (type === 'community_reply') return <Text style={styles.notifIconText}>💬</Text>;
-  return <Text style={styles.notifIconText}>🔔</Text>;
+function typeIcon(type) {
+  if (type === 'price'     || type === 'price_drop')      return { name: 'tag',        color: '#ef4444', bg: '#fee2e2' };
+  if (type === 'community' || type === 'community_reply') return { name: 'comment',    color: '#3b82f6', bg: '#dbeafe' };
+  if (type === 'ranking')                                 return { name: 'trophy',     color: '#d97706', bg: '#fef3c7' };
+  return                                                         { name: 'gift',       color: '#8b5cf6', bg: '#ede9fe' };
 }
 
 function NotifCard({ item, onPress }) {
-  const dateStr = item.createdAt?.toDate
-    ? item.createdAt.toDate().toLocaleDateString('ko-KR', {
-        month: 'short',
-        day: 'numeric',
-        hour: '2-digit',
-        minute: '2-digit',
-      })
-    : '';
+  const { name, color, bg } = typeIcon(item.type);
+  // Support both new (title/desc/time) and Firestore (body/productName/timeAgo) shapes
+  const titleText = item.title || item.body || '';
+  const descText  = item.desc  || item.productName || '';
+  const timeLabel = item.time  || item.timeAgo || (item.createdAt?.toDate
+    ? item.createdAt.toDate().toLocaleDateString('ko-KR', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+    : '');
 
   return (
-    <TouchableOpacity
-      style={[styles.notifCard, !item.isRead && styles.notifCardUnread]}
-      onPress={() => onPress(item)}
-      activeOpacity={0.8}
-    >
-      <View style={styles.notifIconWrap}>
-        <NotifIcon type={item.type} />
+    <TouchableOpacity style={styles.notifCard} onPress={() => onPress(item)} activeOpacity={0.8}>
+      {/* Icon circle */}
+      <View style={[styles.notifIconWrap, { backgroundColor: bg }]}>
+        <FontAwesome5 name={name} size={16} color={color} />
       </View>
+
       <View style={styles.notifBody}>
-        <Text
-          style={[styles.notifText, !item.isRead && styles.notifTextUnread]}
-          numberOfLines={3}
-        >
-          {item.body}
+        {/* Top row: category · time */}
+        <View style={styles.notifMeta}>
+          <Text style={styles.notifCategory}>{item.category || '알림'}</Text>
+          <Text style={styles.notifDot}> · </Text>
+          <Text style={styles.notifTime}>{timeLabel}</Text>
+        </View>
+
+        {/* Main message */}
+        <Text style={[styles.notifText, !item.isRead && styles.notifTextUnread]} numberOfLines={3}>
+          {titleText}
         </Text>
-        {item.productName ? (
-          <Text style={styles.notifProduct} numberOfLines={1}>
-            {item.productName}
-          </Text>
+
+        {descText ? (
+          <Text style={styles.notifProduct} numberOfLines={1}>{descText}</Text>
         ) : null}
-        <Text style={styles.notifDate}>{dateStr}</Text>
       </View>
-      {!item.isRead ? <View style={styles.unreadDot} /> : null}
+
+      {/* Unread dot */}
+      {!item.isRead && <View style={styles.unreadDot} />}
     </TouchableOpacity>
   );
 }
 
 // ─── Screen ───────────────────────────────────────────────────────────────────
 
-export default function NotificationScreen({ navigation }) {
+export default function NotificationScreen({ navigation: navProp }) {
+  const navigation = useNavigation();
+  const { clearBadge } = useNotification();
   const [notifications, setNotifications] = useState([]);
   const [loading, setLoading] = useState(true);
 
@@ -103,7 +143,8 @@ export default function NotificationScreen({ navigation }) {
           limit(50)
         )
       );
-      setNotifications(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+      const docs = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      setNotifications(docs.length > 0 ? docs : MOCK_NOTIFICATIONS);
     } catch (e) {
       console.log('NotificationScreen load error:', e);
     } finally {
@@ -115,45 +156,56 @@ export default function NotificationScreen({ navigation }) {
     loadNotifications();
   }, [loadNotifications]);
 
-  // Refresh when returning to screen
+  // Refresh + clear badge when screen comes into focus
   useFocusEffect(
     useCallback(() => {
       loadNotifications();
-    }, [loadNotifications])
+      clearBadge(); // resets red dot on home header; individual isRead states preserved
+    }, [loadNotifications, clearBadge])
   );
 
   const handlePress = async (item) => {
     const uid = auth.currentUser?.uid;
 
-    // Mark as read (optimistic)
-    if (!item.isRead && uid) {
-      updateDoc(
-        doc(db, 'notifications', uid, 'user_notifications', item.id),
-        { isRead: true }
-      ).catch(() => {});
+    // Always mark as read in local state (works for both mock and Firestore items)
+    if (!item.isRead) {
       setNotifications((prev) =>
         prev.map((n) => (n.id === item.id ? { ...n, isRead: true } : n))
       );
+      // Persist to Firestore only for real items
+      if (uid && !item.id.startsWith('mn')) {
+        updateDoc(
+          doc(db, 'notifications', uid, 'user_notifications', item.id),
+          { isRead: true }
+        ).catch(() => {});
+      }
     }
 
-    // Log notification_open for re-engagement CTR measurement
     logNotificationOpen(uid, item);
 
-    // Navigate to the relevant screen
-    if (item.type === 'price_drop' && item.productGroupId) {
-      navigation.navigate('ProductDetail', {
-        productId: item.productGroupId,
-        productName: item.productName || '상품',
-      });
-    } else if (item.type === 'community_reply' && item.postId) {
-      navigation.navigate('PostDetail', {
-        postId: item.postId,
-        title: item.postTitle || '게시글',
-      });
-    }
+    // Route based on type — covers both new and legacy type strings
+    try {
+      if (item.type === 'price' || item.type === 'price_drop') {
+        navigation.navigate('ProductDetail', { productId: item.productGroupId || 'dummy', productName: item.desc || item.productName || '상품' });
+      } else if (item.type === 'community' || item.type === 'community_reply') {
+        navigation.navigate('CommunityPost', { postId: item.postId || 'dummy' });
+      } else if (item.type === 'ranking') {
+        navigation.navigate('Ranking');
+      } else if (item.type === 'event' || item.type === 'system') {
+        navigation.navigate('Home');
+      }
+    } catch (_) {}
   };
 
   const unreadCount = notifications.filter((n) => !n.isRead).length;
+
+  // Build SectionList sections — Today first, then Previous
+  const todayItems    = notifications.filter((n) => n.isToday !== false);
+  const previousItems = notifications.filter((n) => n.isToday === false);
+  const sections = [
+    ...(todayItems.length    > 0 ? [{ title: '오늘 받은 알림', data: todayItems    }] : []),
+    ...(previousItems.length > 0 ? [{ title: '이전 알림',      data: previousItems }] : []),
+  ];
 
   if (loading) {
     return (
@@ -165,25 +217,29 @@ export default function NotificationScreen({ navigation }) {
 
   return (
     <View style={styles.container}>
-      {unreadCount > 0 ? (
+      {unreadCount > 0 && (
         <View style={styles.unreadBanner}>
           <Text style={styles.unreadBannerText}>읽지 않은 알림 {unreadCount}개</Text>
         </View>
-      ) : null}
+      )}
 
       {notifications.length === 0 ? (
         <View style={styles.emptyWrap}>
-          <Text style={styles.emptyIcon}>🔔</Text>
+          <FontAwesome5 name="bell-slash" size={40} color="#cbd5e1" style={{ marginBottom: 12 }} />
           <Text style={styles.emptyTitle}>새 알림이 없어요</Text>
           <Text style={styles.emptySub}>
             관심 상품의 가격이 내려가면{'\n'}여기서 알려드릴게요
           </Text>
         </View>
       ) : (
-        <FlatList
-          data={notifications}
+        <SectionList
+          sections={sections}
           keyExtractor={(item) => item.id}
           contentContainerStyle={styles.listContent}
+          showsVerticalScrollIndicator={false}
+          renderSectionHeader={({ section }) => (
+            <Text style={styles.sectionHeader}>{section.title}</Text>
+          )}
           renderItem={({ item }) => (
             <NotifCard item={item} onPress={handlePress} />
           )}
@@ -196,70 +252,52 @@ export default function NotificationScreen({ navigation }) {
 // ─── Styles ───────────────────────────────────────────────────────────────────
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#f5f7fb' },
-  center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+  container: { flex: 1, backgroundColor: '#f1f5f9' },
+  center:    { flex: 1, alignItems: 'center', justifyContent: 'center' },
 
   // Unread banner
   unreadBanner: {
-    backgroundColor: '#eff6ff',
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    borderBottomWidth: 1,
-    borderBottomColor: '#bfdbfe',
+    backgroundColor: '#eff6ff', paddingHorizontal: 16, paddingVertical: 10,
+    borderBottomWidth: 1, borderBottomColor: '#bfdbfe',
   },
   unreadBannerText: { fontSize: 13, fontWeight: '700', color: '#1d4ed8' },
 
   // Empty state
-  emptyWrap: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: 32,
-    gap: 8,
-  },
-  emptyIcon: { fontSize: 48 },
+  emptyWrap: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 32, gap: 8 },
   emptyTitle: { fontSize: 17, fontWeight: '800', color: '#0f172a' },
-  emptySub: { fontSize: 13, color: '#64748b', textAlign: 'center', lineHeight: 18 },
+  emptySub:   { fontSize: 13, color: '#64748b', textAlign: 'center', lineHeight: 18 },
 
-  // List
-  listContent: { padding: 12, gap: 8 },
-
-  // Notification card
-  notifCard: {
-    backgroundColor: '#fff',
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#e4e7ed',
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    padding: 14,
-    gap: 10,
+  // SectionList
+  listContent:   { paddingBottom: 40 },
+  sectionHeader: {
+    fontSize: 16, fontWeight: 'bold', color: '#334155',
+    paddingTop: 20, paddingBottom: 12, paddingHorizontal: 16,
+    backgroundColor: '#f1f5f9',
   },
-  notifCardUnread: {
-    backgroundColor: '#f0f9ff',
-    borderColor: '#bae6fd',
+
+  // Naver-style card
+  notifCard: {
+    flexDirection: 'row', alignItems: 'flex-start',
+    backgroundColor: '#ffffff', borderRadius: 12,
+    marginHorizontal: 16, marginBottom: 10, padding: 16,
+    gap: 12,
+    shadowColor: '#000', shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.06, shadowRadius: 4, elevation: 2,
   },
   notifIconWrap: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: '#f1f5f9',
-    alignItems: 'center',
-    justifyContent: 'center',
-    flexShrink: 0,
+    width: 40, height: 40, borderRadius: 20,
+    alignItems: 'center', justifyContent: 'center', flexShrink: 0,
   },
-  notifIconText: { fontSize: 18 },
-  notifBody: { flex: 1, gap: 3 },
-  notifText: { fontSize: 13, color: '#334155', lineHeight: 18 },
-  notifTextUnread: { fontWeight: '700', color: '#0f172a' },
-  notifProduct: { fontSize: 11, color: '#64748b' },
-  notifDate: { fontSize: 11, color: '#94a3b8', marginTop: 2 },
+  notifBody: { flex: 1, gap: 4 },
+  notifMeta: { flexDirection: 'row', alignItems: 'center' },
+  notifCategory: { fontSize: 11, fontWeight: '600', color: '#64748b' },
+  notifDot:      { fontSize: 11, color: '#94a3b8' },
+  notifTime:     { fontSize: 11, color: '#94a3b8' },
+  notifText:        { fontSize: 14, color: '#475569', lineHeight: 20, fontWeight: 'normal' },
+  notifTextUnread:  { fontWeight: 'bold', color: '#0f172a' },
+  notifProduct:     { fontSize: 11, color: '#94a3b8', marginTop: 2 },
   unreadDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: '#2563eb',
-    marginTop: 4,
-    flexShrink: 0,
+    width: 8, height: 8, borderRadius: 4,
+    backgroundColor: '#2563eb', marginTop: 6, flexShrink: 0,
   },
 });

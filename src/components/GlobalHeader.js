@@ -9,12 +9,13 @@ import {
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { Ionicons } from '@expo/vector-icons';
 
 // ─── Per-tab guide content ────────────────────────────────────────────────────
 
 const GUIDE = {
   Home: {
-    emoji: '🏠',
+    emoji: null,
     title: '세이브루 활용법',
     text: '아이 정보를 등록하면 또래 엄마들의 실시간 인기 육아템과 개인 맞춤 핫딜을 추천받을 수 있어요!',
   },
@@ -45,7 +46,7 @@ const GUIDE = {
  *   tabName      {string}  'Home' | 'Ranking' | 'Community' | 'Benefits'
  *   navigation   {object}  React Navigation prop (required for Home tab actions).
  */
-export default function GlobalHeader({ placeholder, tabName = 'Home', navigation }) {
+export default function GlobalHeader({ placeholder, tabName = 'Home', navigation, unreadCount = 0 }) {
   const { top } = useSafeAreaInsets();
   const [guideVisible, setGuideVisible] = useState(false);
   const guide = GUIDE[tabName] ?? GUIDE.Home;
@@ -80,15 +81,22 @@ export default function GlobalHeader({ placeholder, tabName = 'Home', navigation
           <TouchableOpacity
             onPress={() => navigation.navigate('Notifications')}
             hitSlop={{ top: 10, bottom: 10, left: 6, right: 6 }}
+            style={{ position: 'relative' }}
           >
-            <Text style={styles.iconBtn}>🔔</Text>
+            <Ionicons name="notifications-outline" size={24} color="#334155" />
+            {unreadCount > 0 && (
+              <View style={styles.badge}>
+                <Text style={styles.badgeText}>{unreadCount}</Text>
+              </View>
+            )}
           </TouchableOpacity>
         )}
         <TouchableOpacity
           onPress={() => setGuideVisible(true)}
           hitSlop={{ top: 10, bottom: 10, left: 6, right: 6 }}
+          style={{ marginLeft: 12 }}
         >
-          <Text style={styles.iconBtn}>💡</Text>
+          <Ionicons name="bulb-outline" size={24} color="#334155" />
         </TouchableOpacity>
       </View>
 
@@ -111,7 +119,10 @@ export default function GlobalHeader({ placeholder, tabName = 'Home', navigation
             style={styles.modalCard}
             onStartShouldSetResponder={() => true}
           >
-            <Text style={styles.modalEmoji}>{guide.emoji}</Text>
+            {guide.emoji
+              ? <Text style={styles.modalEmoji}>{guide.emoji}</Text>
+              : <Ionicons name="information-circle" size={44} color="#1d4ed8" style={{ marginBottom: 2 }} />
+            }
             <Text style={styles.modalTitle}>{guide.title}</Text>
             <Text style={styles.modalText}>{guide.text}</Text>
             <TouchableOpacity
@@ -161,20 +172,29 @@ const styles = StyleSheet.create({
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
+    height: 48,
     backgroundColor: '#f8fafc',
-    borderRadius: 22,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
+    borderRadius: 24,
+    paddingHorizontal: 16,
     borderWidth: 1,
     borderColor: '#e2e8f0',
     gap: 6,
   },
-  searchIcon:        { fontSize: 13, color: '#94a3b8' },
-  searchPlaceholder: { flex: 1, fontSize: 12, color: '#94a3b8', fontWeight: '500' },
+  searchIcon:        { fontSize: 14, color: '#94a3b8' },
+  searchPlaceholder: { flex: 1, fontSize: 14, color: '#b0b8c8', fontWeight: '500' },
 
   // Right icon group
   rightIcons: { flexDirection: 'row', alignItems: 'center', gap: 4, flexShrink: 0 },
-  iconBtn:    { fontSize: 21 },
+
+  // Notification badge
+  badge: {
+    position: 'absolute', top: -2, right: -2,
+    backgroundColor: '#ef4444', borderRadius: 8,
+    minWidth: 16, height: 16,
+    justifyContent: 'center', alignItems: 'center',
+    paddingHorizontal: 4,
+  },
+  badgeText: { fontSize: 9, fontWeight: '900', color: '#fff', lineHeight: 11 },
 
   // Modal backdrop
   backdrop: {

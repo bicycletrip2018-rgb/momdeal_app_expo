@@ -20,9 +20,9 @@ const MOCK_PRODUCTS = [
 ];
 
 const MOCK_POSTS = [
-  { id: 'p1', board: '맘카페',    title: '신생아 기저귀 하기스 vs 팸퍼스 실제 써본 후기',        snippet: '두 달째 써보니 확실히 하기스가 허벅지 밀림이 적더라고요...', comments: 34, views: 1240 },
-  { id: 'p2', board: '핫딜/할인', title: '쿠팡 분유 역대 최저가 떴어요! 오늘 마감',             snippet: '앱솔루트 스텝2 2캔 세트가 58,900원이에요. 놓치지 마세요',   comments: 18, views:  870 },
-  { id: 'p3', board: '육아정보',  title: '6개월 이유식 시작할 때 꼭 필요한 준비물 총정리',        snippet: '이유식 용기, 스푼, 냉동백... 저도 처음엔 뭐가 필요한지',   comments: 12, views:  340 },
+  { id: 'p1', board: '맘카페',    title: '신생아 기저귀 하기스 vs 팸퍼스 실제 써본 후기',        snippet: '두 달째 써보니 확실히 하기스가 허벅지 밀림이 적더라고요...', commentCount: 34, viewCount: 1240, author: '익명의 세이브루맘', likeCount: 47 },
+  { id: 'p2', board: '핫딜/할인', title: '쿠팡 분유 역대 최저가 떴어요! 오늘 마감',             snippet: '앱솔루트 스텝2 2캔 세트가 58,900원이에요. 놓치지 마세요',   commentCount: 18, viewCount:  870, author: '절약맘_서울',       likeCount: 32 },
+  { id: 'p3', board: '육아정보',  title: '6개월 이유식 시작할 때 꼭 필요한 준비물 총정리',        snippet: '이유식 용기, 스푼, 냉동백... 저도 처음엔 뭐가 필요한지',   commentCount: 12, viewCount:  340, author: '두아이맘_경기',      likeCount: 19 },
 ];
 
 const PRODUCT_FILTERS = [
@@ -81,7 +81,15 @@ function PostItem({ post }) {
       <Text style={styles.postBoard}>{post.board}</Text>
       <Text style={styles.postTitle}>{post.title}</Text>
       <Text style={styles.postSnippet} numberOfLines={1}>{post.snippet}</Text>
-      <Text style={styles.postMeta}>댓글 {post.comments} · 조회 {post.views}</Text>
+      <View style={styles.postMetaRow}>
+        <Text style={styles.postAuthor}>{post.author}</Text>
+        <Text style={styles.postMetaDot}>·</Text>
+        <Text style={styles.postMeta}>댓글 {post.commentCount}</Text>
+        <Text style={styles.postMetaDot}>·</Text>
+        <Text style={styles.postMeta}>조회 {post.viewCount}</Text>
+        <Text style={styles.postMetaDot}>·</Text>
+        <Text style={styles.postMeta}>좋아요 {post.likeCount ?? 0}</Text>
+      </View>
     </View>
   );
 }
@@ -95,8 +103,11 @@ export default function SearchResultScreen({ navigation, route }) {
 
   function renderIntegrated() {
     return (
-      <ScrollView showsVerticalScrollIndicator={false}>
-        <Text style={styles.sectionTitle}>상품 검색 결과</Text>
+      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 0 }}>
+        {/* Product section header */}
+        <View style={styles.sectionHeader}>
+          <Text style={styles.sectionTitle}>상품 검색 결과 {MOCK_PRODUCTS.length}건</Text>
+        </View>
         {MOCK_PRODUCTS.slice(0, 3).map((p, i) => (
           <ProductItem key={p.id} item={p} rank={i + 1} navigation={navigation} />
         ))}
@@ -104,13 +115,16 @@ export default function SearchResultScreen({ navigation, route }) {
           <Text style={styles.moreBtnText}>상품 전체보기 ›</Text>
         </TouchableOpacity>
 
-        <Text style={[styles.sectionTitle, { marginTop: 8 }]}>커뮤니티 핫글</Text>
+        {/* Community section header with 전체보기 */}
+        <View style={styles.sectionHeaderRow}>
+          <Text style={styles.sectionTitle}>커뮤니티 인기글</Text>
+          <TouchableOpacity onPress={() => setActiveTab('커뮤니티')} activeOpacity={0.8}>
+            <Text style={styles.sectionViewAll}>전체보기 ›</Text>
+          </TouchableOpacity>
+        </View>
         {MOCK_POSTS.map((post) => (
           <PostItem key={post.id} post={post} />
         ))}
-        <TouchableOpacity style={styles.moreBtn} onPress={() => setActiveTab('커뮤니티')} activeOpacity={0.8}>
-          <Text style={styles.moreBtnText}>커뮤니티 전체보기 ›</Text>
-        </TouchableOpacity>
 
         <View style={styles.ctaBox}>
           <Text style={styles.ctaText}>찾으시는 상품이 없나요?</Text>
@@ -149,7 +163,9 @@ export default function SearchResultScreen({ navigation, route }) {
                 );
               })}
             </ScrollView>
-            <Text style={styles.sectionTitle}>상품 검색 결과</Text>
+            <View style={styles.sectionHeader}>
+              <Text style={styles.sectionTitle}>상품 검색 결과 {MOCK_PRODUCTS.length}건</Text>
+            </View>
           </>
         }
         renderItem={({ item, index }) => (
@@ -310,9 +326,15 @@ const styles = StyleSheet.create({
   },
   searchQuery: { fontSize: 14, color: '#0f172a' },
 
-  sectionTitle:  { fontSize: 16, fontWeight: 'bold', color: '#0f172a', padding: 16 },
-  moreBtn:       { alignItems: 'flex-end', paddingHorizontal: 16, paddingBottom: 12 },
-  moreBtnText:   { fontSize: 13, color: '#3b82f6', fontWeight: '600' },
+  sectionHeader:    { paddingHorizontal: 16, paddingTop: 16, paddingBottom: 8 },
+  sectionHeaderRow: {
+    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
+    paddingHorizontal: 16, paddingTop: 16, paddingBottom: 8,
+  },
+  sectionTitle:   { fontSize: 18, fontWeight: 'bold', color: '#0f172a' },
+  sectionViewAll: { fontSize: 13, color: '#3b82f6', fontWeight: '600' },
+  moreBtn:        { alignItems: 'flex-end', paddingHorizontal: 16, paddingBottom: 12 },
+  moreBtnText:    { fontSize: 13, color: '#3b82f6', fontWeight: '600' },
 
   filterRow: { paddingHorizontal: 16, paddingVertical: 12, gap: 8 },
   chip: {
@@ -327,8 +349,8 @@ const styles = StyleSheet.create({
     flexDirection: 'row', alignItems: 'flex-start',
     backgroundColor: '#fff', borderRadius: 12,
     borderWidth: 1, borderColor: '#f1f5f9',
-    paddingVertical: 16, paddingHorizontal: 14,
-    marginBottom: 12, marginHorizontal: 16,
+    paddingVertical: 12, paddingHorizontal: 14,
+    marginBottom: 8, marginHorizontal: 16,
   },
   rankBox:        { width: 24, alignItems: 'center', marginRight: 8, flexShrink: 0 },
   medalCircle:    { width: 22, height: 22, borderRadius: 11, justifyContent: 'center', alignItems: 'center' },
@@ -349,16 +371,19 @@ const styles = StyleSheet.create({
   itemPrice:       { fontSize: 14, fontWeight: '700', color: '#212529' },
 
   postItem: {
-    backgroundColor: '#fff', padding: 16,
+    backgroundColor: '#fff', paddingHorizontal: 16, paddingVertical: 12,
     borderBottomWidth: 1, borderBottomColor: '#f1f5f9',
   },
-  postBoard:   { fontSize: 12, color: '#3b82f6', fontWeight: '600', marginBottom: 6 },
-  postTitle:   { fontSize: 15, fontWeight: 'bold', color: '#1e293b', marginBottom: 4 },
-  postSnippet: { fontSize: 13, color: '#64748b' },
-  postMeta:    { fontSize: 12, color: '#94a3b8', marginTop: 8 },
+  postBoard:    { fontSize: 12, color: '#3b82f6', fontWeight: '600', marginBottom: 4 },
+  postTitle:    { fontSize: 15, fontWeight: 'bold', color: '#1e293b', marginBottom: 3 },
+  postSnippet:  { fontSize: 13, color: '#64748b' },
+  postMetaRow:  { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 4, marginTop: 6 },
+  postAuthor:   { fontSize: 12, color: '#64748b', fontWeight: '600' },
+  postMetaDot:  { fontSize: 12, color: '#cbd5e1' },
+  postMeta:     { fontSize: 12, color: '#94a3b8' },
 
   ctaBox: {
-    backgroundColor: '#f8fafc', margin: 16, padding: 20,
+    backgroundColor: '#f8fafc', marginHorizontal: 16, marginTop: 8, marginBottom: 16, padding: 20,
     borderRadius: 12, alignItems: 'center',
     borderWidth: 1, borderColor: '#e2e8f0',
   },
