@@ -756,6 +756,12 @@ export default function MyPageScreen({ navigation }) {
           onPress={handleLogout}
           danger
         />
+        <MenuItem
+          icon="🥀"
+          label="계정 탈퇴 (온보딩 QA)"
+          onPress={() => navigation.navigate('InitialOnboarding')}
+          danger
+        />
 
         {/* ── Admin dashboard ── */}
         {isAdmin ? (

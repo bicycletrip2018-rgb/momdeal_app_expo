@@ -16,7 +16,9 @@
       "supportsTablet": true,
       "bundleIdentifier": "com.saveroo.app",
       "infoPlist": {
-        "LSApplicationQueriesSchemes": ["coupang"]
+        "LSApplicationQueriesSchemes": [
+          "coupang"
+        ]
       }
     },
     "android": {
@@ -29,13 +31,23 @@
       "intentFilters": [
         {
           "action": "android.intent.action.VIEW",
-          "data": [{ "scheme": "coupang" }],
-          "category": ["android.intent.category.BROWSABLE", "android.intent.category.DEFAULT"]
+          "data": [
+            {
+              "scheme": "coupang"
+            }
+          ],
+          "category": [
+            "android.intent.category.BROWSABLE",
+            "android.intent.category.DEFAULT"
+          ]
         }
       ]
     },
     "web": {
       "favicon": "./assets/favicon.png"
-    }
+    },
+    "plugins": [
+      "@react-native-community/datetimepicker"
+    ]
   }
 }

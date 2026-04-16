@@ -36,6 +36,7 @@ import CurationDetailScreen from './src/screens/CurationDetailScreen';
 import DetailScreen from './src/screens/DetailScreen';
 import CategoryScreen from './src/screens/CategoryScreen';
 import OnboardingScreen from './src/screens/OnboardingScreen';
+import InitialOnboardingScreen from './src/screens/InitialOnboardingScreen';
 import TrialGuideScreen from './src/screens/TrialGuideScreen';
 import ProfileSettingsScreen from './src/screens/ProfileSettingsScreen';
 import useAuthSync from './src/hooks/useAuthSync';
@@ -263,6 +264,11 @@ function MyPageStack() {
         component={RewardClaimScreen}
         options={{ title: '포인트 적립 신청' }}
       />
+      <Stack.Screen
+        name="InitialOnboarding"
+        component={InitialOnboardingScreen}
+        options={{ title: '온보딩 체험', headerBackTitleVisible: false }}
+      />
     </Stack.Navigator>
   );
 }
@@ -316,7 +322,7 @@ function MainTabs() {
       <Tab.Screen name="랭킹"    component={ProductStack}   options={{ tabBarIcon: icon('trophy',       'trophy-outline') }} />
       <Tab.Screen name="커뮤니티" component={CommunityStack} options={{ tabBarIcon: icon('chatbubbles',  'chatbubbles-outline') }} />
       <Tab.Screen name="관심상품" component={TrackingTab}    options={{ tabBarIcon: icon('heart',        'heart-outline') }} />
-      <Tab.Screen name="마이"    component={MyPageStack}    options={{ tabBarIcon: icon('person',       'person-outline') }} />
+      <Tab.Screen name="마이페이지" component={MyPageStack}    options={{ tabBarIcon: icon('person',       'person-outline') }} />
     </Tab.Navigator>
   );
 }

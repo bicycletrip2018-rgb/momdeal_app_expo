@@ -7,8 +7,11 @@ import {
   Animated,
   ActivityIndicator,
   Alert,
+  AppState,
+  Dimensions,
   FlatList,
   Image,
+  Modal,
   Platform,
   RefreshControl,
   ScrollView,
@@ -17,6 +20,7 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+import * as Clipboard from 'expo-clipboard';
 import GlobalHeader from '../components/GlobalHeader';
 import { collection, getDocs, query, where } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
@@ -85,6 +89,19 @@ const MOCK_COMMUNITY = [
   { id: 'c1', tag: '질문', text: '67개월 아이 영양제 추천해주세요', views: '1.2k' },
   { id: 'c2', tag: '꿀팁', text: '기저귀 발진 잡는 법 총정리',     views: '3.4k' },
   { id: 'c3', tag: '후기', text: '노리플레이 블록 써보니 진짜 좋네요', views: '856' },
+];
+
+// ─── Coach Mark data ──────────────────────────────────────────────────────────
+
+const SCREEN_W = Dimensions.get('window').width;
+const TAB_W    = SCREEN_W / 5;
+
+const COACH_MARKS = [
+  { tabIndex: 0, tabName: '홈',      text: '오늘의 핫딜과 맞춤 추천 상품을 확인하세요.' },
+  { tabIndex: 1, tabName: '랭킹',    text: '지금 가장 인기 있는 육아템 순위입니다.' },
+  { tabIndex: 2, tabName: '커뮤니티', text: '유사 환경들과 육아 정보를 나누고 소통하세요.' },
+  { tabIndex: 4, tabName: '마이페이지', text: '내 아이 정보와 앱 설정을 관리하는 공간입니다.' },
+  { tabIndex: 3, tabName: '관심상품',  text: '관심상품 탭을 눌러서 추적할 상품을 추가해보세요!\n\n아래 관심상품 탭을 클릭해주세요!', isFinal: true },
 ];
 
 // ─── Timer hook ───────────────────────────────────────────────────────────────
@@ -598,6 +615,101 @@ function ProductCard({ item, index, navigation }) {
   );
 }
 
+// ─── Coach Mark Overlay ───────────────────────────────────────────────────────
+
+const SPOTLIGHT_SIZE = 60;
+
+const TAB_CENTERS = ['10%', '30%', '50%', '70%', '90%'];
+const getTabCenter = (index) => TAB_CENTERS[index] ?? '50%';
+
+function CoachMarkOverlay({ step, onNext, onFinish, onSkip, navigation }) {
+  if (step === 0) return null;
+  const mark   = COACH_MARKS[step - 1];
+  const isLast = mark.isFinal === true;
+
+  const handleTabPress = () => {
+    onFinish();
+    navigation.navigate('관심상품');
+  };
+
+  return (
+    <Modal visible transparent animationType="fade" statusBarTranslucent onRequestClose={onSkip}>
+      <View style={cm.root}>
+        {/* Skip — top right */}
+        <TouchableOpacity style={cm.skipBtn} onPress={onSkip} activeOpacity={0.8}>
+          <Text style={cm.skipText}>건너뛰기</Text>
+        </TouchableOpacity>
+
+        {/* Tooltip card — sits above the spotlight */}
+        <View style={cm.card}>
+          <Text style={cm.stepDot}>{step} / {COACH_MARKS.length}</Text>
+          {isLast ? (
+            <View style={{ marginBottom: 20 }}>
+              <Text style={{ fontWeight: 'bold', fontSize: 16, color: '#333' }}>관심상품 탭을 눌러서 추적할 상품을 추가해보세요!</Text>
+              <Text style={{ fontWeight: 'normal', fontSize: 14, color: '#333', marginTop: 4 }}>아래 관심상품 탭을 클릭해주세요!</Text>
+            </View>
+          ) : (
+            <Text style={cm.cardText}>{mark.text}</Text>
+          )}
+          {!isLast && (
+            <TouchableOpacity style={cm.nextBtn} onPress={onNext} activeOpacity={0.85}>
+              <Text style={cm.nextBtnText}>다음</Text>
+            </TouchableOpacity>
+          )}
+        </View>
+
+        {/* Tab label — floats above the spotlight */}
+        <Text style={[cm.tabName, { left: getTabCenter(mark.tabIndex) }]}>
+          {mark.tabName}
+        </Text>
+
+        {/* Spotlight hole — percentage-based centering */}
+        <TouchableOpacity
+          style={[cm.ring, { left: getTabCenter(mark.tabIndex), marginLeft: -(SPOTLIGHT_SIZE / 2) }]}
+          onPress={isLast ? handleTabPress : undefined}
+          activeOpacity={isLast ? 0.7 : 1}
+        />
+      </View>
+    </Modal>
+  );
+}
+
+const cm = StyleSheet.create({
+  root: { position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, width: Dimensions.get('window').width, backgroundColor: 'rgba(0,0,0,0.72)' },
+  skipBtn: {
+    position: 'absolute', top: 56, right: 20, zIndex: 10,
+    backgroundColor: 'rgba(255,255,255,0.15)',
+    paddingHorizontal: 14, paddingVertical: 8, borderRadius: 20,
+  },
+  skipText: { color: '#fff', fontSize: 13, fontWeight: '700' },
+  card: {
+    position: 'absolute', bottom: 130, left: 24, right: 24,
+    backgroundColor: '#fff', borderRadius: 16, padding: 20,
+    ...Platform.select({
+      ios:     { shadowColor: '#000', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.25, shadowRadius: 16 },
+      android: { elevation: 10 },
+    }),
+  },
+  stepDot:     { fontSize: 12, fontWeight: '600', color: '#94a3b8', marginBottom: 8 },
+  cardText:    { fontSize: 16, fontWeight: '700', color: '#0f172a', lineHeight: 24, marginBottom: 20 },
+  nextBtn:     { backgroundColor: '#3B82F6', paddingVertical: 14, borderRadius: 10, alignItems: 'center' },
+  nextBtnText: { color: '#fff', fontSize: 15, fontWeight: '800' },
+  ring: {
+    position: 'absolute',
+    bottom: 10,
+    width: SPOTLIGHT_SIZE, height: SPOTLIGHT_SIZE, borderRadius: SPOTLIGHT_SIZE / 2,
+    backgroundColor: 'rgba(255,255,255,0.3)',
+    transform: [{ translateY: 0 }],
+  },
+  tabName: {
+    position: 'absolute',
+    bottom: 80,
+    marginLeft: -(60),
+    width: 120,
+    color: '#fff', fontSize: 18, fontWeight: 'bold', textAlign: 'center',
+  },
+});
+
 // ─── Screen ───────────────────────────────────────────────────────────────────
 
 export default function HomeScreen({ navigation }) {
@@ -609,6 +721,43 @@ export default function HomeScreen({ navigation }) {
   const [curationLoading,  setCurationLoading]  = useState(true);
   const [refreshing,       setRefreshing]       = useState(false);
   const fetchingRef = useRef(false);
+
+  // Coach mark tour (0 = hidden)
+  const [tutorialStep,  setTutorialStep]  = useState(0);
+
+  // Magic Nudge (clipboard Coupang link detection)
+  const [showClipNudge, setShowClipNudge] = useState(false);
+  const [clipNudgeUrl,  setClipNudgeUrl]  = useState('');
+  const nudgeAnim = useRef(new Animated.Value(80)).current;
+
+  // Auto-start coach mark tour on first mount
+  useEffect(() => {
+    setTutorialStep(1);
+  }, []);
+
+  // Slide nudge in/out
+  useEffect(() => {
+    Animated.timing(nudgeAnim, {
+      toValue: showClipNudge ? 0 : 80,
+      duration: 300,
+      useNativeDriver: true,
+    }).start();
+  }, [showClipNudge, nudgeAnim]);
+
+  // Detect Coupang link when app returns to foreground
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', async (nextState) => {
+      if (nextState !== 'active') return;
+      try {
+        const text = await Clipboard.getStringAsync();
+        if (text && text.includes('coupang.com') && tutorialStep === 0) {
+          setClipNudgeUrl(text);
+          setShowClipNudge(true);
+        }
+      } catch {}
+    });
+    return () => sub.remove();
+  }, [tutorialStep]);
 
   // Auth + child load
   useEffect(() => {
@@ -752,6 +901,35 @@ export default function HomeScreen({ navigation }) {
           이 포스팅은 쿠팡 파트너스 활동의 일환으로, 이에 따른 일정액의 수수료를 제공받습니다.
         </Text>
       </ScrollView>
+
+      {/* ── Magic Nudge: clipboard Coupang link detected ── */}
+      <Animated.View style={[styles.clipNudge, { transform: [{ translateY: nudgeAnim }] }]}>
+        <Text style={styles.clipNudgeText}>복사하신 쿠팡 상품의 최저가를 추적할까요?</Text>
+        <View style={styles.clipNudgeActions}>
+          <TouchableOpacity
+            style={styles.clipNudgeTrackBtn}
+            onPress={() => { setShowClipNudge(false); navigation.navigate('관심상품'); }}
+            activeOpacity={0.85}
+          >
+            <Text style={styles.clipNudgeTrackText}>추적하기</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            onPress={() => setShowClipNudge(false)}
+            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+          >
+            <Text style={styles.clipNudgeClose}>✕</Text>
+          </TouchableOpacity>
+        </View>
+      </Animated.View>
+
+      {/* ── Coach Mark Tutorial Overlay ── */}
+      <CoachMarkOverlay
+        step={tutorialStep}
+        onNext={() => setTutorialStep((s) => s + 1)}
+        onFinish={() => setTutorialStep(0)}
+        onSkip={() => setTutorialStep(0)}
+        navigation={navigation}
+      />
     </View>
   );
 }
@@ -1059,4 +1237,22 @@ const styles = StyleSheet.create({
     fontSize: 10, color: '#cbd5e1', textAlign: 'center',
     paddingHorizontal: 16, paddingTop: 12, lineHeight: 15,
   },
+
+  // ── Magic Nudge ───────────────────────────────────────────────────────────────
+  clipNudge: {
+    position: 'absolute', bottom: 12, left: 16, right: 16,
+    backgroundColor: '#0f172a',
+    borderRadius: 12,
+    paddingHorizontal: 14, paddingVertical: 12,
+    flexDirection: 'row', alignItems: 'center',
+    ...Platform.select({
+      ios:     { shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.3, shadowRadius: 8 },
+      android: { elevation: 8 },
+    }),
+  },
+  clipNudgeText:     { flex: 1, fontSize: 13, fontWeight: '600', color: '#fff', lineHeight: 19, marginRight: 10 },
+  clipNudgeActions:  { flexDirection: 'row', alignItems: 'center', gap: 8, flexShrink: 0 },
+  clipNudgeTrackBtn: { backgroundColor: '#3B82F6', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8 },
+  clipNudgeTrackText: { color: '#fff', fontSize: 13, fontWeight: '700' },
+  clipNudgeClose:    { fontSize: 16, color: '#94a3b8', fontWeight: '700', lineHeight: 20 },
 });

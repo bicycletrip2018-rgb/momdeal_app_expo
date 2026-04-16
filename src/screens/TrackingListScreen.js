@@ -1,6 +1,7 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
+  Animated,
   AppState,
   FlatList,
   Image,
@@ -77,6 +78,20 @@ function CurationCard({ category, images, count, onPress }) {
   );
 }
 
+// ─── Zoom & Highlight animation demo ─────────────────────────────────────────
+
+function TutorialVideo() {
+  return (
+    <Image
+      source={require('../../assets/tutorial.gif')}
+      style={{ width: 240, height: 240, alignSelf: 'center', resizeMode: 'contain', marginTop: 12, marginBottom: 12 }}
+    />
+  );
+}
+
+const demoStyles = StyleSheet.create({
+});
+
 // ─── Screen ───────────────────────────────────────────────────────────────────
 
 export default function TrackingListScreen({ navigation }) {
@@ -90,9 +105,6 @@ export default function TrackingListScreen({ navigation }) {
   const [sortOption,         setSortOption]         = useState('최신순');
   const [isSortModalVisible,   setIsSortModalVisible]   = useState(false);
   const [isFilterModalVisible, setIsFilterModalVisible] = useState(false);
-  const [isTutorialVisible,    setIsTutorialVisible]    = useState(false);
-  const [showModal,  setShowModal]  = useState(false);
-  const [skipModal,  setSkipModal]  = useState(false);
 
   // Items shown in the FlatList — favorites filter applied when active.
   const listData = showOnlyFavorites
@@ -120,10 +132,6 @@ export default function TrackingListScreen({ navigation }) {
     }
   }, [listData, sortOption]);
 
-  // Load skipModal preference from AsyncStorage
-  useEffect(() => {
-    AsyncStorage.getItem('skipCoupangModal').then((val) => setSkipModal(val === 'true'));
-  }, []);
 
 
   // Auto-detect Coupang link when app comes to foreground
@@ -251,15 +259,7 @@ export default function TrackingListScreen({ navigation }) {
               <Text style={{ fontSize: 15, fontWeight: '700', color: '#ef4444' }}>완료</Text>
             </TouchableOpacity>
           )
-        : () => (
-            <TouchableOpacity
-              onPress={() => setIsTutorialVisible(true)}
-              style={{ marginRight: 16 }}
-              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-            >
-              <Text style={{ fontSize: 13, fontWeight: '700', color: '#64748b' }}>🪄 상품 추가 방법</Text>
-            </TouchableOpacity>
-          ),
+        : undefined,
     });
   }, [navigation, isEditMode, exitEditMode, globalTrackedItems.length]);
 
@@ -385,23 +385,11 @@ export default function TrackingListScreen({ navigation }) {
   const numColumns = viewMode === 'list' ? 1 : viewMode === 'grid2' ? 2 : 3;
   const isEmpty    = globalTrackedItems.length === 0;
 
-  const openCoupangApp = async () => {
-    console.log('🚀 [DeepLink] Attempting Native App Launch...');
+  const openCoupang = async () => {
     try {
-      if (Platform.OS === 'android') {
-        await IntentLauncher.startActivityAsync('android.intent.action.VIEW', {
-          data: 'coupang://home',
-          packageName: 'com.coupang.mobile',
-        });
-      } else {
-        await Linking.openURL('coupang://');
-      }
+      await Linking.openURL('coupang://');
     } catch (error) {
-      console.error('🚨 [DeepLink] Native Launch Failed: ', error);
-      Alert.alert(
-        '연결 실패',
-        '쿠팡 앱을 열 수 없습니다. 스마트폰에 쿠팡 앱이 설치되어 있는지 확인해 주세요.'
-      );
+      Alert.alert('디버그 로그', '안드로이드 OS 보안 정책으로 쿠팡 앱을 열 수 없습니다. (정식 빌드 시 해결됨)\n\n테스트를 위해 직접 쿠팡 앱을 열어주세요.');
     }
   };
 
@@ -434,32 +422,42 @@ export default function TrackingListScreen({ navigation }) {
   return (
     <SafeAreaView edges={['bottom']} style={styles.container}>
 
-      {/* ── Zero-state: Saveroo Magic Onboarding ── */}
+      {/* ── Zero-state: visual guidebook ── */}
       {isEmpty ? (
-        <View style={styles.zeroState}>
-          <Text style={{ fontSize: 18, fontWeight: '800', color: '#0f172a', textAlign: 'center', marginBottom: 24, lineHeight: 26 }}>
-            {'똑똑한 엄마들의 최저가 비서,\n세이브루 👶'}
-          </Text>
+        <View style={{ flex: 1 }}>
+          <View style={[styles.zeroState, { paddingBottom: 100 }]}>
+            <Text style={styles.zeroStateTitle}>
+              {'관심상품이 텅 비어있어요!\n이렇게 추가해 보세요'}
+            </Text>
 
-          {[
-            { step: '1', text: '쿠팡 앱에서 사고 싶은 육아템을 고른다.' },
-            { step: '2', text: '공유하기 버튼을 눌러 링크를 복사한다.' },
-            { step: '3', text: '세이브루로 돌아오면 자동으로 가격 추적 시작!' },
-          ].map(({ step, text }) => (
-            <View key={step} style={{ flexDirection: 'row', alignItems: 'flex-start', marginBottom: 14, width: '100%' }}>
-              <View style={{ width: 28, height: 28, borderRadius: 14, backgroundColor: '#3b82f6', alignItems: 'center', justifyContent: 'center', marginRight: 12, flexShrink: 0 }}>
-                <Text style={{ color: '#fff', fontWeight: '800', fontSize: 13 }}>{step}</Text>
+            <View style={{ width: '100%', paddingHorizontal: 20, marginTop: 8, marginBottom: 6 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 10 }}>
+                <Text style={{ fontSize: 18, color: '#2F80ED', fontWeight: 'bold', marginRight: 8 }}>1.</Text>
+                <Text style={{ fontSize: 16, color: '#333', fontWeight: '600', marginLeft: 8 }}>쿠팡 앱 접속 후 관심 있는 상품 클릭</Text>
               </View>
-              <Text style={{ fontSize: 14, color: '#334155', lineHeight: 22, flex: 1 }}>{text}</Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                <Text style={{ fontSize: 18, color: '#2F80ED', fontWeight: 'bold', marginRight: 8 }}>2.</Text>
+                <Text style={{ fontSize: 16, color: '#333', fontWeight: '600', marginLeft: 8 }}>해당 상품 링크(URL) 복사하기 (영상 참고)</Text>
+              </View>
             </View>
-          ))}
+
+            {/* Tutorial GIF */}
+            <TutorialVideo />
+
+            <View style={{ width: '100%', paddingHorizontal: 20, marginTop: 2, marginBottom: 8 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center' }}>
+                <Text style={{ fontSize: 18, color: '#2F80ED', fontWeight: 'bold', marginRight: 8 }}>3.</Text>
+                <Text style={{ fontSize: 16, color: '#333', fontWeight: '600', marginLeft: 8 }}>세이브루 앱으로 돌아와서 상품 추가!</Text>
+              </View>
+            </View>
+          </View>
 
           <TouchableOpacity
-            style={[styles.zeroStateCta, { marginTop: 8 }]}
-            activeOpacity={0.82}
-            onPress={() => Linking.openURL('https://m.coupang.com')}
+            style={[styles.zeroStateCta, { position: 'absolute', bottom: 20, width: '90%', alignSelf: 'center', left: '5%' }]}
+            activeOpacity={0.85}
+            onPress={openCoupang}
           >
-            <Text style={styles.zeroStateCtaText}>🚀 지금 쿠팡에서 상품 골라오기</Text>
+            <Text style={styles.zeroStateCtaText}>쿠팡 앱 접속하기</Text>
           </TouchableOpacity>
         </View>
       ) : (
@@ -593,114 +591,16 @@ export default function TrackingListScreen({ navigation }) {
         </View>
       </Modal>
 
-      {/* ── Tutorial modal ── */}
-      <Modal
-        visible={isTutorialVisible}
-        transparent
-        animationType="slide"
-        onRequestClose={() => setIsTutorialVisible(false)}
-      >
-        <View style={styles.modalOverlay}>
-          <Pressable style={{ flex: 1 }} onPress={() => setIsTutorialVisible(false)} />
-          <View style={styles.tutorialSheet}>
-            <View style={styles.modalHandle} />
-
-            {/* Header */}
-            <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>상품 추가 방법</Text>
-              <TouchableOpacity
-                onPress={() => setIsTutorialVisible(false)}
-                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-              >
-                <Ionicons name="close" size={22} color="#334155" />
-              </TouchableOpacity>
-            </View>
-
-            {/* Steps */}
-            {[
-              { icon: 'phone-portrait-outline', text: '1. 쿠팡 앱에서 원하는 상품을 여세요.' },
-              { icon: 'share-social-outline',   text: "2. 공유하기 버튼을 누르고 'URL 복사'를 선택하세요." },
-              { icon: 'sparkles-outline',        text: '3. 세이브루로 돌아오면 자동으로 추가됩니다!' },
-            ].map(({ icon, text }, i) => (
-              <View key={i} style={styles.tutorialStep}>
-                <View style={styles.tutorialStepIcon}>
-                  <Ionicons name={icon} size={26} color="#64748b" />
-                </View>
-                <Text style={styles.tutorialStepText}>{text}</Text>
-              </View>
-            ))}
-
-            {/* Footer CTA */}
-            <TouchableOpacity
-              style={styles.tutorialCta}
-              activeOpacity={0.82}
-              onPress={() => {
-                setIsTutorialVisible(false);
-                Linking.openURL('coupang://').catch(() => Linking.openURL('https://m.coupang.com'));
-              }}
-            >
-              <Text style={styles.tutorialCtaText}>쿠팡 앱 열고 시작하기</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      </Modal>
-
       {/* ── FAB ── */}
-      {!isEditMode && (
+      {!isEditMode && !isEmpty && (
         <TouchableOpacity
           style={styles.fab}
-          onPress={() => { console.log('🔘 FAB Clicked'); if (skipModal) { openCoupangApp(); } else { setShowModal(true); } }}
+          onPress={openCoupang}
           activeOpacity={0.85}
         >
           <Text style={{ color: '#ffffff', fontWeight: 'bold', fontSize: 15 }}>+ 상품 추가</Text>
         </TouchableOpacity>
       )}
-
-      {/* ── Add Product Modal ── */}
-      <Modal
-        visible={showModal}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setShowModal(false)}
-      >
-        <Pressable style={styles.fabModalOverlay} onPress={() => setShowModal(false)}>
-          <Pressable style={styles.fabModalCard} onPress={(e) => e.stopPropagation?.()}>
-            <Text style={styles.fabModalTitle}>상품 추가 방법</Text>
-            {[
-              { icon: 'phone-portrait-outline', text: '1. 쿠팡 앱에서 원하는 상품을 여세요.' },
-              { icon: 'share-social-outline',   text: "2. 공유하기 버튼을 누르고 'URL 복사'를 선택하세요." },
-              { icon: 'sparkles-outline',        text: '3. 세이브루로 돌아오면 자동으로 추가됩니다!' },
-            ].map(({ icon, text }, i) => (
-              <View key={i} style={{ flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: 14 }}>
-                <Ionicons name={icon} size={24} color="#64748b" />
-                <Text style={{ fontSize: 14, color: '#334155', flex: 1, lineHeight: 20 }}>{text}</Text>
-              </View>
-            ))}
-            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 8 }}>
-              <TouchableOpacity
-                onPress={() => {
-                  const newValue = !skipModal;
-                  AsyncStorage.setItem('skipCoupangModal', String(newValue));
-                  setSkipModal(newValue);
-                }}
-                style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}
-                activeOpacity={0.7}
-              >
-                <Text style={{ fontSize: 13, color: skipModal ? '#3b82f6' : '#94a3b8' }}>
-                  {skipModal ? '✅' : '⬜'} 다시 보지 않음
-                </Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={{ backgroundColor: '#3b82f6', paddingVertical: 10, paddingHorizontal: 20, borderRadius: 8 }}
-                onPress={() => { console.log('🔘 Modal Button Clicked'); setShowModal(false); setTimeout(() => openCoupangApp(), 300); }}
-                activeOpacity={0.85}
-              >
-                <Text style={{ color: '#fff', fontWeight: 'bold', fontSize: 14 }}>쿠팡으로 이동</Text>
-              </TouchableOpacity>
-            </View>
-          </Pressable>
-        </Pressable>
-      </Modal>
 
       {/* ── Toggle switchboard action bar (edit mode only) ── */}
       {isEditMode && (
@@ -789,16 +689,35 @@ const styles = StyleSheet.create({
 
   // Zero-state (no items at all)
   zeroState: {
-    flex: 1, alignItems: 'center', justifyContent: 'center',
-    paddingHorizontal: 32,
+    flexGrow: 1, alignItems: 'center', justifyContent: 'center',
+    paddingHorizontal: 28, paddingVertical: 40,
   },
   zeroStateTitle: {
-    fontSize: 16, fontWeight: '600', color: '#64748b',
-    textAlign: 'center', lineHeight: 24, marginBottom: 28,
+    fontSize: 20, fontWeight: '800', color: '#0f172a',
+    textAlign: 'center', lineHeight: 28, marginBottom: 28,
   },
+  zeroStepCard: {
+    width: '100%', backgroundColor: '#fff',
+    borderRadius: 16, marginBottom: 28,
+    paddingHorizontal: 20, paddingTop: 20, paddingBottom: 8,
+    ...Platform.select({
+      ios:     { shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.08, shadowRadius: 12 },
+      android: { elevation: 4 },
+    }),
+  },
+  zeroStepRow:   { flexDirection: 'row', alignItems: 'flex-start' },
+  zeroStepLeft:  { alignItems: 'center', width: 44, marginRight: 14 },
+  zeroStepCircle: {
+    width: 44, height: 44, borderRadius: 22,
+    backgroundColor: '#eff6ff', alignItems: 'center', justifyContent: 'center',
+  },
+  zeroStepLine:  { width: 2, flexGrow: 1, minHeight: 16, backgroundColor: '#dbeafe', marginVertical: 4 },
+  zeroStepRight: { flex: 1, paddingTop: 10, paddingBottom: 20 },
+  zeroStepLabel: { fontSize: 11, fontWeight: '800', color: '#3b82f6', letterSpacing: 0.6, marginBottom: 4, textTransform: 'uppercase' },
+  zeroStepText:  { fontSize: 14, color: '#334155', lineHeight: 21 },
   zeroStateCta: {
-    backgroundColor: '#3b82f6', borderRadius: 14,
-    paddingVertical: 16, paddingHorizontal: 32,
+    width: '100%', backgroundColor: '#3b82f6', borderRadius: 14,
+    paddingVertical: 16, alignItems: 'center',
     ...Platform.select({
       ios:     { shadowColor: '#3b82f6', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.35, shadowRadius: 8 },
       android: { elevation: 4 },

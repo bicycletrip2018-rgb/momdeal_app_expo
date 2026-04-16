@@ -70,7 +70,7 @@ const INITIAL_TRACKED = [
 const TrackingContext = createContext(null);
 
 export function TrackingProvider({ children }) {
-  const [globalTrackedItems, setGlobalTrackedItems] = useState(INITIAL_TRACKED);
+  const [globalTrackedItems, setGlobalTrackedItems] = useState([]);
 
   // Normalize any incoming item shape (SearchScreen item OR MyPage savedItem)
   // into the canonical savedItem shape used throughout the app.
