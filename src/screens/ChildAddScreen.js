@@ -15,163 +15,84 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { auth } from '../firebase/config';
 import { createChild, updateChild } from '../services/firestore/childrenRepository';
+import { COLORS } from '../constants/theme';
 
 // ─── Age Groups ──────────────────────────────────────────────────────────────
 
 const AGE_GROUP = {
-  PREGNANT:  'PREGNANT',
-  INFANT:    'INFANT',    // 0–2 years  (0–35 months)
-  TODDLER:   'TODDLER',  // 3–6 years  (36–83 months)
-  KIDS:      'KIDS',      // 7–12 years (84–155 months)
-  TEEN_PLUS: 'TEEN_PLUS', // 13+ years (156+ months)
+  PREGNANT:     'PREGNANT',
+  INFANT:       'INFANT',        // 0–2 years   (0–35 months)
+  TODDLER:      'TODDLER',       // 3–7 years   (36–95 months)
+  KIDS_LOWER:   'KIDS_LOWER',   // 8–10 years  (96–131 months)
+  KIDS_UPPER:   'KIDS_UPPER',   // 11–13 years (132–167 months)
+  TEEN:         'TEEN',          // 14–19 years (168–239 months)
+  ADULT_CHILD:  'ADULT_CHILD',  // 20+ years   (240+ months)
 };
 
 const AGE_GROUP_LABEL = {
-  PREGNANT:  { emoji: '🤰', label: '임신 맞춤' },
-  INFANT:    { emoji: '👶', label: '영아 맞춤 (0–2세)' },
-  TODDLER:   { emoji: '🧒', label: '유아 맞춤 (3–6세)' },
-  KIDS:      { emoji: '🎒', label: '초등 맞춤 (7–12세)' },
-  TEEN_PLUS: { emoji: '🎓', label: '청소년 맞춤 (13세+)' },
+  PREGNANT:    '임신 맞춤',
+  INFANT:      '영아 맞춤 (0–2세)',
+  TODDLER:     '유아 맞춤 (3–7세)',
+  KIDS_LOWER:  '초등 저학년 맞춤 (8~10세)',
+  KIDS_UPPER:  '초등 고학년 맞춤 (11~13세)',
+  TEEN:        '청소년 맞춤 (14~19세)',
+  ADULT_CHILD: '성인 자녀/가구 맞춤 (20세 이상)',
 };
+
+// ─── Concern Categories (mirrors InitialOnboardingScreen) ────────────────────
+
+const NONE_CONCERN = '없음';
+
+const BORN_CONCERNS = [
+  '피부/기저귀', '수면/재우기', '수유/이유식', '발달/놀이',
+  '안전/외출', '건강/면역', '교육/언어', '육아비용 절약', '기타', NONE_CONCERN,
+];
+
+const PREGNANT_CONCERNS = [
+  '출산 준비물', '산모 건강/회복', '태아 발달/검사', '산후조리/도우미',
+  '육아비용 절약', '기타', NONE_CONCERN,
+];
+
+const PLANNING_CONCERNS = [
+  '임신 준비템(영양제)', '배란/건강관리', '임신 정보/팁', '육아비용 절약', '기타', NONE_CONCERN,
+];
+
+const PLANNING_PERIODS = ['6개월 이내', '1년 이내', '1~2년 후', '아직 미정'];
+
+const CARE_ENV_OPTIONS = ['엄마+아빠', '엄마 혼자', '아빠 혼자', '조부모 도움', '시터/도우미', '기관 이용'];
 
 // ─── Constants ──────────────────────────────────────────────────────────────
 
-const TOTAL_STEPS = 4;
 const PICKER_ITEM_H = 44;
 const PICKER_VISIBLE = 5;
-
-const REGIONS = [
-  '서울', '경기', '인천', '부산', '대구', '광주', '대전', '울산',
-  '세종', '강원', '충북', '충남', '전북', '전남', '경북', '경남', '제주',
-];
-
-const CARE_ENV_OPTIONS = [
-  '엄마+아빠', '엄마 혼자', '아빠 혼자', '조부모 도움', '시터/도우미', '기관 이용',
-];
-
-// ─── Age-specific Step 3 field definitions ───────────────────────────────────
-
-const STEP3_FIELDS = {
-  [AGE_GROUP.PREGNANT]: [
-    {
-      id: 'birthPrep',
-      label: '출산 준비 단계',
-      type: 'multi',
-      options: ['병원 선택 완료', '출산용품 준비 중', '산후조리원 예약', '수유 준비 중', '신생아 용품 구매 중'],
-    },
-  ],
-  [AGE_GROUP.INFANT]: [
-    {
-      id: 'feedingType',
-      label: '수유 방식',
-      type: 'single',
-      options: ['모유', '분유', '혼합', '이유식', '미정'],
-    },
-    {
-      id: 'skinType',
-      label: '피부 타입',
-      type: 'single',
-      options: ['정상', '건성', '민감성', '아토피성', '태열'],
-    },
-  ],
-  [AGE_GROUP.TODDLER]: [
-    {
-      id: 'pottyTraining',
-      label: '배변 훈련 상태',
-      type: 'single',
-      options: ['기저귀 착용 중', '훈련 중', '완료'],
-    },
-    {
-      id: 'mainActivity',
-      label: '주 활동',
-      type: 'multi',
-      options: ['실내 놀이', '야외 놀이', '유아 체육', '언어/독서', '음악/미술', '기관 이용'],
-    },
-  ],
-  [AGE_GROUP.KIDS]: [
-    {
-      id: 'digitalUsage',
-      label: '하루 디지털 기기 사용 시간',
-      type: 'single',
-      options: ['거의 안 함', '1시간 미만', '1–2시간', '2시간 이상'],
-    },
-    {
-      id: 'mainInterests',
-      label: '주요 관심사',
-      type: 'multi',
-      options: ['교과 학습', '예체능', '독서', '스포츠', '게임/미디어', '과학/탐구'],
-    },
-  ],
-  [AGE_GROUP.TEEN_PLUS]: [
-    {
-      id: 'independenceLevel',
-      label: '독립성 수준',
-      type: 'single',
-      options: ['부모 의존적', '일부 독립', '상당히 독립적'],
-    },
-    {
-      id: 'parentConcerns',
-      label: '부모의 고민',
-      type: 'multi',
-      options: ['사춘기 소통', '학업/진로', '교우 관계', '정서/심리', '건강 관리', '디지털 사용 관리'],
-    },
-  ],
-};
-
-// ─── Age-specific Step 4: product interest options ───────────────────────────
-
-const AGE_INTERESTS = {
-  [AGE_GROUP.PREGNANT]: [
-    '임부복', '출산준비물', '신생아 케어', '수유용품', '유모차/카시트', '아기 가구', '태교 용품',
-  ],
-  [AGE_GROUP.INFANT]: [
-    '기저귀/물티슈', '분유/이유식', '아기 스킨케어', '장난감/발달교구', '아기 의류', '유모차/힙시트', '아기 가전',
-  ],
-  [AGE_GROUP.TODDLER]: [
-    '장난감/교구', '아동 의류', '간식/영양제', '안전용품', '독서/교육', '야외 놀이용품', '원아복/가방',
-  ],
-  [AGE_GROUP.KIDS]: [
-    '학용품/문구', '아동복/신발', '스포츠/취미용품', '장난감/게임', '학습교재', '책가방/스쿨용품', '음악·미술 도구',
-  ],
-  [AGE_GROUP.TEEN_PLUS]: [
-    '주니어 패션', '스킨케어/뷰티', '스포츠용품', '학습/진로 도서', '디지털기기·악세서리', '간식/건강식품',
-  ],
-};
-
-const STEP3_HEADING = {
-  [AGE_GROUP.PREGNANT]:  '출산을 어떻게\n준비하고 계세요?',
-  [AGE_GROUP.INFANT]:    '아기의 생활 패턴을\n알려주세요',
-  [AGE_GROUP.TODDLER]:   '아이의 현재 상태를\n알려주세요',
-  [AGE_GROUP.KIDS]:      '아이의 생활 패턴을\n알려주세요',
-  [AGE_GROUP.TEEN_PLUS]: '요즘 어떤 부분이\n가장 신경 쓰이세요?',
-};
-
-const STEP4_HEADING = {
-  [AGE_GROUP.PREGNANT]:  '출산 준비에\n관심 있는 카테고리를 골라주세요',
-  [AGE_GROUP.INFANT]:    '육아 특가 중\n주로 찾으시는 카테고리는요?',
-  [AGE_GROUP.TODDLER]:   '아이 성장에\n관심 있는 카테고리를 골라주세요',
-  [AGE_GROUP.KIDS]:      '우리 아이 위해\n주로 구매하는 카테고리는요?',
-  [AGE_GROUP.TEEN_PLUS]: '청소년 자녀를 위해\n관심 있는 카테고리를 골라주세요',
-};
 
 // ─── Helper: compute ageGroup from birthDate ─────────────────────────────────
 
 function deriveAgeGroup(birthDate, type) {
-  if (type === 'pregnancy') return AGE_GROUP.PREGNANT;
+  if (type === 'pregnancy' || type === 'planning') return AGE_GROUP.PREGNANT;
   if (!birthDate) return null;
   const now = new Date();
-  // Future birthdate = still pregnant
   if (birthDate > now) return AGE_GROUP.PREGNANT;
   const ageMonths =
     (now.getFullYear() - birthDate.getFullYear()) * 12 +
     (now.getMonth() - birthDate.getMonth());
-  if (ageMonths < 36)  return AGE_GROUP.INFANT;
-  if (ageMonths < 84)  return AGE_GROUP.TODDLER;
-  if (ageMonths < 156) return AGE_GROUP.KIDS;
-  return AGE_GROUP.TEEN_PLUS;
+  if (ageMonths < 36)  return AGE_GROUP.INFANT;       // 0–2 years
+  if (ageMonths < 96)  return AGE_GROUP.TODDLER;      // 3–7 years
+  if (ageMonths < 132) return AGE_GROUP.KIDS_LOWER;   // 8–10 years
+  if (ageMonths < 168) return AGE_GROUP.KIDS_UPPER;   // 11–13 years
+  if (ageMonths < 240) return AGE_GROUP.TEEN;          // 14–19 years
+  return AGE_GROUP.ADULT_CHILD;                        // 20+ years
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
+
+const formatBirthDateSummary = (date) => {
+  if (!date) return '';
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  return `${y}.${m}.${d}`;
+};
 
 const formatDateDisplay = (date) => {
   if (!date) return '';
@@ -343,41 +264,6 @@ function DatePickerModal({ visible, initialDate, onConfirm, onCancel }) {
   );
 }
 
-// ─── RegionPickerModal ───────────────────────────────────────────────────────
-
-function RegionPickerModal({ visible, selected, onSelect, onClose }) {
-  return (
-    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-      <TouchableWithoutFeedback onPress={onClose}>
-        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.45)' }} />
-      </TouchableWithoutFeedback>
-      <View style={styles.pickerSheet}>
-        <View style={styles.pickerHandle} />
-        <View style={styles.pickerHeader}>
-          <View style={{ width: 48 }} />
-          <Text style={styles.pickerTitle}>사는 곳</Text>
-          <TouchableOpacity onPress={onClose} style={{ padding: 4 }}>
-            <Text style={styles.pickerCancelText}>닫기</Text>
-          </TouchableOpacity>
-        </View>
-        <ScrollView style={{ maxHeight: 320 }} showsVerticalScrollIndicator={false}>
-          {REGIONS.map((r) => (
-            <TouchableOpacity
-              key={r}
-              style={[styles.regionItem, selected === r && styles.regionItemActive]}
-              onPress={() => { onSelect(r); onClose(); }}
-              activeOpacity={0.7}
-            >
-              <Text style={[styles.regionItemText, selected === r && styles.regionItemTextActive]}>{r}</Text>
-              {selected === r && <Text style={{ fontSize: 16, color: '#2563eb' }}>✓</Text>}
-            </TouchableOpacity>
-          ))}
-        </ScrollView>
-      </View>
-    </Modal>
-  );
-}
-
 // ─── ChoiceChip ──────────────────────────────────────────────────────────────
 
 function ChoiceChip({ label, selected, onPress }) {
@@ -406,16 +292,6 @@ function SectionLabel({ text, required = false, note }) {
   );
 }
 
-// ─── ProgressBar ─────────────────────────────────────────────────────────────
-
-function ProgressBar({ step }) {
-  return (
-    <View style={styles.progressTrack}>
-      <View style={[styles.progressFill, { width: `${(step / TOTAL_STEPS) * 100}%` }]} />
-    </View>
-  );
-}
-
 // ─── Screen ─────────────────────────────────────────────────────────────────
 
 export default function ChildAddScreen({ navigation, route }) {
@@ -425,24 +301,34 @@ export default function ChildAddScreen({ navigation, route }) {
   const initChild  = route?.params?.child   ?? null;
   const isEditMode = Boolean(childId);
 
+  // The DB's original type — used for one-way ratchet and immutability rules.
+  const initType       = initChild?.type ?? 'child';
+  // True when the DB record is already a born child (immutable: no rollback, no field changes).
+  const isInitiallyBorn = isEditMode && initType === 'child';
+  // True when the user is transitioning from pregnancy/planning → child in this session.
+  const isTransitioningToBorn = isEditMode && initType !== 'child' && type === 'child';
+
   const initBirthDate = parseBirthDateParam(initChild?.birthDate);
 
-  // ── Step state ────────────────────────────────────────────────────────────
-  const [step, setStep] = useState(1);
-
-  // Step 1 — basic info
-  const [name,       setName]       = useState(initChild?.name     ?? '');
-  const [gender,     setGender]     = useState(initChild?.gender   ?? 'female');
-  const [type,       setType]       = useState(initChild?.type     ?? 'child');
-  const [birthOrder, setBirthOrder] = useState(
-    initChild?.birthOrder != null ? String(Math.min(initChild.birthOrder, 3)) : ''
+  // ── Form state ────────────────────────────────────────────────────────────
+  // Legacy name auto-split: if DB has old `name` but no structured lastName/firstName, split it.
+  const hasStructuredName = !!(initChild?.lastName || initChild?.firstName);
+  const legacyName = (initChild?.name || '').trim();
+  const [lastName,  setLastName]  = useState(
+    initChild?.lastName  ?? (hasStructuredName ? '' : legacyName.length > 1 ? legacyName.charAt(0) : '')
   );
+  const [firstName, setFirstName] = useState(
+    initChild?.firstName ?? (hasStructuredName ? '' : legacyName.length > 1 ? legacyName.slice(1) : legacyName)
+  );
+  const [gender, setGender] = useState(initChild?.gender ?? 'female');
+  const [type,   setType]   = useState(initChild?.type   ?? 'child');
 
-  // Step 2 — age/measurements
-  const [birthDate,     setBirthDate]     = useState(initBirthDate);
-  const [pregnancyWeek, setPregnancyWeek] = useState(
+  // ── Age / measurements ────────────────────────────────────────────────────
+  const [birthDate,      setBirthDate]      = useState(initBirthDate);
+  const [pregnancyWeek,  setPregnancyWeek]  = useState(
     initChild?.pregnancyWeek != null ? String(initChild.pregnancyWeek) : ''
   );
+  const [planningPeriod, setPlanningPeriod] = useState(initChild?.planningPeriod ?? '');
   const [height, setHeight] = useState(initChild?.height != null ? String(initChild.height) : '');
   const [weight, setWeight] = useState(initChild?.weight != null ? String(initChild.weight) : '');
   const [showDatePicker, setShowDatePicker] = useState(false);
@@ -453,128 +339,81 @@ export default function ChildAddScreen({ navigation, route }) {
     [birthDate, type]
   );
 
-  // Step 3 — universal
-  const [careEnv,          setCareEnv]          = useState(initChild?.careEnv    ?? []);
-  const [region,           setRegion]           = useState(initChild?.region     ?? '');
-  const [showRegionPicker, setShowRegionPicker] = useState(false);
+  // ── Care environment (multi-select) ──────────────────────────────────────
+  const [careEnvironment, setCareEnvironment] = useState(initChild?.careEnvironment ?? []);
+  const toggleCareEnv = useCallback((val) => {
+    setCareEnvironment((prev) =>
+      prev.includes(val) ? prev.filter((v) => v !== val) : [...prev, val]
+    );
+  }, []);
 
-  // Step 3 — INFANT
-  const [feedingType, setFeedingType] = useState(initChild?.feedingType ?? '');
-  const [skinType,    setSkinType]    = useState(initChild?.skinType    ?? '');
+  // ── Concerns (RULE-03: '없음' is mutually exclusive) ─────────────────────
+  const [concerns, setConcerns] = useState(initChild?.concerns ?? []);
 
-  // Step 3 — TODDLER
-  const [pottyTraining, setPottyTraining] = useState(initChild?.pottyTraining ?? '');
-  const [mainActivity,  setMainActivity]  = useState(initChild?.mainActivity  ?? []);
+  const currentConcernOptions = useMemo(() => {
+    if (type === 'pregnancy') return PREGNANT_CONCERNS;
+    if (type === 'planning')  return PLANNING_CONCERNS;
+    return BORN_CONCERNS;
+  }, [type]);
 
-  // Step 3 — KIDS
-  const [digitalUsage,  setDigitalUsage]  = useState(initChild?.digitalUsage  ?? '');
-  const [mainInterests, setMainInterests] = useState(initChild?.mainInterests ?? []);
+  const toggleConcern = useCallback((key) => {
+    setConcerns((prev) => {
+      if (prev.includes(key)) return prev.filter((v) => v !== key);
+      if (key === NONE_CONCERN) return [NONE_CONCERN];
+      const withoutNone = prev.filter((v) => v !== NONE_CONCERN);
+      if (withoutNone.length >= 3) return prev;
+      return [...withoutNone, key];
+    });
+  }, []);
 
-  // Step 3 — TEEN_PLUS
-  const [independenceLevel, setIndependenceLevel] = useState(initChild?.independenceLevel ?? '');
-  const [parentConcerns,    setParentConcerns]    = useState(initChild?.parentConcerns    ?? []);
-
-  // Step 3 — PREGNANT
-  const [birthPrep, setBirthPrep] = useState(initChild?.birthPrep ?? []);
-
-  // Step 4 — product interests
-  const [productInterests,    setProductInterests]    = useState(initChild?.productInterests    ?? []);
-  const [productInterestNote, setProductInterestNote] = useState(initChild?.productInterestNote ?? '');
-  const hasCustomInterest = productInterests.includes('기타 (직접 입력)');
-
-  const [saving,            setSaving]            = useState(false);
-  const [showSuccessModal,  setShowSuccessModal]  = useState(false);
-  const [successMessage,    setSuccessMessage]    = useState('');
-
-  // ── Generic toggle helpers ────────────────────────────────────────────────
-  const makeToggleMulti = (setter) => (val) =>
-    setter((prev) => prev.includes(val) ? prev.filter((v) => v !== val) : [...prev, val]);
-
-  const toggleCareEnv     = useCallback(makeToggleMulti(setCareEnv),     []);
-  const toggleMainAct     = useCallback(makeToggleMulti(setMainActivity), []);
-  const toggleMainInt     = useCallback(makeToggleMulti(setMainInterests), []);
-  const toggleParentConc  = useCallback(makeToggleMulti(setParentConcerns), []);
-  const toggleBirthPrep   = useCallback(makeToggleMulti(setBirthPrep),   []);
-  const toggleProductInt  = useCallback(makeToggleMulti(setProductInterests), []);
-
-  // ── Resolve step 3 field state by id ─────────────────────────────────────
-  const getFieldState = (fieldId) => {
-    switch (fieldId) {
-      case 'feedingType':       return [feedingType,        setFeedingType];
-      case 'skinType':          return [skinType,           setSkinType];
-      case 'pottyTraining':     return [pottyTraining,      setPottyTraining];
-      case 'mainActivity':      return [mainActivity,       toggleMainAct];
-      case 'digitalUsage':      return [digitalUsage,       setDigitalUsage];
-      case 'mainInterests':     return [mainInterests,      toggleMainInt];
-      case 'independenceLevel': return [independenceLevel,  setIndependenceLevel];
-      case 'parentConcerns':    return [parentConcerns,     toggleParentConc];
-      case 'birthPrep':         return [birthPrep,          toggleBirthPrep];
-      default:                  return [null, () => {}];
+  // ── Reset concerns when type changes ─────────────────────────────────────
+  const prevTypeRef = useRef(type);
+  useEffect(() => {
+    if (prevTypeRef.current !== type) {
+      prevTypeRef.current = type;
+      setConcerns([]);
     }
-  };
+  }, [type]);
+
+  const [saving,           setSaving]           = useState(false);
+  const [showSuccessModal, setShowSuccessModal] = useState(false);
+  const [successMessage,   setSuccessMessage]   = useState('');
 
   // ── Navigation ───────────────────────────────────────────────────────────
-  const handleBack = () => {
-    if (step > 1) { setStep((s) => s - 1); return; }
-    navigation.goBack();
-  };
+  const handleBack = () => navigation.goBack();
 
   const handleNext = () => {
-    if (step === 1) {
-      if (!name.trim()) { Alert.alert('안내', '이름을 입력해 주세요.'); return; }
-      setStep(2); return;
+    if (type === 'child' && !lastName.trim())  { Alert.alert('안내', '성(姓)을 입력해 주세요.'); return; }
+    if (type === 'child' && !firstName.trim()) { Alert.alert('안내', '이름을 입력해 주세요.'); return; }
+    // pregnancy: firstName (태명) is optional — no validation required
+    if (type === 'child' && !birthDate) {
+      Alert.alert('안내', '생년월일을 선택해 주세요.'); return;
     }
-    if (step === 2) {
-      if (type === 'child' && !birthDate) {
-        Alert.alert('안내', '생년월일을 선택해 주세요.'); return;
-      }
-      if (type === 'pregnancy' && !pregnancyWeek.trim()) {
-        Alert.alert('안내', '임신 주차를 입력해 주세요.'); return;
-      }
-      setStep(3); return;
+    if (type === 'pregnancy' && !pregnancyWeek.trim()) {
+      Alert.alert('안내', '임신 주차를 입력해 주세요.'); return;
     }
-    if (step === 3) {
-      setStep(4); return;
-    }
-    // step 4 → submit
     handleSubmit();
   };
 
   // ── Build Firestore payload ───────────────────────────────────────────────
-  const buildPayload = () => {
-    const base = {
-      name:          name.trim(),
-      gender,
-      type,
-      birthOrder:    birthOrder ? Number(birthOrder) : null,
-      birthDate:     type === 'child'     ? birthDate : null,
-      pregnancyWeek: type === 'pregnancy' ? Number(pregnancyWeek) : null,
-      dueDate:       null,
-      height:        height.trim()  ? Number(height)  : null,
-      weight:        weight.trim()  ? Number(weight)  : null,
-      ageGroup,
-      careEnv,
-      region:        region.trim(),
-      // age-specific fields (stored even if empty — only relevant group will be non-empty)
-      feedingType:       feedingType      || null,
-      skinType:          skinType         || null,
-      pottyTraining:     pottyTraining    || null,
-      mainActivity,
-      digitalUsage:      digitalUsage     || null,
-      mainInterests,
-      independenceLevel: independenceLevel || null,
-      parentConcerns,
-      birthPrep,
-      // step 4
-      productInterests,
-      productInterestNote: productInterestNote.trim(),
-      // backward-compat aliases used by recommendation engine
-      concerns:          productInterests,
-      concernNote:       productInterestNote.trim(),
-      familyComposition: careEnv,
-    };
-    return base;
-  };
+  const buildPayload = () => ({
+    lastName:      lastName.trim(),
+    firstName:     firstName.trim(),
+    name:          [lastName.trim(), firstName.trim()].filter(Boolean).join(' '),
+    gender,
+    type,
+    birthDate:     type === 'child'     ? birthDate : null,
+    pregnancyWeek: type === 'pregnancy' ? Number(pregnancyWeek) : null,
+    planningPeriod: type === 'planning' ? planningPeriod : null,
+    dueDate:       null,
+    height:        height.trim()  ? Number(height)  : null,
+    weight:        weight.trim()  ? Number(weight)  : null,
+    ageGroup,
+    careEnvironment,
+    concerns,
+    // backward-compat aliases used by recommendation engine
+    categoryTags:  concerns,
+  });
 
   const handleSubmit = async () => {
     try {
@@ -597,38 +436,6 @@ export default function ChildAddScreen({ navigation, route }) {
     }
   };
 
-  // ── Render step 3 age-specific section ───────────────────────────────────
-  const renderAgeSpecificFields = () => {
-    if (!ageGroup) return null;
-    const fields = STEP3_FIELDS[ageGroup];
-    if (!fields) return null;
-
-    return fields.map((field) => {
-      const [value, toggle] = getFieldState(field.id);
-      return (
-        <View key={field.id}>
-          <View style={styles.cardDivider} />
-          <SectionLabel text={field.label} note="(선택)" />
-          <View style={styles.chipWrap}>
-            {field.options.map((opt) => {
-              const selected = field.type === 'multi'
-                ? Array.isArray(value) && value.includes(opt)
-                : value === opt;
-              return (
-                <ChoiceChip
-                  key={opt}
-                  label={opt}
-                  selected={selected}
-                  onPress={() => toggle(opt)}
-                />
-              );
-            })}
-          </View>
-        </View>
-      );
-    });
-  };
-
   // ── Render ───────────────────────────────────────────────────────────────
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
@@ -644,105 +451,131 @@ export default function ChildAddScreen({ navigation, route }) {
         </TouchableOpacity>
         <View style={styles.topBarCenter}>
           <Text style={styles.topBarTitle}>{isEditMode ? '아이 정보 수정' : '아이 등록'}</Text>
-          <Text style={styles.topBarStep}>{step} / {TOTAL_STEPS}</Text>
         </View>
         <View style={{ width: 40 }} />
       </View>
 
-      {/* ── Progress bar ── */}
-      <ProgressBar step={step} />
-
-      {/* ── Step content ── */}
+      {/* ── Single-page form ── */}
       <ScrollView
         style={styles.scroll}
         contentContainerStyle={styles.scrollContent}
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
       >
+        <Text style={styles.stepHeading}>
+          {isEditMode ? '아이 정보를\n수정해 주세요' : '아이 정보를\n입력해 주세요'}
+        </Text>
+        <Text style={styles.stepSub}>
+          {isEditMode ? '아이의 최신 정보를 업데이트해 주세요.' : '이름과 기본 정보를 알려주세요.'}
+        </Text>
 
-        {/* ══════════════════════════════════════════════════
-            STEP 1 — Basic info
-        ══════════════════════════════════════════════════ */}
-        {step === 1 && (
-          <>
-            <Text style={styles.stepHeading}>아이 정보를{'\n'}입력해 주세요</Text>
-            <Text style={styles.stepSub}>이름과 기본 정보를 알려주세요.</Text>
-
-            <View style={styles.card}>
-              {/* 1. 유형 — first, so type selection immediately affects everything below */}
+        {/* ── 기본 정보 ── */}
+        <View style={styles.card}>
+          {!isInitiallyBorn && (
+            <>
               <SectionLabel text="유형" required />
-              <View style={styles.chipRow}>
-                <ChoiceChip
-                  label="아이"
-                  selected={type === 'child'}
-                  onPress={() => { setType('child'); if (gender === 'unknown') setGender('female'); }}
-                />
-                <ChoiceChip
-                  label="임신 중"
-                  selected={type === 'pregnancy'}
-                  onPress={() => { setType('pregnancy'); setGender('unknown'); }}
-                />
+          {isEditMode ? (
+            isInitiallyBorn ? (
+              // Born child: type is fully locked — no rollback to pregnancy
+              <View style={styles.lockedTypeRow}>
+                <Text style={styles.lockedTypeText}>아이</Text>
               </View>
-
-              <View style={styles.cardDivider} />
-
-              {/* 2. 이름 — label and placeholder both react to type selection above */}
-              <SectionLabel
-                text={type === 'pregnancy' ? '태명 (또는 애칭)' : '이름 / 별명'}
-                required
-              />
-              <TextInput
-                style={styles.input}
-                value={name}
-                onChangeText={setName}
-                placeholder={
-                  type === 'pregnancy'
-                    ? '예: 튼튼이, 우리 아기 (아직 없다면 편하게 적어주세요)'
-                    : '예: 노을이, 우리 공주'
-                }
-                placeholderTextColor="#aaa"
-                autoFocus
-              />
-
-              <View style={styles.cardDivider} />
-
-              {/* 3. 성별 — '아직 몰라요' pill appears here when type is pregnancy */}
-              <SectionLabel text="성별" required />
-              <View style={styles.chipRow}>
-                <ChoiceChip label="여아"       selected={gender === 'female'}  onPress={() => setGender('female')} />
-                <ChoiceChip label="남아"       selected={gender === 'male'}    onPress={() => setGender('male')} />
-                {type === 'pregnancy' && (
-                  <ChoiceChip label="아직 몰라요" selected={gender === 'unknown'} onPress={() => setGender('unknown')} />
+            ) : (
+              // Pregnancy/planning: one-way ratchet — can upgrade to child only
+              <View>
+                <View style={styles.chipRow}>
+                  <ChoiceChip
+                    label="아이"
+                    selected={type === 'child'}
+                    onPress={() => { setType('child'); setBirthDate(null); setGender('female'); }}
+                  />
+                  <ChoiceChip
+                    label={initType === 'pregnancy' ? '임신 중' : '임신 준비 중'}
+                    selected={type !== 'child'}
+                    onPress={() => setType(initType)}
+                  />
+                </View>
+                {type === 'child' && (
+                  <Text style={styles.ratchetHint}>출산 후 아이 정보로 전환돼요. 저장 후 되돌릴 수 없어요.</Text>
                 )}
               </View>
-
-              {/* 4. 출생 순서 — child only, last */}
-              {type === 'child' && (
-                <>
-                  <View style={styles.cardDivider} />
-                  <SectionLabel text="출생 순서" />
-                  <View style={styles.chipRow}>
-                    <ChoiceChip label="첫째"  selected={birthOrder === '1'} onPress={() => setBirthOrder('1')} />
-                    <ChoiceChip label="둘째"  selected={birthOrder === '2'} onPress={() => setBirthOrder('2')} />
-                    <ChoiceChip label="셋째+" selected={birthOrder === '3'} onPress={() => setBirthOrder('3')} />
-                  </View>
-                </>
-              )}
+            )
+          ) : (
+            <View style={styles.chipRow}>
+              <ChoiceChip
+                label="아이"
+                selected={type === 'child'}
+                onPress={() => { setType('child'); if (gender === 'unknown') setGender('female'); }}
+              />
+              <ChoiceChip
+                label="임신 중"
+                selected={type === 'pregnancy'}
+                onPress={() => { setType('pregnancy'); setGender('unknown'); }}
+              />
+              <ChoiceChip
+                label="임신 준비 중"
+                selected={type === 'planning'}
+                onPress={() => { setType('planning'); setGender('unknown'); }}
+              />
             </View>
-          </>
-        )}
+          )}
+            </>
+          )}
 
-        {/* ══════════════════════════════════════════════════
-            STEP 2 — Date / measurements
-        ══════════════════════════════════════════════════ */}
-        {step === 2 && (
-          <>
-            <Text style={styles.stepHeading}>아이의 나이를{'\n'}알려주세요</Text>
-            <Text style={styles.stepSub}>월령에 따라 맞춤 질문을 준비할게요.</Text>
-
-            <View style={styles.card}>
+          {type !== 'planning' && (
+            <>
+              {!isInitiallyBorn && <View style={styles.cardDivider} />}
+              <SectionLabel
+                text={type === 'pregnancy' ? '태명' : '이름'}
+                note={type === 'pregnancy' ? '(선택)' : undefined}
+                required={type === 'child'}
+              />
               {type === 'child' ? (
-                <>
+                <View style={{ flexDirection: 'row', gap: 10 }}>
+                  <TextInput
+                    style={[styles.input, { flex: 1 }]}
+                    value={lastName}
+                    onChangeText={setLastName}
+                    placeholder="성 (필수)"
+                    placeholderTextColor="#aaa"
+                  />
+                  <TextInput
+                    style={[styles.input, { flex: 2 }]}
+                    value={firstName}
+                    onChangeText={setFirstName}
+                    placeholder="이름 (필수)"
+                    placeholderTextColor="#aaa"
+                  />
+                </View>
+              ) : (
+                <TextInput
+                  style={styles.input}
+                  value={firstName}
+                  onChangeText={setFirstName}
+                  placeholder="태명 (선택)"
+                  placeholderTextColor="#aaa"
+                />
+              )}
+            </>
+          )}
+
+          {type === 'child' && (
+            <>
+              <View style={styles.cardDivider} />
+              <SectionLabel text="성별" required />
+              <View style={styles.chipRow}>
+                <ChoiceChip label="여아" selected={gender === 'female'} onPress={() => setGender('female')} />
+                <ChoiceChip label="남아" selected={gender === 'male'}   onPress={() => setGender('male')} />
+              </View>
+            </>
+          )}
+        </View>
+
+        {/* ── 날짜 / 신체 정보 — hidden for planning ── */}
+        {type !== 'planning' && <View style={[styles.card, { marginTop: 12 }]}>
+          {type === 'child' ? (
+            <>
+              <>
                   <SectionLabel text="생년월일" required />
                   <TouchableOpacity
                     style={styles.datePickerTrigger}
@@ -752,172 +585,103 @@ export default function ChildAddScreen({ navigation, route }) {
                     <Text style={birthDate ? styles.datePickerValue : styles.datePickerPlaceholder}>
                       {birthDate ? formatDateDisplay(birthDate) : '날짜를 선택해 주세요'}
                     </Text>
-                    <Text style={styles.datePickerIcon}>📅</Text>
+                    <Text style={styles.datePickerIcon}>›</Text>
                   </TouchableOpacity>
-
-                  {/* Live ageGroup badge after date is selected */}
                   {ageGroup && (
                     <View style={styles.ageGroupBadge}>
                       <Text style={styles.ageGroupBadgeText}>
-                        {AGE_GROUP_LABEL[ageGroup].emoji} {AGE_GROUP_LABEL[ageGroup].label}로 맞춤 질문을 준비할게요
+                        {AGE_GROUP_LABEL[ageGroup]}로 맞춤 추천을 준비할게요
                       </Text>
                     </View>
                   )}
-
                   <View style={styles.cardDivider} />
-
-                  <SectionLabel text="신체 정보" note="(선택)" />
-                  <View style={styles.bodyRow}>
-                    <View style={{ flex: 1 }}>
-                      <Text style={styles.measureLabel}>키 (cm)</Text>
-                      <TextInput
-                        style={styles.input}
-                        value={height}
-                        onChangeText={setHeight}
-                        keyboardType="decimal-pad"
-                        placeholder="예: 66.5"
-                        placeholderTextColor="#aaa"
-                      />
-                    </View>
-                    <View style={{ width: 12 }} />
-                    <View style={{ flex: 1 }}>
-                      <Text style={styles.measureLabel}>몸무게 (kg)</Text>
-                      <TextInput
-                        style={styles.input}
-                        value={weight}
-                        onChangeText={setWeight}
-                        keyboardType="decimal-pad"
-                        placeholder="예: 7.2"
-                        placeholderTextColor="#aaa"
-                      />
-                    </View>
-                  </View>
                 </>
-              ) : (
-                <>
-                  <SectionLabel text="임신 주차" required />
+
+              <SectionLabel text="신체 정보" note="(선택)" />
+              <View style={styles.bodyRow}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.measureLabel}>키 (cm)</Text>
                   <TextInput
                     style={styles.input}
-                    value={pregnancyWeek}
-                    onChangeText={setPregnancyWeek}
-                    keyboardType="number-pad"
-                    placeholder="예: 28"
+                    value={height}
+                    onChangeText={setHeight}
+                    keyboardType="decimal-pad"
+                    placeholder="예: 66.5"
                     placeholderTextColor="#aaa"
-                    autoFocus
                   />
-                </>
-              )}
-            </View>
-          </>
-        )}
-
-        {/* ══════════════════════════════════════════════════
-            STEP 3 — Care environment + age-specific
-        ══════════════════════════════════════════════════ */}
-        {step === 3 && (
-          <>
-            <Text style={styles.stepHeading}>
-              {ageGroup ? STEP3_HEADING[ageGroup] : '양육 환경을\n알려주세요'}
-            </Text>
-            <Text style={styles.stepSub}>
-              {name.trim()
-                ? `선택 정보를 입력하시면 ${name.trim()}에게 딱 맞는 핫딜만 쏙쏙 골라드릴게요!`
-                : '선택 정보를 입력하시면 아이에게 딱 맞는 핫딜만 쏙쏙 골라드릴게요!'}
-            </Text>
-
-            {/* ageGroup badge */}
-            {ageGroup && (
-              <View style={[styles.ageGroupBadge, { marginBottom: 16 }]}>
-                <Text style={styles.ageGroupBadgeText}>
-                  {AGE_GROUP_LABEL[ageGroup].emoji} {AGE_GROUP_LABEL[ageGroup].label} 맞춤 화면
-                </Text>
-              </View>
-            )}
-
-            <View style={styles.card}>
-              {/* Universal: 주 양육 환경 */}
-              <SectionLabel text="주 양육 환경" note="(선택 · 복수 선택 가능)" />
-              <View style={styles.chipWrap}>
-                {CARE_ENV_OPTIONS.map((opt) => (
-                  <ChoiceChip
-                    key={opt}
-                    label={opt}
-                    selected={careEnv.includes(opt)}
-                    onPress={() => toggleCareEnv(opt)}
-                  />
-                ))}
-              </View>
-
-              {/* Age-specific fields */}
-              {renderAgeSpecificFields()}
-            </View>
-          </>
-        )}
-
-        {/* ══════════════════════════════════════════════════
-            STEP 4 — Product interests
-        ══════════════════════════════════════════════════ */}
-        {step === 4 && (
-          <>
-            <Text style={styles.stepHeading}>
-              {ageGroup ? STEP4_HEADING[ageGroup] : '관심 있는\n특가 카테고리를 골라주세요'}
-            </Text>
-            <Text style={styles.stepSub}>
-              {name.trim()
-                ? `선택 정보를 입력하시면 ${name.trim()}에게 딱 맞는 핫딜만 쏙쏙 골라드릴게요!`
-                : '선택 정보를 입력하시면 아이에게 딱 맞는 핫딜만 쏙쏙 골라드릴게요!'}
-            </Text>
-
-            <View style={styles.card}>
-              <SectionLabel text="관심 카테고리" note="(선택 · 복수 선택 가능)" />
-              <View style={styles.chipWrap}>
-                {(ageGroup ? AGE_INTERESTS[ageGroup] : []).map((opt) => (
-                  <ChoiceChip
-                    key={opt}
-                    label={opt}
-                    selected={productInterests.includes(opt)}
-                    onPress={() => toggleProductInt(opt)}
-                  />
-                ))}
-                {/* 기타 chip — always last */}
-                <ChoiceChip
-                  label="기타 (직접 입력)"
-                  selected={hasCustomInterest}
-                  onPress={() => toggleProductInt('기타 (직접 입력)')}
-                />
-              </View>
-
-              {/* 기타 text input — conditional */}
-              {hasCustomInterest && (
-                <>
-                  <View style={styles.cardDivider} />
+                </View>
+                <View style={{ width: 12 }} />
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.measureLabel}>몸무게 (kg)</Text>
                   <TextInput
-                    style={[styles.input, styles.textArea]}
-                    value={productInterestNote}
-                    onChangeText={setProductInterestNote}
-                    placeholder="관심 있는 카테고리나 제품을 자유롭게 적어주세요"
+                    style={styles.input}
+                    value={weight}
+                    onChangeText={setWeight}
+                    keyboardType="decimal-pad"
+                    placeholder="예: 7.2"
                     placeholderTextColor="#aaa"
-                    multiline
-                    numberOfLines={3}
-                    textAlignVertical="top"
-                    autoFocus
                   />
-                </>
-              )}
-            </View>
-          </>
-        )}
+                </View>
+              </View>
+            </>
+          ) : type === 'pregnancy' ? (
+            <>
+              <SectionLabel text="임신 주차" required />
+              <TextInput
+                style={styles.input}
+                value={pregnancyWeek}
+                onChangeText={setPregnancyWeek}
+                keyboardType="number-pad"
+                placeholder="예: 28"
+                placeholderTextColor="#aaa"
+              />
+            </>
+          ) : null}
+        </View>}
+
+        {/* ── 주 양육 환경 — child only ── */}
+        {type === 'child' && <View style={[styles.card, { marginTop: 12 }]}>
+          <SectionLabel text="주 양육 환경" note="(선택 · 복수 선택 가능)" />
+          <View style={styles.chipWrap}>
+            {CARE_ENV_OPTIONS.map((opt) => (
+              <ChoiceChip
+                key={opt}
+                label={opt}
+                selected={careEnvironment.includes(opt)}
+                onPress={() => toggleCareEnv(opt)}
+              />
+            ))}
+          </View>
+        </View>}
+
+        {/* ── 관심사 / 고민 ── */}
+        <View style={[styles.card, { marginTop: 12 }]}>
+          <Text style={styles.stepHeading2}>
+            {type === 'pregnancy'
+              ? '임신 중 가장\n관심 있는 분야는요?'
+              : type === 'planning'
+                ? '임신 준비에서\n가장 관심 있는 분야는요?'
+                : '육아에서 가장\n관심 있는 분야는요?'
+            }
+          </Text>
+          <SectionLabel text="관심사 / 고민" note="(선택 · 최대 3개)" />
+          <View style={styles.chipWrap}>
+            {currentConcernOptions.map((opt) => (
+              <ChoiceChip
+                key={opt}
+                label={opt}
+                selected={concerns.includes(opt)}
+                onPress={() => toggleConcern(opt)}
+              />
+            ))}
+          </View>
+        </View>
 
         <View style={{ height: 32 }} />
       </ScrollView>
 
-      {/* ── Bottom navigation bar ── */}
+      {/* ── Single submit button ── */}
       <View style={[styles.bottomBar, { paddingBottom: insets.bottom + 8 }]}>
-        {step > 1 && (
-          <TouchableOpacity style={styles.backBtn} onPress={handleBack} activeOpacity={0.7}>
-            <Text style={styles.backBtnText}>← 이전</Text>
-          </TouchableOpacity>
-        )}
         <TouchableOpacity
           style={[styles.nextBtn, saving && styles.nextBtnDisabled]}
           onPress={handleNext}
@@ -928,24 +692,18 @@ export default function ChildAddScreen({ navigation, route }) {
             <ActivityIndicator color="#fff" />
           ) : (
             <Text style={styles.nextBtnText}>
-              {step < TOTAL_STEPS ? '다음  →' : (isEditMode ? '수정 완료' : '아이 등록')}
+              {isEditMode ? '수정 완료' : '아이 등록'}
             </Text>
           )}
         </TouchableOpacity>
       </View>
 
-      {/* ── Modals ── */}
+      {/* ── Date Picker Modal ── */}
       <DatePickerModal
         visible={showDatePicker}
         initialDate={birthDate}
         onConfirm={(date) => { setBirthDate(date); setShowDatePicker(false); }}
         onCancel={() => setShowDatePicker(false)}
-      />
-      <RegionPickerModal
-        visible={showRegionPicker}
-        selected={region}
-        onSelect={setRegion}
-        onClose={() => setShowRegionPicker(false)}
       />
 
       {/* ── Success Modal ── */}
@@ -964,7 +722,7 @@ export default function ChildAddScreen({ navigation, route }) {
               {successMessage}
             </Text>
             <TouchableOpacity
-              style={{ backgroundColor: '#3b82f6', borderRadius: 12, paddingVertical: 14, width: '100%', alignItems: 'center' }}
+              style={{ backgroundColor: COLORS.primary, borderRadius: 12, paddingVertical: 14, width: '100%', alignItems: 'center' }}
               activeOpacity={0.85}
               onPress={() => { setShowSuccessModal(false); navigation.goBack(); }}
             >
@@ -993,19 +751,28 @@ const styles = StyleSheet.create({
   topBarBackText: { fontSize: 28, color: '#0f172a', lineHeight: 34 },
   topBarCenter:   { alignItems: 'center' },
   topBarTitle:    { fontSize: 16, fontWeight: '800', color: '#0f172a' },
-  topBarStep:     { fontSize: 12, color: '#94a3b8', fontWeight: '600', marginTop: 1 },
-
-  // ── Progress bar ──
-  progressTrack: { height: 3, backgroundColor: '#f1f5f9' },
-  progressFill:  { height: 3, backgroundColor: '#2563eb' },
 
   // ── Scroll ──
   scroll:        { flex: 1 },
   scrollContent: { padding: 16, paddingBottom: 24 },
 
   // ── Step heading ──
-  stepHeading: { fontSize: 26, fontWeight: '900', color: '#0f172a', lineHeight: 36, marginBottom: 6 },
-  stepSub:     { fontSize: 14, color: '#64748b', lineHeight: 20, marginBottom: 20 },
+  stepHeading:  { fontSize: 22, fontWeight: '900', color: '#0f172a', lineHeight: 30, marginBottom: 4 },
+  stepHeading2: { fontSize: 16, fontWeight: '800', color: '#0f172a', lineHeight: 22, marginBottom: 10 },
+  stepSub:      { fontSize: 13, color: '#64748b', lineHeight: 18, marginBottom: 14 },
+
+  // ── Immutable summary card ──
+  summaryCard: {
+    backgroundColor: '#f8fafc', borderRadius: 12,
+    borderWidth: 1, borderColor: '#e2e8f0',
+    paddingHorizontal: 14, paddingVertical: 12,
+    marginBottom: 12,
+  },
+  summaryRow:      { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 8 },
+  summaryBadge:    { backgroundColor: '#e2e8f0', borderRadius: 999, paddingHorizontal: 10, paddingVertical: 4 },
+  summaryBadgeText:{ fontSize: 13, fontWeight: '700', color: '#334155' },
+  summarySep:      { fontSize: 13, color: '#94a3b8', fontWeight: '400' },
+  summaryNote:     { fontSize: 11, color: '#94a3b8', marginTop: 8 },
 
   // ── Age group badge ──
   ageGroupBadge: {
@@ -1040,19 +807,27 @@ const styles = StyleSheet.create({
     borderRadius: 10, paddingHorizontal: 12, paddingVertical: 11,
     fontSize: 15, color: '#0f172a',
   },
-  textArea:     { minHeight: 72, paddingTop: 10 },
   bodyRow:      { flexDirection: 'row' },
   measureLabel: { fontSize: 12, fontWeight: '700', color: '#64748b', marginBottom: 6 },
 
-  // ── Chips ──
-  chipRow:      { flexDirection: 'row', gap: 8 },
-  chipWrap:     { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  chip:         { borderWidth: 1, borderColor: '#cbd5e1', borderRadius: 999, paddingHorizontal: 14, paddingVertical: 8, backgroundColor: '#fff' },
-  chipActive:   { borderColor: '#2563eb', backgroundColor: '#dbeafe' },
-  chipText:     { color: '#334155', fontWeight: '600', fontSize: 13 },
-  chipTextActive: { color: '#1d4ed8' },
+  // ── Locked / disabled field display ──
+  lockedTypeRow:   { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  lockedTypeText:  { fontSize: 15, fontWeight: '700', color: '#64748b', backgroundColor: '#f1f5f9', borderRadius: 999, paddingHorizontal: 14, paddingVertical: 8 },
+  lockedTypeNote:  { fontSize: 12, color: '#94a3b8' },
+  lockedFieldRow:  { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  lockedFieldText: { fontSize: 15, fontWeight: '600', color: '#64748b', backgroundColor: '#f1f5f9', borderRadius: 999, paddingHorizontal: 14, paddingVertical: 8 },
+  disabledField:   { backgroundColor: '#f1f5f9', borderColor: '#e2e8f0', opacity: 0.7 },
+  ratchetHint:     { fontSize: 12, color: '#f59e0b', marginTop: 8, fontWeight: '600' },
 
-  // ── Date/region picker trigger ──
+  // ── Chips ──
+  chipRow:        { flexDirection: 'row', gap: 8, flexWrap: 'wrap' },
+  chipWrap:       { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  chip:           { borderWidth: 1, borderColor: '#cbd5e1', borderRadius: 999, paddingHorizontal: 14, paddingVertical: 8, backgroundColor: '#fff' },
+  chipActive:     { borderColor: COLORS.primary, backgroundColor: '#dbeafe' },
+  chipText:       { color: '#334155', fontWeight: '600', fontSize: 13 },
+  chipTextActive: { color: COLORS.primary },
+
+  // ── Date picker trigger ──
   datePickerTrigger: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
     backgroundColor: '#f8fafc', borderWidth: 1, borderColor: '#e2e8f0',
@@ -1069,11 +844,9 @@ const styles = StyleSheet.create({
     borderTopWidth: 1, borderTopColor: '#f1f5f9',
     backgroundColor: '#fff',
   },
-  backBtn:     { paddingHorizontal: 20, paddingVertical: 15, borderRadius: 12, backgroundColor: '#f1f5f9', alignItems: 'center', justifyContent: 'center' },
-  backBtnText: { fontSize: 14, fontWeight: '600', color: '#475569' },
-  nextBtn:     { flex: 1, paddingVertical: 15, alignItems: 'center', borderRadius: 12, backgroundColor: '#2563eb' },
+  nextBtn:         { flex: 1, paddingVertical: 15, alignItems: 'center', borderRadius: 12, backgroundColor: COLORS.primary },
   nextBtnDisabled: { opacity: 0.6 },
-  nextBtnText: { fontSize: 15, fontWeight: '800', color: '#fff' },
+  nextBtnText:     { fontSize: 15, fontWeight: '800', color: '#fff' },
 
   // ── Picker bottom sheet ──
   pickerSheet: {
@@ -1090,12 +863,6 @@ const styles = StyleSheet.create({
   pickerHeader:      { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 },
   pickerTitle:       { fontSize: 16, fontWeight: '800', color: '#0f172a' },
   pickerCancelText:  { fontSize: 15, color: '#94a3b8' },
-  pickerConfirmText: { fontSize: 15, color: '#2563eb', fontWeight: '700' },
+  pickerConfirmText: { fontSize: 15, color: COLORS.primary, fontWeight: '700' },
   pickerColumns:     { flexDirection: 'row', justifyContent: 'center' },
-
-  // ── Region list ──
-  regionItem:           { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: '#f8fafc' },
-  regionItemActive:     { backgroundColor: '#eff6ff' },
-  regionItemText:       { fontSize: 15, color: '#334155', fontWeight: '600' },
-  regionItemTextActive: { color: '#2563eb', fontWeight: '700' },
 });

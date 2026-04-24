@@ -9,6 +9,7 @@ import {
   View,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { resolveAgingPriceDisplay } from '../utils/priceDisplay';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -124,6 +125,7 @@ export function TrackingCard({
 }) {
   const pct       = resolveDiscountPct(item);
   const orig      = (item.currentPrice || 0) + (item.priceDrop || 0);
+  const aging     = resolveAgingPriceDisplay(item);
   const itemId    = item.productId ?? item.savedId;
   const isList    = viewMode === 'list';
   const isCompact = viewMode === 'grid3';
@@ -176,20 +178,26 @@ export function TrackingCard({
             </View>
           )}
           <Text style={styles.name} numberOfLines={2}>{item.name || '상품'}</Text>
-          <View style={styles.priceRow}>
-            {item.priceDrop > 0 && orig > 0 && (
-              <Text style={styles.origPrice}>₩{orig.toLocaleString('ko-KR')}</Text>
-            )}
-            <Text style={styles.currentPrice}>
-              {typeof item.currentPrice === 'number' && item.currentPrice > 0
-                ? `₩${item.currentPrice.toLocaleString('ko-KR')}` : '—'}
-            </Text>
-            {pct != null && pct !== 0 && (
-              <Text style={[styles.trendBadge, pct < 0 && styles.trendBadgeUp]}>
-                {pct > 0 ? `▼ ${pct}%` : `▲ ${Math.abs(pct)}%`}
+          {aging.mode === 'blind' ? (
+            <View>
+              <Text style={styles.currentPrice}>
+                {aging.currentPrice != null ? `₩${aging.currentPrice.toLocaleString('ko-KR')}` : '—'}
               </Text>
-            )}
-          </View>
+              <Text style={styles.agingBlindText}>가격 추적 중. {aging.revealLabel}부터 할인율 노출</Text>
+            </View>
+          ) : (
+            <View style={styles.priceRow}>
+              {aging.averagePrice != null && aging.averagePrice > 0 && (
+                <Text style={styles.origPrice}>₩{aging.averagePrice.toLocaleString('ko-KR')}</Text>
+              )}
+              <Text style={styles.currentPrice}>
+                {aging.currentPrice != null ? `₩${aging.currentPrice.toLocaleString('ko-KR')}` : '—'}
+              </Text>
+              {aging.discountPct != null && aging.discountPct > 0 && (
+                <Text style={styles.agingDiscountText}>▼ {aging.discountPct}%</Text>
+              )}
+            </View>
+          )}
         </View>
       </TouchableOpacity>
     );
@@ -213,12 +221,10 @@ export function TrackingCard({
               <Text style={{ fontSize: 20 }}>🛍️</Text>
             </View>
           )}
-          {/* Discount badge — bottom-left */}
-          {pct != null && pct !== 0 && (
-            <View style={[styles.compactDiscountBadge, pct < 0 && styles.compactDiscountBadgeUp]}>
-              <Text style={styles.compactDiscountText}>
-                {pct > 0 ? `▼${pct}%` : `▲${Math.abs(pct)}%`}
-              </Text>
+          {/* Discount badge — bottom-left; hidden during blind mode */}
+          {aging.mode === 'active' && aging.discountPct != null && aging.discountPct > 0 && (
+            <View style={styles.compactDiscountBadge}>
+              <Text style={styles.compactDiscountText}>▼{aging.discountPct}%</Text>
             </View>
           )}
           {/* Status icon row — top-right */}
@@ -239,9 +245,11 @@ export function TrackingCard({
           {item.isRocket && <Text style={styles.compactRocket}>🚀</Text>}
           <Text style={styles.compactName} numberOfLines={2}>{item.name || '상품'}</Text>
           <Text style={styles.compactPrice}>
-            {typeof item.currentPrice === 'number' && item.currentPrice > 0
-              ? `₩${item.currentPrice.toLocaleString('ko-KR')}` : '—'}
+            {aging.currentPrice != null ? `₩${aging.currentPrice.toLocaleString('ko-KR')}` : '—'}
           </Text>
+          {aging.mode === 'blind' && (
+            <Text style={styles.agingBlindTextCompact}>추적 중</Text>
+          )}
         </View>
       </TouchableOpacity>
     );
@@ -276,19 +284,27 @@ export function TrackingCard({
         <Text style={styles.sourceBadge}>C 쿠팡</Text>
         <DeliveryBadge deliveryType={item.deliveryType} />
         <Text style={styles.name} numberOfLines={2}>{item.name || '상품'}</Text>
-        <View style={styles.priceRow}>
-          {item.priceDrop > 0 && orig > 0 && (
-            <Text style={styles.origPrice}>₩{orig.toLocaleString('ko-KR')}</Text>
-          )}
-          <Text style={styles.currentPrice}>
-            {typeof item.currentPrice === 'number' && item.currentPrice > 0
-              ? `₩${item.currentPrice.toLocaleString('ko-KR')}` : '—'}
-          </Text>
-        </View>
-        {pct != null && pct !== 0 && (
-          <Text style={[styles.trendBadge, pct < 0 && styles.trendBadgeUp]}>
-            {pct > 0 ? `▼ ${pct}%` : `▲ ${Math.abs(pct)}%`}
-          </Text>
+        {aging.mode === 'blind' ? (
+          <View>
+            <Text style={styles.currentPrice}>
+              {aging.currentPrice != null ? `₩${aging.currentPrice.toLocaleString('ko-KR')}` : '—'}
+            </Text>
+            <Text style={styles.agingBlindText}>가격 추적 중{'\n'}{aging.revealLabel}부터 할인율 노출</Text>
+          </View>
+        ) : (
+          <View>
+            <View style={styles.priceRow}>
+              {aging.averagePrice != null && aging.averagePrice > 0 && (
+                <Text style={styles.origPrice}>₩{aging.averagePrice.toLocaleString('ko-KR')}</Text>
+              )}
+              <Text style={styles.currentPrice}>
+                {aging.currentPrice != null ? `₩${aging.currentPrice.toLocaleString('ko-KR')}` : '—'}
+              </Text>
+            </View>
+            {aging.discountPct != null && aging.discountPct > 0 && (
+              <Text style={styles.agingDiscountText}>▼ {aging.discountPct}%</Text>
+            )}
+          </View>
         )}
       </View>
     </TouchableOpacity>
@@ -408,4 +424,8 @@ const styles = StyleSheet.create({
   currentPrice: { fontSize: 16, fontWeight: '800', color: '#0f172a' },
   trendBadge:    { fontSize: 12, fontWeight: '800', color: '#3b82f6', marginTop: 2 },
   trendBadgeUp:  { color: '#ef4444' },
+
+  agingDiscountText:    { fontSize: 13, fontWeight: '800', color: '#2E6FF2', marginTop: 2 },
+  agingBlindText:       { fontSize: 10, color: '#94a3b8', marginTop: 2, lineHeight: 14 },
+  agingBlindTextCompact: { fontSize: 9, color: '#94a3b8', marginTop: 1 },
 });

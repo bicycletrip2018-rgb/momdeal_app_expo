@@ -3,6 +3,7 @@ import {
   ActivityIndicator,
   Alert,
   Image,
+  Keyboard,
   KeyboardAvoidingView,
   Linking,
   Modal,
@@ -28,14 +29,172 @@ import {
   updateSelectedChild,
 } from '../services/firestore/userRepository';
 import { getSavedProductsWithPriceSignals } from '../services/priceAlertService';
-import { deriveUserGamificationV2, TIER_LIST_V2, TITLE_LIST_V2 } from '../utils/gamification';
 import { toggleSavedProduct } from '../services/saveService';
 import { recordProductAction } from '../services/productActionService';
 import { useTracking } from '../context/TrackingContext';
+import { COLORS } from '../constants/theme';
+import Svg, { Circle, Line, Path, Polyline, Rect } from 'react-native-svg';
+import { Lock, TrendingDown } from 'lucide-react-native';
+import * as ImagePicker from 'expo-image-picker';
+
+// ─── SVG Icons ───────────────────────────────────────────────────────────────
+
+function BellIcon({ size = 20, color = '#0f172a' }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+      <Path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" stroke={color} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round"/>
+      <Path d="M13.73 21a2 2 0 0 1-3.46 0" stroke={color} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round"/>
+    </Svg>
+  );
+}
+
+function GearIcon({ size = 20, color = '#0f172a' }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+      <Circle cx="12" cy="12" r="3" stroke={color} strokeWidth={1.8}/>
+      <Path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" stroke={color} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round"/>
+    </Svg>
+  );
+}
+
+function AwardIcon({ size = 18, color = COLORS.primary }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+      <Circle cx="12" cy="8" r="6" stroke={color} strokeWidth={1.8}/>
+      <Path d="M15.477 12.89L17 22l-5-3-5 3 1.523-9.11" stroke={color} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round"/>
+    </Svg>
+  );
+}
+
+function ImagePlaceholderIcon({ size = 28, color = '#cbd5e1' }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+      <Rect x="3" y="3" width="18" height="18" rx="2" stroke={color} strokeWidth={1.6}/>
+      <Circle cx="8.5" cy="8.5" r="1.5" stroke={color} strokeWidth={1.6}/>
+      <Path d="M21 15l-5-5L5 21" stroke={color} strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round"/>
+    </Svg>
+  );
+}
+
+function ChevronRightSmIcon({ size = 16, color = '#94a3b8' }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+      <Path d="M9 18l6-6-6-6" stroke={color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"/>
+    </Svg>
+  );
+}
+
+function CameraIcon({ size = 18, color = COLORS.primary }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+      <Path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" stroke={color} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round"/>
+      <Circle cx="12" cy="13" r="4" stroke={color} strokeWidth={1.8}/>
+    </Svg>
+  );
+}
+
+function Settings2Icon({ size = 11, color = '#475569' }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+      <Path d="M20 7H4" stroke={color} strokeWidth={1.9} strokeLinecap="round"/>
+      <Path d="M20 12H4" stroke={color} strokeWidth={1.9} strokeLinecap="round"/>
+      <Path d="M20 17H4" stroke={color} strokeWidth={1.9} strokeLinecap="round"/>
+      <Circle cx="8" cy="7" r="2.3" fill="#fff" stroke={color} strokeWidth={1.8}/>
+      <Circle cx="16" cy="12" r="2.3" fill="#fff" stroke={color} strokeWidth={1.8}/>
+      <Circle cx="8" cy="17" r="2.3" fill="#fff" stroke={color} strokeWidth={1.8}/>
+    </Svg>
+  );
+}
+
+function PenToolIcon({ size = 18, color = COLORS.primary }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+      <Path d="M12 19l7-7 3 3-7 7-3-3z" stroke={color} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round"/>
+      <Path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z" stroke={color} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round"/>
+      <Path d="M2 2l7.586 7.586" stroke={color} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round"/>
+      <Circle cx="11" cy="11" r="2" stroke={color} strokeWidth={1.8}/>
+    </Svg>
+  );
+}
+
+function XIcon({ size = 22, color = '#94a3b8' }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+      <Path d="M18 6L6 18M6 6l12 12" stroke={color} strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round"/>
+    </Svg>
+  );
+}
+
+function InfoIcon({ size = 13, color = '#22c55e' }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+      <Circle cx="12" cy="12" r="10" stroke={color} strokeWidth={1.8}/>
+      <Path d="M12 16v-4M12 8h.01" stroke={color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"/>
+    </Svg>
+  );
+}
+
+function GiftIcon({ size = 32, color = COLORS.primary }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+      <Path d="M20 12v10H4V12" stroke={color} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round"/>
+      <Path d="M22 7H2v5h20V7z" stroke={color} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round"/>
+      <Line x1="12" y1="22" x2="12" y2="7" stroke={color} strokeWidth={1.8} strokeLinecap="round"/>
+      <Path d="M12 7H7.5a2.5 2.5 0 0 1 0-5C11 2 12 7 12 7z" stroke={color} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round"/>
+      <Path d="M12 7h4.5a2.5 2.5 0 0 0 0-5C13 2 12 7 12 7z" stroke={color} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round"/>
+    </Svg>
+  );
+}
+
+function PencilIcon({ size = 14, color = '#94a3b8' }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+      <Path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" stroke={color} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round"/>
+      <Path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" stroke={color} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round"/>
+    </Svg>
+  );
+}
+
+function CheckSmIcon({ size = 14, color = COLORS.primary }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+      <Path d="M20 6L9 17l-5-5" stroke={color} strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round"/>
+    </Svg>
+  );
+}
+
+function UserSilhouetteIcon({ size = 36, color = '#fff' }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+      <Circle cx="12" cy="8" r="4" stroke={color} strokeWidth={1.8}/>
+      <Path d="M4 20c0-4 3.582-7 8-7s8 3 8 7" stroke={color} strokeWidth={1.8} strokeLinecap="round"/>
+    </Svg>
+  );
+}
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
 const genderLabel = (g) => (g === 'female' ? '여아' : g === 'male' ? '남아' : '');
+
+function buildChildSummaryLine(child) {
+  if (!child) return null;
+  if (child.type === 'planning') return '임신 준비 중';
+  if (child.type === 'pregnancy') {
+    const w = typeof child.pregnancyWeek === 'number' ? `임신 ${child.pregnancyWeek}주` : '임신 중';
+    return w;
+  }
+  const ln = (child.lastName  || '').trim();
+  const fn = (child.firstName || child.name || '').trim();
+  const name = [ln, fn].filter(Boolean).join(' ');
+  const parts = [];
+  if (name) parts.push(name);
+  const gl = genderLabel(child.gender);
+  if (gl) parts.push(gl);
+  if (typeof child.ageMonth === 'number') parts.push(`${child.ageMonth}개월`);
+  if (child.height) parts.push(`${child.height}cm`);
+  if (child.weight) parts.push(`${child.weight}kg`);
+  return parts.length > 0 ? parts.join(' · ') : null;
+}
 
 const formatAgeMonth = (child) => {
   if (child?.type === 'pregnancy') {
@@ -116,12 +275,12 @@ function getRecommendedItems(ageMonth) {
 function getStatusBadge(item) {
   const current = item.currentPrice ?? 0;
   const drop    = item.priceDrop   ?? 0;
-  if (current <= 0) return { label: '⏸️ 변동 없음', bg: '#f8fafc', text: '#94a3b8' };
+  if (current <= 0) return { label: '변동 없음', bg: '#f8fafc', text: '#94a3b8' };
   const orig    = current + drop;
   const dropPct = orig > 0 ? (drop / orig) * 100 : 0;
-  if (dropPct > 30) return { label: '🔥 역대 최저가!', bg: '#fef2f2', text: '#dc2626' };
-  if (drop > 0)     return { label: '📉 하락 중',      bg: '#eff6ff', text: '#2563eb' };
-  return                   { label: '⏸️ 변동 없음',    bg: '#f8fafc', text: '#94a3b8' };
+  if (dropPct > 30) return { label: '역대 최저가', bg: '#fef2f2', text: '#dc2626' };
+  if (drop > 0)     return { label: '하락 중',     bg: '#eff6ff', text: '#2563eb' };
+  return                   { label: '변동 없음',   bg: '#f8fafc', text: '#94a3b8' };
 }
 
 // ─── Sub-components ─────────────────────────────────────────────────────────
@@ -166,60 +325,67 @@ const FEEDING_KO = { breast: '모유', formula: '분유', mixed: '혼합', solid
 
 function buildChildBadges(child) {
   const b = [];
-  // Age
+  if (child.type === 'planning') {
+    b.push({ label: '임신 준비 중', bg: '#fdf2f8', text: '#db2777' });
+    if (Array.isArray(child.concerns) && child.concerns.length > 0) {
+      b.push({ label: child.concerns[0], bg: '#eff6ff', text: '#1d4ed8' });
+    }
+    return b;
+  }
   if (child.type === 'pregnancy') {
-    b.push({ label: `임신 ${child.pregnancyWeek || '?'}주`, bg: '#fdf2f8', text: '#db2777' });
-  } else if (typeof child.ageMonth === 'number') {
+    if (typeof child.pregnancyWeek === 'number') {
+      b.push({ label: `임신 ${child.pregnancyWeek}주차`, bg: '#fdf2f8', text: '#db2777' });
+    }
+    if (child.dueDate) {
+      const due = new Date(child.dueDate);
+      const diffDays = Math.ceil((due - new Date()) / 86400000);
+      b.push({ label: diffDays >= 0 ? `D-${diffDays}` : `D+${Math.abs(diffDays)}`, bg: '#fdf2f8', text: '#9333ea' });
+    }
+    return b;
+  }
+  // type === 'child'
+  if (typeof child.ageMonth === 'number') {
     b.push({ label: `${child.ageMonth}개월`, bg: '#eff6ff', text: '#1d4ed8' });
   }
-  // Gender
   const gl = genderLabel(child.gender);
   if (gl) b.push({ label: gl, bg: '#fce7f3', text: '#be185d' });
-  // Height / Weight
   if (child.height) b.push({ label: `${child.height}cm`, bg: '#f0fdf4', text: '#166534' });
   if (child.weight) b.push({ label: `${child.weight}kg`, bg: '#f0fdf4', text: '#166534' });
-  // Skin type
-  if (child.skinType) b.push({ label: child.skinType, bg: '#fdf4ff', text: '#a21caf' });
-  // Feeding (infant-relevant)
-  const fk = FEEDING_KO[child.feedingType];
-  if (fk) b.push({ label: fk, bg: '#fff7ed', text: '#9a3412' });
   return b;
 }
 
-// ─── Child dropdown trigger ───────────────────────────────────────────────────
+// ─── Resolve display name from child record ───────────────────────────────────
 
-function childEmoji(child) {
-  return child.type === 'pregnancy' ? '🤰'
-    : child.gender === 'female' ? '👧'
-    : child.gender === 'male'   ? '👦' : '👶';
-}
-
-function ChildDropdownTrigger({ child, onPress }) {
-  return (
-    <TouchableOpacity style={styles.childDropBtn} onPress={onPress} activeOpacity={0.8}>
-      <Text style={styles.childDropEmoji}>{childEmoji(child)}</Text>
-      <Text style={styles.childDropName} numberOfLines={1}>{child.name}</Text>
-      <Text style={styles.childDropCaret}>▾</Text>
-    </TouchableOpacity>
-  );
+function resolveChildDisplayName(child) {
+  if (child.type === 'planning') return '예비 엄마';
+  if (child.type === 'pregnancy') {
+    const fn = (child.firstName || '').trim();
+    return fn || '우리 아기';
+  }
+  // type === 'child'
+  const ln = (child.lastName  || '').trim();
+  const fn = (child.firstName || child.name || '').trim();
+  return [ln, fn].filter(Boolean).join(' ') || '-';
 }
 
 // ─── Selected child dashboard card ───────────────────────────────────────────
 
-function ChildDashboardCard({ child, onEdit, onOpenPicker }) {
+function ChildDashboardCard({ child, onEdit }) {
   const badges = buildChildBadges(child);
 
   return (
     <View style={styles.childDashCard}>
-      {/* Header: dropdown trigger (left) + edit button (right) */}
+      {/* Header: child name (left) + edit button (right) */}
       <View style={styles.childDashHeader}>
-        <ChildDropdownTrigger child={child} onPress={onOpenPicker} />
+        <View style={styles.childDashNameRow}>
+          <Text style={styles.childDropName} numberOfLines={1}>{resolveChildDisplayName(child)}</Text>
+        </View>
         <TouchableOpacity
           style={styles.childDashEditBtn}
           onPress={() => onEdit(child)}
           hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
         >
-          <Text style={styles.childDashEditIcon}>✏️</Text>
+          <Text style={styles.childDashEditText}>편집</Text>
         </TouchableOpacity>
       </View>
 
@@ -235,7 +401,7 @@ function ChildDashboardCard({ child, onEdit, onOpenPicker }) {
       ) : (
         <TouchableOpacity onPress={() => onEdit(child)} activeOpacity={0.8}>
           <Text style={styles.childDashNoBadgeHint}>
-            ✏️ 아이 정보를 더 채우면 맞춤 추천이 더 정교해져요
+            아이 정보를 더 채우면 맞춤 추천이 더 정교해져요
           </Text>
         </TouchableOpacity>
       )}
@@ -246,12 +412,84 @@ function ChildDashboardCard({ child, onEdit, onOpenPicker }) {
 // ─── Constants ──────────────────────────────────────────────────────────────
 
 const MARKETS = [
-  { key: 'coupang', name: '쿠팡',       emoji: '🛒', active: true  },
-  { key: 'kurly',   name: '마켓컬리',   emoji: '🟣', active: false },
-  { key: 'naver',   name: '네이버쇼핑', emoji: '🟢', active: false },
+  { key: 'coupang', name: '쿠팡',       active: true  },
+  { key: 'kurly',   name: '마켓컬리',   active: false },
+  { key: 'naver',   name: '네이버쇼핑', active: false },
 ];
 
 const SKELETON_COUNT = 6;
+
+const PLACEHOLDER_PRODUCTS = [
+  { id: 'ph1', name: '관심 상품을 클릭하면 기록돼요' },
+  { id: 'ph2', name: '핫딜 상품을 살펴보세요' },
+  { id: 'ph3', name: '가격 추적 목록을 확인해보세요' },
+];
+
+const DUMMY_RECENTLY_VIEWED = [
+  { id: 'rv1', brand: '하기스',      name: '네이처메이드 3단계 기저귀 특대형 96매',    origPrice: 42900,  currentPrice: 32175  },
+  { id: 'rv2', brand: '매일유업',    name: '앱솔루트 명작 3단계 분유 800g × 2캔',      origPrice: 38500,  currentPrice: 31570  },
+  { id: 'rv3', brand: '베베숲',      name: '아쿠아 물티슈 100매 6팩 무향 저자극',       origPrice: 16900,  currentPrice: 11830  },
+  { id: 'rv4', brand: '다이치',      name: '듀얼핏 360 회전형 카시트 신생아~4세',      origPrice: 429000, currentPrice: 317460 },
+  { id: 'rv5', brand: '피셔프라이스', name: '소리나는 멀티활동 점퍼루 4-in-1 바운서',   origPrice: 199000, currentPrice: 214500 },
+  { id: 'rv6', brand: '레고 듀플로', name: '클래식 기본 벽돌 세트 38피스 (1.5~5세)', origPrice: 38000,  currentPrice: 28120  },
+];
+
+// ─── Level System ────────────────────────────────────────────────────────────
+
+const LEVEL_LIST = [
+  { id: 'rookie',   name: '일반맘', bg: '#f0fdf4', text: '#15803d', criteriaDetail: '앱 설치 및 아이 프로필 등록', check: () => true },
+  { id: 'explorer', name: '성실맘', bg: '#eff6ff', text: COLORS.primary, criteriaDetail: '관심상품 등록 5개 이상 & 맘톡 게시글 1개 이상', check: (s) => s.savedCount >= 5 && s.postCount >= 1 },
+  { id: 'reviewer', name: '열심맘', bg: '#fef3c7', text: '#b45309', criteriaDetail: '실구매 인증 리뷰 3회 이상 & 관심상품 등록 10개 이상', check: (s) => s.reviewCount >= 3 && s.savedCount >= 10 },
+  { id: 'pro',      name: '우수맘', bg: '#fdf4ff', text: '#7e22ce', criteriaDetail: '실구매 인증 리뷰 10회 & 커뮤니티 게시글 10개 & 관심상품 등록 30개', check: (s) => s.reviewCount >= 10 && s.postCount >= 10 && s.savedCount >= 30 },
+];
+
+function deriveLevel(stats) {
+  let levelIdx = 0;
+  LEVEL_LIST.forEach((lvl, idx) => { if (lvl.check(stats)) levelIdx = idx; });
+  return { level: LEVEL_LIST[levelIdx], levelIdx, nextLevel: LEVEL_LIST[levelIdx + 1] ?? null };
+}
+
+function buildNudgeText(stats, nextLevel) {
+  if (!nextLevel) return '최고 등급 프로 핫딜러에 도달했어요!';
+  if (nextLevel.id === 'explorer') {
+    const parts = [];
+    if (stats.savedCount < 5) parts.push(`관심상품 ${5 - stats.savedCount}개`);
+    if (stats.postCount  < 1) parts.push('맘톡 게시글 1개');
+    return `${nextLevel.name}까지 ${parts.join(', ')} 남았어요!`;
+  }
+  if (nextLevel.id === 'reviewer') {
+    const parts = [];
+    if (stats.reviewCount < 3)  parts.push(`리뷰 ${3  - stats.reviewCount}개`);
+    if (stats.savedCount  < 10) parts.push(`관심상품 ${10 - stats.savedCount}개`);
+    return `${nextLevel.name}까지 ${parts.join(', ')} 남았어요!`;
+  }
+  if (nextLevel.id === 'pro') {
+    const parts = [];
+    if (stats.reviewCount < 10) parts.push(`리뷰 ${10 - stats.reviewCount}개`);
+    if (stats.postCount   < 10) parts.push(`게시글 ${10 - stats.postCount}개`);
+    if (stats.savedCount  < 30) parts.push(`관심상품 ${30 - stats.savedCount}개`);
+    return `${nextLevel.name}까지 ${parts.join(', ')} 남았어요!`;
+  }
+  return `${nextLevel.name}에 도전해보세요!`;
+}
+
+function buildNudgeProgress(stats, nextLevel) {
+  if (!nextLevel) return [];
+  if (nextLevel.id === 'explorer') return [
+    { label: '관심상품', current: Math.min(stats.savedCount, 5),  target: 5 },
+    { label: '맘톡 글',  current: Math.min(stats.postCount,  1),  target: 1 },
+  ];
+  if (nextLevel.id === 'reviewer') return [
+    { label: '리뷰 인증', current: Math.min(stats.reviewCount, 3),  target: 3 },
+    { label: '관심상품',  current: Math.min(stats.savedCount,  10), target: 10 },
+  ];
+  if (nextLevel.id === 'pro') return [
+    { label: '리뷰 인증', current: Math.min(stats.reviewCount, 10), target: 10 },
+    { label: '게시글',    current: Math.min(stats.postCount,   10), target: 10 },
+    { label: '관심상품',  current: Math.min(stats.savedCount,  30), target: 30 },
+  ];
+  return [];
+}
 
 // ─── Screen ─────────────────────────────────────────────────────────────────
 
@@ -270,6 +508,7 @@ export default function MyPageScreen({ navigation }) {
   const [reviewCount,        setReviewCount]        = useState(0);
   const [postCount,          setPostCount]          = useState(0);
   const [commentCount,       setCommentCount]       = useState(0);
+  const [likesCount,         setLikesCount]         = useState(0);
   const [loading,            setLoading]            = useState(true);
   const [refreshing,         setRefreshing]         = useState(false);
   const [urlInput,           setUrlInput]           = useState('');
@@ -279,17 +518,17 @@ export default function MyPageScreen({ navigation }) {
   const [savedFilter,        setSavedFilter]        = useState('all');
   // Guide modal
   const [isGuideOpen,        setIsGuideOpen]        = useState(false);
-  // Unified profile settings modal: tabs 'profile' | 'tier' | 'title'
-  const [profileSettingsOpen, setProfileSettingsOpen] = useState(false);
-  const [profileSettingsTab,  setProfileSettingsTab]  = useState('profile');
   const [nicknameInput,      setNicknameInput]      = useState('');
   const [nicknameSaving,     setNicknameSaving]     = useState(false);
-  // Child picker
-  const [childPickerOpen,    setChildPickerOpen]    = useState(false);
-  // Active title selection
-  const [activeTitleId,      setActiveTitleId]      = useState(null);
+  // Child picker — removed (1 account, 1 child)
   // Product action modal (long-press on tracked item)
   const [productActionModal, setProductActionModal] = useState({ visible: false, productId: null, productName: null });
+  const [profileEditModalOpen, setProfileEditModalOpen] = useState(false);
+  const [imagePickerSheetOpen, setImagePickerSheetOpen] = useState(false);
+  const [profileImageUri,      setProfileImageUri]      = useState(null);
+  const [couponModalOpen,      setCouponModalOpen]  = useState(false);
+  const [keyboardHeight,       setKeyboardHeight]   = useState(0);
+  const [toastMsg,             setToastMsg]         = useState('');
 
   const loadAll = useCallback(async () => {
     const uid = auth.currentUser?.uid;
@@ -366,7 +605,7 @@ export default function MyPageScreen({ navigation }) {
 
         const fetchDocs = (pids) =>
           Promise.all(
-            pids.slice(0, 5).map((pid) =>
+            pids.slice(0, 10).map((pid) =>
               getDoc(doc(db, 'products', pid)).then((d) => (d.exists() ? { id: d.id, ...d.data() } : null))
             )
           ).then((docs) => docs.filter(Boolean));
@@ -394,6 +633,17 @@ export default function MyPageScreen({ navigation }) {
     });
     return unsubscribe;
   }, [navigation, loading, loadAll]);
+
+  useEffect(() => {
+    const show = Keyboard.addListener('keyboardDidShow', (e) => setKeyboardHeight(e.endCoordinates.height));
+    const hide = Keyboard.addListener('keyboardDidHide', () => setKeyboardHeight(0));
+    return () => { show.remove(); hide.remove(); };
+  }, []);
+
+  const showToast = (msg) => {
+    setToastMsg(msg);
+    setTimeout(() => setToastMsg(''), 2000);
+  };
 
   const handleSelectChild = async (childId) => {
     const uid = auth.currentUser?.uid;
@@ -428,7 +678,7 @@ export default function MyPageScreen({ navigation }) {
       setAddSheetOpen(false);
       const isNew = result?.data?.isNew !== false;
       Alert.alert(
-        isNew ? '등록 완료 ✅' : '이미 등록된 상품',
+        isNew ? '등록 완료' : '이미 등록된 상품',
         isNew
           ? '상품이 가격 추적 목록에 추가되었어요!'
           : '이미 추적 중인 상품입니다. 가격 정보를 업데이트했어요.'
@@ -465,16 +715,11 @@ export default function MyPageScreen({ navigation }) {
     ]);
   };
 
-  const handleOpenNicknameEdit = () => {
-    setNicknameInput(nickname);
-    setProfileSettingsTab('tier');
-    setProfileSettingsOpen(true);
-  };
-
-  const handleUpdateNickname = async () => {
+  const handleSaveProfile = async () => {
     const trimmed = nicknameInput.trim();
-    if (trimmed.length < 2 || trimmed.length > 12) {
-      Alert.alert('안내', '닉네임은 2~12자로 입력해 주세요.');
+    if (!trimmed || trimmed.length < 2) return;
+    if (trimmed === nickname) {
+      setProfileEditModalOpen(false);
       return;
     }
     const uid = auth.currentUser?.uid;
@@ -483,11 +728,26 @@ export default function MyPageScreen({ navigation }) {
     try {
       await updateNickname(uid, trimmed);
       setNickname(trimmed);
-      setProfileSettingsOpen(false);
+      setProfileEditModalOpen(false);
     } catch {
       Alert.alert('오류', '닉네임 저장에 실패했습니다.');
     } finally {
       setNicknameSaving(false);
+    }
+  };
+
+  const handlePickImage = async () => {
+    setImagePickerSheetOpen(false);
+    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (status !== 'granted') return;
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ['images'],
+      allowsEditing: true,
+      aspect: [1, 1],
+      quality: 0.8,
+    });
+    if (!result.canceled && result.assets?.[0]?.uri) {
+      setProfileImageUri(result.assets[0].uri);
     }
   };
 
@@ -508,7 +768,7 @@ export default function MyPageScreen({ navigation }) {
       coupangUrl: mockItem.coupangUrl ?? null,
     };
     addTrackedItem(synthetic);
-    Alert.alert('추적 시작! 📉', `${mockItem.name}\n가격 추적 목록에 추가되었어요!`);
+    Alert.alert('추적 시작', `${mockItem.name}\n가격 추적 목록에 추가되었어요!`);
     if (uid) {
       try {
         await toggleSavedProduct(uid, mockItem.id);
@@ -524,7 +784,7 @@ export default function MyPageScreen({ navigation }) {
   // and App Links (Android). The OS routes directly to the native Coupang app if installed,
   // or falls back to the web product page — no custom scheme or intent branching needed.
   const handleOpenCoupang = useCallback(async (url = 'https://coupa.ng/blE0dT') => {
-    Alert.alert('쿠팡으로 이동 중...', '잠시만 기다려 주세요 🛒');
+    Alert.alert('쿠팡으로 이동 중...', '잠시만 기다려 주세요.');
     try {
       await Linking.openURL(url);
     } catch {
@@ -553,18 +813,21 @@ export default function MyPageScreen({ navigation }) {
     );
   }
 
-  const selectedChild  = children.find((c) => c.id === selectedChildId) ?? children[0] ?? null;
-  const displayName    = nickname || auth.currentUser?.displayName || auth.currentUser?.email || '사용자';
-  const avatarInitial  = displayName[0] ?? '?';
-  const gamification   = deriveUserGamificationV2({
-    reviewCount,
-    postCount,
-    savedCount: globalTrackedItems.length,
-  });
-  // Active title: default to first in list; TITLE_LIST_V2 is fully mocked as earned
-  const displayedTitle = activeTitleId
-    ? TITLE_LIST_V2.find((t) => t.id === activeTitleId) ?? TITLE_LIST_V2[0]
-    : TITLE_LIST_V2[0];
+  const selectedChild     = children.find((c) => c.id === selectedChildId) ?? children[0] ?? null;
+  const displayName       = nickname || auth.currentUser?.displayName || auth.currentUser?.email || '사용자';
+  const childSummaryLine  = buildChildSummaryLine(selectedChild);
+  const levelStats = { reviewCount, postCount, savedCount: globalTrackedItems.length };
+  const { level: currentLevel, nextLevel } = deriveLevel(levelStats);
+  const nudgeText     = buildNudgeText(levelStats, nextLevel);
+  const nudgeProgress = buildNudgeProgress(levelStats, nextLevel);
+
+  const modalNicknameStatus = (() => {
+    const t = nicknameInput.trim();
+    if (!t) return 'empty';
+    if (t.length < 2) return 'too_short';
+    if (t === nickname) return 'duplicate';
+    return 'valid';
+  })();
 
   // ─── Render ───────────────────────────────────────────────────────────────
 
@@ -578,11 +841,16 @@ export default function MyPageScreen({ navigation }) {
           <TouchableOpacity
             onPress={() => navigation.navigate('Notifications')}
             hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            style={{ padding: 4 }}
           >
-            <Text style={styles.appBarIcon}>🔔</Text>
+            <BellIcon size={22} color="#0f172a" />
           </TouchableOpacity>
-          <TouchableOpacity hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-            <Text style={styles.appBarIcon}>⚙️</Text>
+          <TouchableOpacity
+            onPress={() => navigation.navigate('Settings')}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            style={{ padding: 4 }}
+          >
+            <GearIcon size={22} color="#0f172a" />
           </TouchableOpacity>
         </View>
       </View>
@@ -596,95 +864,120 @@ export default function MyPageScreen({ navigation }) {
           />
         }
       >
-        {/* ── Profile header block ── */}
-        <View style={styles.profileBlock}>
+        {/* ── Profile Card (Fintech-style) ── */}
+        <View style={styles.profileCard}>
+          <View style={styles.profileCardRow}>
 
-          {/* ⚙️ 프로필 설정 button — absolute top-right, removed from flow */}
-          <TouchableOpacity
-            style={styles.profileManageBtn}
-            onPress={() => { setNicknameInput(nickname); setProfileSettingsTab('tier'); setProfileSettingsOpen(true); }}
-            activeOpacity={0.8}
-          >
-            <Text style={styles.profileManageBtnText}>⚙️ 프로필 설정</Text>
-          </TouchableOpacity>
-
-          {/* ── Main row: avatar | name + badges ── */}
-          <View style={styles.profileTopRow}>
-
-            {/* Avatar with 📷 camera overlay */}
+            {/* User silhouette avatar */}
             <View style={styles.avatarWrapper}>
-              <View style={styles.avatar}>
-                <Text style={styles.avatarInitial}>{avatarInitial}</Text>
+              <View style={styles.avatarCircle}>
+                {profileImageUri
+                  ? <Image source={{ uri: profileImageUri }} style={styles.avatarImage} />
+                  : <UserSilhouetteIcon size={34} color="#fff" />}
               </View>
-              <View style={styles.avatarCameraIcon}>
-                <Text style={styles.avatarCameraText}>📷</Text>
-              </View>
+              <TouchableOpacity
+                style={styles.avatarEditBadge}
+                onPress={() => { setNicknameInput(nickname || auth.currentUser?.displayName || ''); setProfileEditModalOpen(true); }}
+                activeOpacity={0.85}
+                hitSlop={{ top: 4, bottom: 4, left: 4, right: 4 }}
+              >
+                <GearIcon size={11} color="#475569" />
+              </TouchableOpacity>
             </View>
 
-            {/* Name + badge area — paddingRight leaves room for the absolute button */}
-            <View style={[styles.profileNameArea, { paddingRight: 72 }]}>
-              <View style={styles.profileNameRow}>
-                <Text style={styles.profileName} numberOfLines={1}>{displayName}</Text>
-              </View>
-              {/* Tier badge + tappable title badge */}
-              <View style={styles.profileBadgeRow}>
-                <View style={[styles.tierBadgePill, { backgroundColor: gamification.tier.bg }]}>
-                  <Text style={[styles.tierBadgePillText, { color: gamification.tier.text }]}>
-                    {gamification.tier.emoji} {gamification.tier.name}
-                  </Text>
-                </View>
+            {/* Info column */}
+            <View style={styles.profileInfoCol}>
+
+              {/* Line 1: Nickname + Clickable Grade pill */}
+              <View style={styles.nicknameRow}>
+                <Text style={styles.nicknameText} numberOfLines={1} ellipsizeMode="tail">{displayName}</Text>
                 <TouchableOpacity
-                  style={[styles.titleBadge, { backgroundColor: displayedTitle.bg }]}
-                  onPress={() => { setProfileSettingsTab('title'); setProfileSettingsOpen(true); }}
-                  activeOpacity={0.8}
+                  onPress={() => navigation.navigate('LevelInfo', { currentLevelId: currentLevel.id, stats: levelStats })}
+                  activeOpacity={0.75}
+                  style={styles.levelBadgePillInline}
                 >
-                  <Text style={[styles.titleBadgeText, { color: displayedTitle.text }]}>
-                    {displayedTitle.emoji} {displayedTitle.label}
-                  </Text>
+                  <Text style={styles.levelBadgePillInlineText}>{currentLevel.name} {'>'}</Text>
                 </TouchableOpacity>
               </View>
+
+              {/* Line 2: Child summary */}
+              {childSummaryLine ? (
+                <View style={styles.childSummaryRow}>
+                  <Text style={styles.childSummaryText} numberOfLines={1}>{childSummaryLine}</Text>
+                  <TouchableOpacity
+                    onPress={() => selectedChild ? navigateToEditChild(selectedChild) : navigation.navigate('ChildAdd')}
+                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                    style={styles.childEditBtn}
+                    activeOpacity={0.7}
+                  >
+                    <Text style={styles.childEditBtnText}>수정</Text>
+                    <ChevronRightSmIcon size={11} color="#94a3b8" />
+                  </TouchableOpacity>
+                </View>
+              ) : (
+                <TouchableOpacity onPress={() => navigation.navigate('ChildAdd')} activeOpacity={0.7}>
+                  <Text style={styles.childSummaryAdd}>+ 아이 프로필 등록</Text>
+                </TouchableOpacity>
+              )}
+
             </View>
           </View>
-
-          {/* ── XP progress bar (full width) ── */}
-          <View style={styles.xpBarTrack}>
-            <View style={[styles.xpBarFill, { width: `${gamification.xp}%` }]} />
-          </View>
-
-          {/* ── Progress copy ── */}
-          <View style={styles.xpCopyRow}>
-            <Text style={styles.xpProgressCopy} numberOfLines={2}>
-              {gamification.progressCopy}
-            </Text>
-          </View>
-
         </View>
 
-        {/* Child profile card with inline dropdown trigger */}
-        {selectedChild ? (
-          <ChildDashboardCard
-            child={selectedChild}
-            onEdit={navigateToEditChild}
-            onOpenPicker={() => setChildPickerOpen(true)}
-          />
-        ) : (
-          <TouchableOpacity
-            style={styles.childDashEmpty}
-            onPress={() => navigation.navigate('ChildAdd')}
-            activeOpacity={0.8}
-          >
-            <Text style={styles.childDashEmptyText}>+ 아이 프로필 등록하기</Text>
-          </TouchableOpacity>
-        )}
+        {/* ── Action Nudge Card ── */}
+        <TouchableOpacity
+          style={styles.nudgeCard}
+          onPress={() => navigation.navigate('LevelInfo', { currentLevelId: currentLevel.id, stats: levelStats })}
+          activeOpacity={0.85}
+        >
+          {/* Header row */}
+          <View style={styles.nudgeCardHeader}>
+            <Lock size={14} color="#94a3b8" strokeWidth={2.2} />
+            {nextLevel ? (
+              <Text style={styles.nudgeCardTitle} numberOfLines={1}>
+                <Text style={styles.nudgeQuestPrefix}>다음 레벨 </Text>
+                <Text style={styles.nudgeCardLevelName}>'{nextLevel.name}'</Text>
+                <Text style={styles.nudgeQuestSuffix}>까지</Text>
+              </Text>
+            ) : (
+              <Text style={styles.nudgeCardTitle}>최고 레벨 달성!</Text>
+            )}
+            <ChevronRightSmIcon size={13} color="#94a3b8" />
+          </View>
 
-        {/* ── Activity stats — single row, 5 items ── */}
+          {/* Progress bar rows */}
+          {nudgeProgress.map((item) => {
+            const pct = item.target > 0 ? Math.min(item.current / item.target, 1) : 0;
+            const done = pct >= 1;
+            return (
+              <View key={item.label} style={styles.nudgeProgressRow}>
+                <Text style={styles.nudgeProgressLabel}>{item.label}</Text>
+                <View style={styles.nudgeBarTrack}>
+                  <View style={[styles.nudgeBarFill, { width: `${pct * 100}%` }, done && styles.nudgeBarFillDone]} />
+                </View>
+                <Text style={[styles.nudgeProgressCount, done && styles.nudgeProgressCountDone]}>
+                  {item.current}/{item.target}
+                </Text>
+              </View>
+            );
+          })}
+
+          {/* Max level state */}
+          {!nextLevel && (
+            <Text style={styles.nudgeMaxText}>{nudgeText}</Text>
+          )}
+        </TouchableOpacity>
+
+        {/* ── Activity stats — 4-cell grid ── */}
         <View style={styles.statsRow}>
           <TouchableOpacity
             style={styles.statCell}
-            onPress={() => Alert.alert('내가 쓴 글', `총 ${postCount}개의 글을 작성했어요.`)}
+            onPress={() => navigation.navigate('MyActivity', { activeTab: 'posts', postCount, commentCount, likesCount, nickname })}
             activeOpacity={0.7}
           >
-            <Text style={styles.statNumber}>{postCount}</Text>
+            {postCount > 0
+              ? <Text style={styles.statNumber}>{postCount}</Text>
+              : <Text style={styles.statActionHint}>글 작성하기</Text>}
             <Text style={styles.statLabel}>내가 쓴 글</Text>
           </TouchableOpacity>
 
@@ -692,76 +985,123 @@ export default function MyPageScreen({ navigation }) {
 
           <TouchableOpacity
             style={styles.statCell}
-            onPress={() => Alert.alert('댓글', `총 ${commentCount}개의 댓글을 작성했어요.`)}
+            onPress={() => navigation.navigate('MyActivity', { activeTab: 'comments', postCount, commentCount, likesCount, nickname })}
             activeOpacity={0.7}
           >
-            <Text style={styles.statNumber}>{commentCount}</Text>
-            <Text style={styles.statLabel}>댓글</Text>
+            {commentCount > 0
+              ? <Text style={styles.statNumber}>{commentCount}</Text>
+              : <Text style={styles.statActionHint}>댓글 달기</Text>}
+            <Text style={styles.statLabel}>내 댓글</Text>
           </TouchableOpacity>
 
           <View style={styles.statDivider} />
 
           <TouchableOpacity
             style={styles.statCell}
-            onPress={() => Alert.alert('저장한 글', '저장한 글 기능을 준비 중입니다.')}
+            onPress={() => navigation.navigate('MyActivity', { activeTab: 'likes', postCount, commentCount, likesCount, nickname })}
             activeOpacity={0.7}
           >
-            <Text style={styles.statNumber}>0</Text>
-            <Text style={styles.statLabel}>저장한 글</Text>
+            <Text style={styles.statNumber}>{likesCount}</Text>
+            <Text style={styles.statLabel}>좋아요한 글</Text>
           </TouchableOpacity>
 
           <View style={styles.statDivider} />
 
           <TouchableOpacity
             style={styles.statCell}
-            onPress={() => {
-              if (recentProducts.length === 0) Alert.alert('최근 본 상품', '아직 본 상품이 없어요.');
-              else handleProductPress(recentProducts[0].id, recentProducts[0].name);
-            }}
+            onPress={() => showToast('준비 중인 기능입니다')}
             activeOpacity={0.7}
           >
-            <Text style={styles.statNumber}>{recentProducts.length}</Text>
-            <Text style={styles.statLabel}>최근 본 상품</Text>
-          </TouchableOpacity>
-
-          <View style={styles.statDivider} />
-
-          <TouchableOpacity
-            style={styles.statCell}
-            onPress={() => Alert.alert('내 쿠폰함', '쿠폰 기능을 준비 중입니다.')}
-            activeOpacity={0.7}
-          >
-            <Text style={styles.statNumber}>0</Text>
+            <Text style={styles.statActionHint}>준비중</Text>
             <Text style={styles.statLabel}>내 쿠폰함</Text>
           </TouchableOpacity>
         </View>
 
-        <View style={styles.sectionDivider} />
+        {/* ── 최근 본 상품 ── */}
+        <View style={styles.recentSection}>
+          <View style={styles.recentHeader}>
+            <Text style={styles.recentTitle}>최근 본 상품</Text>
+            <TouchableOpacity
+              style={styles.recentViewAllBtn}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              onPress={() => navigation.navigate('RecentlyViewed', { products: recentProducts.length > 0 ? recentProducts : DUMMY_RECENTLY_VIEWED })}
+            >
+              <Text style={styles.recentViewAllText}>전체보기</Text>
+              <ChevronRightSmIcon size={14} color="#94a3b8" />
+            </TouchableOpacity>
+          </View>
+          {(() => {
+            const displayItems = recentProducts.length > 0 ? recentProducts : null;
+            const dummyItems   = DUMMY_RECENTLY_VIEWED;
+            const source       = displayItems ?? dummyItems;
+            return (
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.recentScroll}
+              >
+                {source.map((item) => {
+                  const isReal       = !!displayItems;
+                  const brand        = item.brand        ?? '';
+                  const title        = item.name         ?? '';
+                  const origPrice    = item.origPrice    ?? 0;
+                  const currentPrice = item.currentPrice ?? origPrice;
+                  const pct = origPrice > 0 && currentPrice !== origPrice
+                    ? Math.round(Math.abs((origPrice - currentPrice) / origPrice) * 100) : 0;
+                  const isDown = currentPrice < origPrice;
+                  const isUp   = currentPrice > origPrice;
+                  return (
+                    <TouchableOpacity
+                      key={item.id}
+                      style={styles.recentCard}
+                      onPress={() => isReal ? handleProductPress(item.id, title) : null}
+                      activeOpacity={0.8}
+                    >
+                      <View style={styles.recentThumb}>
+                        <ImagePlaceholderIcon size={26} color="#cbd5e1" />
+                      </View>
+                      {brand ? <Text style={styles.recentCardBrand} numberOfLines={1}>{brand}</Text> : null}
+                      <Text style={styles.recentCardName} numberOfLines={2}>{title}</Text>
+                      <View style={styles.recentPriceRow}>
+                        {pct > 0 && (
+                          <Text style={[styles.recentCardDiscount, isUp && styles.recentCardDiscountUp]}>
+                            {isDown ? '▼' : '▲'} {pct}%
+                          </Text>
+                        )}
+                        {currentPrice > 0 && (
+                          <Text style={styles.recentCardPrice}>{currentPrice.toLocaleString()}원</Text>
+                        )}
+                      </View>
+                      {origPrice > 0 && origPrice !== currentPrice && (
+                        <Text style={styles.recentCardOrigPrice}>{origPrice.toLocaleString()}원</Text>
+                      )}
+                    </TouchableOpacity>
+                  );
+                })}
+              </ScrollView>
+            );
+          })()}
+        </View>
 
-        {/* ─── MENU: 계정 설정 ─── */}
-        <MenuSectionHeader title="계정 설정" />
-        <MenuItem
-          icon="🔑"
-          label="포인트 적립 신청"
-          onPress={() => navigation.navigate('RewardClaim')}
-        />
-        <MenuItem
-          icon="💬"
-          label="고객센터"
-          onPress={() => Alert.alert('고객센터', '문의사항은 앱 스토어 리뷰 또는 이메일로 연락해주세요.')}
-        />
-        <MenuItem
-          icon="🚪"
-          label="로그아웃"
-          onPress={handleLogout}
-          danger
-        />
-        <MenuItem
-          icon="🥀"
-          label="계정 탈퇴 (온보딩 QA)"
-          onPress={() => navigation.navigate('InitialOnboarding')}
-          danger
-        />
+        {/* ── Savings Report Banner ── */}
+        <TouchableOpacity
+          style={styles.savingsBanner}
+          activeOpacity={0.84}
+          onPress={() => navigation.navigate('관심상품')}
+        >
+          <View style={styles.savingsBannerIconWrap}>
+            <TrendingDown size={26} color={COLORS.primary} strokeWidth={2} />
+          </View>
+          <View style={styles.savingsBannerBody}>
+            <Text style={styles.savingsBannerTitle}>내 관심상품 할인 리포트</Text>
+            <Text style={styles.savingsBannerText}>
+              {'추적 중인 상품들을 지금 구매하시면\n총 '}
+              <Text style={styles.savingsBannerAmount}>42,500원</Text>
+              {'을 절약할 수 있어요!'}
+            </Text>
+          </View>
+          <ChevronRightSmIcon size={16} color={COLORS.primary} />
+        </TouchableOpacity>
 
         {/* ── Admin dashboard ── */}
         {isAdmin ? (
@@ -770,11 +1110,11 @@ export default function MyPageScreen({ navigation }) {
             onPress={() => navigation.navigate('AdminDashboard')}
             activeOpacity={0.85}
           >
-            <Text style={styles.adminBtnText}>📊 어드민 대시보드</Text>
+            <Text style={styles.adminBtnText}>어드민 대시보드</Text>
           </TouchableOpacity>
         ) : null}
 
-        <View style={{ height: 40 }} />
+        <View style={{ height: 30 }} />
       </ScrollView>
 
       {/* ── How-to Guide Modal ── */}
@@ -830,203 +1170,9 @@ export default function MyPageScreen({ navigation }) {
             onPress={() => { setIsGuideOpen(false); setAddSheetOpen(true); }}
             activeOpacity={0.85}
           >
-            <Text style={styles.guideCtaText}>🔗 바로 추가하기</Text>
+            <Text style={styles.guideCtaText}>바로 추가하기</Text>
           </TouchableOpacity>
         </View>
-      </Modal>
-
-      {/* ── Unified Profile Settings Modal (👤 프로필 / 🏅 등급 / 🏷️ 호칭) ── */}
-      <Modal
-        visible={profileSettingsOpen}
-        transparent
-        animationType="slide"
-        onRequestClose={() => setProfileSettingsOpen(false)}
-      >
-        <TouchableWithoutFeedback onPress={() => setProfileSettingsOpen(false)}>
-          <View style={styles.backdrop} />
-        </TouchableWithoutFeedback>
-        <KeyboardAvoidingView
-          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-          style={styles.sheetWrap}
-        >
-          <View style={[styles.sheet, styles.unifiedSheet, {
-            paddingBottom: insets.bottom + 20,
-            paddingTop: Platform.OS === 'android' ? 48 : 60,
-            maxHeight: '90%',
-          }]}>
-            <View style={styles.sheetHandle} />
-
-            {/* Header */}
-            <View style={styles.gradeSheetHeader}>
-              <Text style={styles.gradeSheetTitle}>프로필 설정</Text>
-              <TouchableOpacity
-                onPress={() => setProfileSettingsOpen(false)}
-                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-              >
-                <Text style={styles.gradeSheetClose}>✕</Text>
-              </TouchableOpacity>
-            </View>
-
-            {/* ── Always-visible: Nickname Edit ── */}
-            <View style={styles.unifiedProfileTab}>
-              <Text style={styles.gradeSheetSub}>닉네임</Text>
-              <View style={styles.unifiedNicknameRow}>
-                <TextInput
-                  style={[styles.sheetUrlInput, { flex: 1 }]}
-                  value={nicknameInput}
-                  onChangeText={setNicknameInput}
-                  placeholder="닉네임 입력 (2~12자)"
-                  placeholderTextColor="#aaa"
-                  maxLength={12}
-                  editable={!nicknameSaving}
-                  returnKeyType="done"
-                  onSubmitEditing={handleUpdateNickname}
-                />
-                <TouchableOpacity
-                  style={[
-                    styles.sheetRegisterBtn,
-                    (nicknameInput.trim().length < 2 || nicknameSaving) && styles.sheetRegisterBtnDisabled,
-                  ]}
-                  onPress={handleUpdateNickname}
-                  disabled={nicknameInput.trim().length < 2 || nicknameSaving}
-                  activeOpacity={0.85}
-                >
-                  {nicknameSaving
-                    ? <ActivityIndicator size="small" color="#fff" />
-                    : <Text style={styles.sheetRegisterBtnText}>저장</Text>
-                  }
-                </TouchableOpacity>
-              </View>
-            </View>
-
-            {/* Divider */}
-            <View style={styles.unifiedDivider} />
-
-            {/* Pill-style toggle: 등급 / 호칭 */}
-            <View style={styles.unifiedPillRow}>
-              {[
-                { id: 'tier',  label: '🏅 등급' },
-                { id: 'title', label: '🏷️ 호칭' },
-              ].map((pill) => (
-                <TouchableOpacity
-                  key={pill.id}
-                  style={[styles.unifiedPill, profileSettingsTab === pill.id && styles.unifiedPillActive]}
-                  onPress={() => setProfileSettingsTab(pill.id)}
-                  activeOpacity={0.8}
-                >
-                  <Text style={[styles.unifiedPillText, profileSettingsTab === pill.id && styles.unifiedPillTextActive]}>
-                    {pill.label}
-                  </Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-
-            {/* ── 등급 Content ── */}
-            {profileSettingsTab === 'tier' && (
-              <ScrollView showsVerticalScrollIndicator={false} style={styles.gradeScrollArea}>
-                <Text style={[styles.gradeSheetSub, { textAlign: 'center' }]}>
-                  {'내돈내산 리뷰 품질 기반 등급제\n진짜 구매 경험이 등급을 올려요 💪'}
-                </Text>
-                {TIER_LIST_V2.map((tier, idx) => {
-                  const isUnlocked = idx <= gamification.tierIdx;
-                  const isCurrent  = idx === gamification.tierIdx;
-                  return (
-                    <View
-                      key={tier.id}
-                      style={[
-                        styles.gradeTierCard,
-                        isUnlocked && styles.gradeTierCardUnlocked,
-                        isCurrent  && styles.gradeTierCardCurrent,
-                      ]}
-                    >
-                      <View style={styles.gradeTierHeader}>
-                        <View style={[styles.gradeTierBadge, { backgroundColor: tier.bg }]}>
-                          <Text style={[styles.gradeTierBadgeText, { color: tier.text }]}>
-                            {tier.emoji} {tier.name}
-                          </Text>
-                        </View>
-                        <Text style={styles.gradeTierLockIcon}>{isUnlocked ? '🔑' : '🔒'}</Text>
-                        {isCurrent && (
-                          <View style={styles.gradeTierCurrentTag}>
-                            <Text style={styles.gradeTierCurrentTagText}>현재 등급</Text>
-                          </View>
-                        )}
-                      </View>
-                      <View style={styles.gradeTierSection}>
-                        <Text style={styles.gradeTierSectionLabel}>달성 조건</Text>
-                        <Text style={[styles.gradeTierSectionText, !isUnlocked && styles.gradeTierLockedText]}>
-                          {tier.criteriaDetail}
-                        </Text>
-                      </View>
-                      <View style={styles.gradeTierSection}>
-                        <Text style={styles.gradeTierSectionLabel}>혜택</Text>
-                        <Text style={[styles.gradeTierSectionText, !isUnlocked && styles.gradeTierLockedText]}>
-                          {isUnlocked ? tier.rewardDetail : tier.rewardDetail.replace(/./g, '•')}
-                        </Text>
-                      </View>
-                    </View>
-                  );
-                })}
-              </ScrollView>
-            )}
-
-            {/* ── 호칭 Tab ── */}
-            {profileSettingsTab === 'title' && (
-              <ScrollView showsVerticalScrollIndicator={false} style={styles.gradeScrollArea}>
-                <Text style={styles.gradeSheetSub}>
-                  활동 품질에 따라 획득하는 특별 호칭이에요. 탭하여 대표 호칭을 설정하세요 ✨
-                </Text>
-                {[
-                  { id: 'pro_reviewer', emoji: '📸', label: '#내돈내산_마스터', borderColor: '#15803d', bg: '#f0fdf4', text: '#15803d', unlocked: reviewCount >= 5,    hint: `리뷰 ${Math.max(5 - reviewCount, 0)}개 더 작성하면 획득`, criteria: '사진 첨부 실구매 인증 리뷰 5개 이상', reward: '프로필에 배지 표시 + 리뷰 우선 노출' },
-                  { id: 'deal_fairy',   emoji: '🧚‍♀️', label: '#핫딜_요정',   borderColor: '#7e22ce', bg: '#fdf4ff', text: '#7e22ce', unlocked: globalTrackedItems.length >= 20, hint: `추적 상품 ${Math.max(20 - globalTrackedItems.length, 0)}개 더 등록하면 획득`, criteria: '가격 추적 상품 20개 이상 등록', reward: '시크릿 딜 알림 우선 수신 + 핫딜 알리미 배지' },
-                  { id: 'mentor',       emoji: '💡', label: '#육아_멘토',     borderColor: '#b45309', bg: '#fffbeb', text: '#b45309', unlocked: postCount >= 10,     hint: `게시글 ${Math.max(10 - postCount, 0)}개 더 작성하면 획득`, criteria: '커뮤니티 게시글 10개 이상 작성', reward: '게시글 상단 고정 기회 + 멘토 배지 표시' },
-                ].map((t) => {
-                  const isActive = (activeTitleId ?? TITLE_LIST_V2[0].id) === t.id;
-                  return (
-                    <TouchableOpacity
-                      key={t.id}
-                      style={[
-                        styles.gradeTitleCard, { borderLeftColor: t.borderColor },
-                        isActive && styles.gradeTitleCardActive,
-                      ]}
-                      activeOpacity={t.unlocked ? 0.75 : 1}
-                      onPress={() => {
-                        if (!t.unlocked) return;
-                        setActiveTitleId(t.id);
-                        Alert.alert('대표 호칭 변경 ✅', '대표 호칭이 변경되었습니다!');
-                      }}
-                    >
-                      <View style={styles.gradeTitleCardHeader}>
-                        <View style={[styles.gradeTierBadge, { backgroundColor: t.bg }]}>
-                          <Text style={[styles.gradeTierBadgeText, { color: t.text }]}>
-                            {t.emoji} {t.label}
-                          </Text>
-                        </View>
-                        <Text style={styles.gradeTierLockIcon}>{t.unlocked ? '🔑' : '🔒'}</Text>
-                        {isActive && <View style={styles.gradeTitleActiveTag}><Text style={styles.gradeTitleActiveTagText}>대표 호칭</Text></View>}
-                      </View>
-                      <View style={styles.gradeTierSection}>
-                        <Text style={styles.gradeTierSectionLabel}>획득 조건</Text>
-                        <Text style={[styles.gradeTierSectionText, !t.unlocked && styles.gradeTierLockedText]}>
-                          {t.criteria}
-                        </Text>
-                      </View>
-                      <View style={styles.gradeTierSection}>
-                        <Text style={styles.gradeTierSectionLabel}>{t.unlocked ? '혜택' : '잠금 해제 조건'}</Text>
-                        <Text style={[styles.gradeTierSectionText, !t.unlocked && styles.gradeTierLockedText]}>
-                          {t.unlocked ? t.reward : t.hint}
-                        </Text>
-                      </View>
-                      {t.unlocked && !isActive && (
-                        <Text style={styles.gradeTitleTapHint}>탭하여 대표 호칭으로 설정 →</Text>
-                      )}
-                    </TouchableOpacity>
-                  );
-                })}
-              </ScrollView>
-            )}
-          </View>
-        </KeyboardAvoidingView>
       </Modal>
 
       {/* ── Add Product Bottom Sheet ── */}
@@ -1050,7 +1196,6 @@ export default function MyPageScreen({ navigation }) {
             <View style={styles.marketRow}>
               {MARKETS.map((m) => (
                 <View key={m.key} style={[styles.marketItem, !m.active && styles.marketItemDisabled]}>
-                  <Text style={styles.marketEmoji}>{m.emoji}</Text>
                   <Text style={[styles.marketName, !m.active && styles.marketNameDisabled]}>{m.name}</Text>
                   {!m.active ? <Text style={styles.comingSoon}>준비 중</Text> : null}
                 </View>
@@ -1083,255 +1228,163 @@ export default function MyPageScreen({ navigation }) {
         </KeyboardAvoidingView>
       </Modal>
 
-      {/* ── [REMOVED] Grade Info Modal — merged into UnifiedProfileModal above ── */}
-      {false && <Modal
-        visible={false}
+
+      {/* ── Profile Edit Modal (Bottom Sheet) ── */}
+      <Modal
+        visible={profileEditModalOpen}
         transparent
         animationType="slide"
-        onRequestClose={() => {}}
+        onRequestClose={() => setProfileEditModalOpen(false)}
       >
-        <TouchableWithoutFeedback onPress={() => {}}>
+        <TouchableWithoutFeedback onPress={() => setProfileEditModalOpen(false)}>
           <View style={styles.backdrop} />
         </TouchableWithoutFeedback>
-        <View style={[styles.sheet, styles.gradeSheet, { paddingBottom: insets.bottom + 24 }]}>
-          <View style={styles.sheetHandle} />
+        <View style={[styles.sheetWrap, { paddingBottom: keyboardHeight }]}>
+          <View style={[styles.profileEditSheet, { paddingBottom: keyboardHeight > 0 ? 20 : insets.bottom + 20 }]}>
+            <View style={styles.sheetHandle} />
+            <Text style={styles.profileEditSheetTitle}>프로필 설정</Text>
 
-          {/* Modal header */}
-          <View style={styles.gradeSheetHeader}>
-            <Text style={styles.gradeSheetTitle}>등급 & 호칭 안내</Text>
+            {/* Avatar with camera overlay */}
             <TouchableOpacity
-              onPress={() => setIsGradeInfoOpen(false)}
-              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-            >
-              <Text style={styles.gradeSheetClose}>✕</Text>
-            </TouchableOpacity>
-          </View>
-
-          {/* Custom tab switcher */}
-          <View style={styles.gradeTabRow}>
-            <TouchableOpacity
-              style={[styles.gradeTab, gradeModalTab === 'tier' && styles.gradeTabActive]}
-              onPress={() => setGradeModalTab('tier')}
+              style={styles.profileEditAvatarWrap}
+              onPress={() => setImagePickerSheetOpen(true)}
               activeOpacity={0.8}
             >
-              <Text style={[styles.gradeTabText, gradeModalTab === 'tier' && styles.gradeTabTextActive]}>
-                🏅 등급
-              </Text>
+              <View style={styles.profileEditAvatarCircle}>
+                {profileImageUri
+                  ? <Image source={{ uri: profileImageUri }} style={styles.profileEditAvatarImage} />
+                  : <UserSilhouetteIcon size={38} color="rgba(255,255,255,0.55)" />}
+                <View style={styles.profileEditAvatarOverlay}>
+                  <CameraIcon size={22} color="#fff" />
+                </View>
+              </View>
+              <Text style={styles.profileEditAvatarHint}>이미지 변경</Text>
             </TouchableOpacity>
-            <TouchableOpacity
-              style={[styles.gradeTab, gradeModalTab === 'title' && styles.gradeTabActive]}
-              onPress={() => setGradeModalTab('title')}
-              activeOpacity={0.8}
-            >
-              <Text style={[styles.gradeTabText, gradeModalTab === 'title' && styles.gradeTabTextActive]}>
-                🏷️ 호칭
-              </Text>
-            </TouchableOpacity>
+
+            {/* Nickname TextInput + char counter + validation */}
+            <View style={styles.profileEditInputBlock}>
+              <Text style={styles.profileEditInputLabel}>닉네임</Text>
+              <View style={styles.profileEditInputRow}>
+                <TextInput
+                  style={styles.profileEditInput}
+                  value={nicknameInput}
+                  onChangeText={setNicknameInput}
+                  maxLength={10}
+                  returnKeyType="done"
+                  onSubmitEditing={handleSaveProfile}
+                  editable={!nicknameSaving}
+                  placeholder="닉네임을 입력해주세요"
+                  placeholderTextColor="#94a3b8"
+                  autoFocus
+                />
+                <Text style={styles.profileEditCounter}>{nicknameInput.length}/10</Text>
+              </View>
+              <View style={styles.nicknameValidRow}>
+                <InfoIcon
+                  size={13}
+                  color={modalNicknameStatus === 'valid' ? '#22c55e' : '#EF4444'}
+                />
+                <Text style={[
+                  styles.nicknameValidText,
+                  { color: modalNicknameStatus === 'valid' ? '#22c55e' : '#EF4444' },
+                ]}>
+                  {modalNicknameStatus === 'valid'     && '사용할 수 있는 닉네임입니다.'}
+                  {modalNicknameStatus === 'empty'     && '닉네임을 입력해주세요.'}
+                  {modalNicknameStatus === 'too_short' && '닉네임을 2자 이상 입력해주세요.'}
+                  {modalNicknameStatus === 'duplicate' && '이미 사용 중인 닉네임입니다.'}
+                </Text>
+              </View>
+            </View>
+
+            {/* Save button */}
+            {(() => {
+              const isSaveDisabled = nicknameSaving || modalNicknameStatus === 'empty' || modalNicknameStatus === 'too_short';
+              return (
+                <TouchableOpacity
+                  style={[styles.profileEditSaveBtn, isSaveDisabled && styles.profileEditSaveBtnDisabled]}
+                  onPress={handleSaveProfile}
+                  disabled={isSaveDisabled}
+                  activeOpacity={0.85}
+                >
+                  {nicknameSaving
+                    ? <ActivityIndicator size="small" color="#fff" />
+                    : <Text style={[styles.profileEditSaveBtnText, isSaveDisabled && styles.profileEditSaveBtnTextDisabled]}>저장</Text>}
+                </TouchableOpacity>
+              );
+            })()}
           </View>
-
-          {/* ── 등급 Tab ── */}
-          {gradeModalTab === 'tier' && (
-            <ScrollView showsVerticalScrollIndicator={false} style={styles.gradeScrollArea}>
-              <Text style={styles.gradeSheetSub}>
-                내돈내산 리뷰 품질 기반 등급제 — 진짜 구매 경험이 등급을 올려요 💪
-              </Text>
-              {TIER_LIST_V2.map((tier, idx) => {
-                const isUnlocked = idx <= gamification.tierIdx;
-                const isCurrent  = idx === gamification.tierIdx;
-                return (
-                  <View
-                    key={tier.id}
-                    style={[
-                      styles.gradeTierCard,
-                      isUnlocked && styles.gradeTierCardUnlocked,
-                      isCurrent  && styles.gradeTierCardCurrent,
-                    ]}
-                  >
-                    <View style={styles.gradeTierHeader}>
-                      <View style={[styles.gradeTierBadge, { backgroundColor: tier.bg }]}>
-                        <Text style={[styles.gradeTierBadgeText, { color: tier.text }]}>
-                          {tier.emoji} {tier.name}
-                        </Text>
-                      </View>
-                      <Text style={styles.gradeTierLockIcon}>{isUnlocked ? '🔑' : '🔒'}</Text>
-                      {isCurrent && (
-                        <View style={styles.gradeTierCurrentTag}>
-                          <Text style={styles.gradeTierCurrentTagText}>현재 등급</Text>
-                        </View>
-                      )}
-                    </View>
-                    <View style={styles.gradeTierSection}>
-                      <Text style={styles.gradeTierSectionLabel}>달성 조건</Text>
-                      <Text style={[styles.gradeTierSectionText, !isUnlocked && styles.gradeTierLockedText]}>
-                        {tier.criteriaDetail}
-                      </Text>
-                    </View>
-                    <View style={styles.gradeTierSection}>
-                      <Text style={styles.gradeTierSectionLabel}>혜택</Text>
-                      <Text style={[styles.gradeTierSectionText, !isUnlocked && styles.gradeTierLockedText]}>
-                        {isUnlocked ? tier.rewardDetail : tier.rewardDetail.replace(/./g, '•')}
-                      </Text>
-                    </View>
-                  </View>
-                );
-              })}
-            </ScrollView>
-          )}
-
-          {/* ── 호칭 Tab ── */}
-          {gradeModalTab === 'title' && (
-            <ScrollView showsVerticalScrollIndicator={false} style={styles.gradeScrollArea}>
-              <Text style={styles.gradeSheetSub}>
-                활동 품질에 따라 자동으로 획득하는 특별 호칭이에요 ✨
-              </Text>
-
-              {/* 📸 내돈내산_마스터 */}
-              {(() => {
-                const unlocked = reviewCount >= 5;
-                const isActive = (activeTitleId ?? TITLE_LIST_V2[0].id) === 'pro_reviewer';
-                return (
-                  <TouchableOpacity
-                    style={[
-                      styles.gradeTitleCard, { borderLeftColor: '#15803d' },
-                      isActive && styles.gradeTitleCardActive,
-                    ]}
-                    activeOpacity={unlocked ? 0.75 : 1}
-                    onPress={() => {
-                      if (!unlocked) return;
-                      setActiveTitleId('pro_reviewer');
-                      Alert.alert('대표 호칭 변경 ✅', '대표 호칭이 변경되었습니다!');
-                    }}
-                  >
-                    <View style={styles.gradeTitleCardHeader}>
-                      <View style={[styles.gradeTierBadge, { backgroundColor: '#f0fdf4' }]}>
-                        <Text style={[styles.gradeTierBadgeText, { color: '#15803d' }]}>
-                          📸 #내돈내산_마스터
-                        </Text>
-                      </View>
-                      <Text style={styles.gradeTierLockIcon}>{unlocked ? '🔑' : '🔒'}</Text>
-                      {isActive && <View style={styles.gradeTitleActiveTag}><Text style={styles.gradeTitleActiveTagText}>대표 호칭</Text></View>}
-                    </View>
-                    <View style={styles.gradeTierSection}>
-                      <Text style={styles.gradeTierSectionLabel}>획득 조건</Text>
-                      <Text style={styles.gradeTierSectionText}>
-                        사진 첨부 실구매 인증 리뷰 5개 이상 작성{'\n'}
-                        — 직접 구매한 제품의 솔직한 리뷰어
-                      </Text>
-                    </View>
-                    <View style={styles.gradeTierSection}>
-                      <Text style={styles.gradeTierSectionLabel}>{unlocked ? '혜택' : '잠금 해제 조건'}</Text>
-                      <Text style={[styles.gradeTierSectionText, !unlocked && styles.gradeTierLockedText]}>
-                        {unlocked ? '프로필에 배지 표시 + 리뷰 우선 노출' : '리뷰 5개 작성 후 자동 획득'}
-                      </Text>
-                    </View>
-                    {unlocked && !isActive && (
-                      <Text style={styles.gradeTitleTapHint}>탭하여 대표 호칭으로 설정 →</Text>
-                    )}
-                  </TouchableOpacity>
-                );
-              })()}
-
-              {/* 🧚‍♀️ 핫딜_요정 */}
-              {(() => {
-                const unlocked = globalTrackedItems.length >= 20;
-                const isActive = (activeTitleId ?? TITLE_LIST_V2[0].id) === 'deal_fairy';
-                return (
-                  <TouchableOpacity
-                    style={[
-                      styles.gradeTitleCard, { borderLeftColor: '#7e22ce' },
-                      isActive && styles.gradeTitleCardActive,
-                    ]}
-                    activeOpacity={unlocked ? 0.75 : 1}
-                    onPress={() => {
-                      if (!unlocked) return;
-                      setActiveTitleId('deal_fairy');
-                      Alert.alert('대표 호칭 변경 ✅', '대표 호칭이 변경되었습니다!');
-                    }}
-                  >
-                    <View style={styles.gradeTitleCardHeader}>
-                      <View style={[styles.gradeTierBadge, { backgroundColor: '#fdf4ff' }]}>
-                        <Text style={[styles.gradeTierBadgeText, { color: '#7e22ce' }]}>
-                          🧚‍♀️ #핫딜_요정
-                        </Text>
-                      </View>
-                      <Text style={styles.gradeTierLockIcon}>{unlocked ? '🔑' : '🔒'}</Text>
-                      {isActive && <View style={styles.gradeTitleActiveTag}><Text style={styles.gradeTitleActiveTagText}>대표 호칭</Text></View>}
-                    </View>
-                    <View style={styles.gradeTierSection}>
-                      <Text style={styles.gradeTierSectionLabel}>획득 조건</Text>
-                      <Text style={styles.gradeTierSectionText}>
-                        가격 추적 상품 20개 이상 등록{'\n'}
-                        — 최저가를 누구보다 빠르게 찾는 고수
-                      </Text>
-                    </View>
-                    <View style={styles.gradeTierSection}>
-                      <Text style={styles.gradeTierSectionLabel}>{unlocked ? '혜택' : '잠금 해제 조건'}</Text>
-                      <Text style={[styles.gradeTierSectionText, !unlocked && styles.gradeTierLockedText]}>
-                        {unlocked
-                          ? '시크릿 딜 알림 우선 수신 + 핫딜 알리미 배지'
-                          : `추적 상품 ${20 - globalTrackedItems.length}개 더 등록하면 자동 획득`}
-                      </Text>
-                    </View>
-                    {unlocked && !isActive && (
-                      <Text style={styles.gradeTitleTapHint}>탭하여 대표 호칭으로 설정 →</Text>
-                    )}
-                  </TouchableOpacity>
-                );
-              })()}
-
-              {/* 💡 육아_멘토 */}
-              {(() => {
-                const unlocked = postCount >= 10;
-                const isActive = (activeTitleId ?? TITLE_LIST_V2[0].id) === 'mentor';
-                return (
-                  <TouchableOpacity
-                    style={[
-                      styles.gradeTitleCard, { borderLeftColor: '#b45309' },
-                      isActive && styles.gradeTitleCardActive,
-                    ]}
-                    activeOpacity={unlocked ? 0.75 : 1}
-                    onPress={() => {
-                      if (!unlocked) return;
-                      setActiveTitleId('mentor');
-                      Alert.alert('대표 호칭 변경 ✅', '대표 호칭이 변경되었습니다!');
-                    }}
-                  >
-                    <View style={styles.gradeTitleCardHeader}>
-                      <View style={[styles.gradeTierBadge, { backgroundColor: '#fffbeb' }]}>
-                        <Text style={[styles.gradeTierBadgeText, { color: '#b45309' }]}>
-                          💡 #육아_멘토
-                        </Text>
-                      </View>
-                      <Text style={styles.gradeTierLockIcon}>{unlocked ? '🔑' : '🔒'}</Text>
-                      {isActive && <View style={styles.gradeTitleActiveTag}><Text style={styles.gradeTitleActiveTagText}>대표 호칭</Text></View>}
-                    </View>
-                    <View style={styles.gradeTierSection}>
-                      <Text style={styles.gradeTierSectionLabel}>획득 조건</Text>
-                      <Text style={styles.gradeTierSectionText}>
-                        커뮤니티 게시글 10개 이상 작성{'\n'}
-                        — 다른 부모들에게 유용한 정보를 공유하는 멘토
-                      </Text>
-                    </View>
-                    <View style={styles.gradeTierSection}>
-                      <Text style={styles.gradeTierSectionLabel}>{unlocked ? '혜택' : '잠금 해제 조건'}</Text>
-                      <Text style={[styles.gradeTierSectionText, !unlocked && styles.gradeTierLockedText]}>
-                        {unlocked
-                          ? '게시글 상단 고정 기회 + 멘토 배지 표시'
-                          : `게시글 ${10 - postCount}개 더 작성하면 자동 획득`}
-                      </Text>
-                    </View>
-                    {unlocked && !isActive && (
-                      <Text style={styles.gradeTitleTapHint}>탭하여 대표 호칭으로 설정 →</Text>
-                    )}
-                  </TouchableOpacity>
-                );
-              })()}
-            </ScrollView>
-          )}
         </View>
-      </Modal>}
+      </Modal>
 
-      {/* ── [REMOVED] Title Picker Modal — merged into UnifiedProfileModal 호칭 tab ── */}
+      {/* ── Image Picker Sheet (inside profile edit context) ── */}
+      <Modal
+        visible={imagePickerSheetOpen}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setImagePickerSheetOpen(false)}
+      >
+        <TouchableWithoutFeedback onPress={() => setImagePickerSheetOpen(false)}>
+          <View style={styles.backdrop} />
+        </TouchableWithoutFeedback>
+        <View style={[styles.profileSheet, { paddingBottom: insets.bottom + 12 }]}>
+          <View style={styles.sheetHandle} />
+          <Text style={styles.profileSheetTitle}>프로필 이미지</Text>
+
+          <TouchableOpacity
+            style={styles.imgPickerOption}
+            onPress={handlePickImage}
+            activeOpacity={0.7}
+          >
+            <Text style={styles.imgPickerOptionText}>사진 선택</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.imgPickerOption}
+            onPress={() => { setProfileImageUri(null); setImagePickerSheetOpen(false); }}
+            activeOpacity={0.7}
+          >
+            <Text style={[styles.imgPickerOptionText, styles.imgPickerDangerText]}>사진 삭제</Text>
+          </TouchableOpacity>
+
+          <View style={styles.profileSheetDivider} />
+
+          <TouchableOpacity
+            style={styles.profileSheetCancelRow}
+            onPress={() => setImagePickerSheetOpen(false)}
+            activeOpacity={0.7}
+          >
+            <Text style={styles.profileSheetCancelText}>취소</Text>
+          </TouchableOpacity>
+        </View>
+      </Modal>
+
+      {/* ── Coupon Modal ── */}
+      <Modal
+        visible={couponModalOpen}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setCouponModalOpen(false)}
+      >
+        <TouchableWithoutFeedback onPress={() => setCouponModalOpen(false)}>
+          <View style={styles.couponBackdrop} />
+        </TouchableWithoutFeedback>
+        <View style={styles.couponModalWrap} pointerEvents="box-none">
+          <View style={styles.couponModalBox}>
+            <GiftIcon size={36} color={COLORS.primary} />
+            <Text style={styles.couponModalTitle}>시크릿 혜택 오픈 준비 중!</Text>
+            <Text style={styles.couponModalBody}>
+              {'곧 엄청난 특가 쿠폰과 이벤트가 쏟아질 예정이에요.\n조금만 기다려주세요!'}
+            </Text>
+            <TouchableOpacity
+              style={styles.couponModalBtn}
+              onPress={() => setCouponModalOpen(false)}
+              activeOpacity={0.85}
+            >
+              <Text style={styles.couponModalBtnText}>기대할게요</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
 
       {/* ── Product Action Modal (long-press on tracked item) ── */}
       <Modal
@@ -1352,11 +1405,10 @@ export default function MyPageScreen({ navigation }) {
             style={styles.productActionRow}
             onPress={() => {
               setProductActionModal({ visible: false, productId: null, productName: null });
-              Alert.alert('알림 끄기', '이 상품의 가격 알림을 껐어요. 🔕');
+              Alert.alert('알림 끄기', '이 상품의 가격 알림을 껐어요.');
             }}
             activeOpacity={0.8}
           >
-            <Text style={styles.productActionIcon}>🔕</Text>
             <Text style={styles.productActionLabel}>알림 끄기</Text>
           </TouchableOpacity>
           <TouchableOpacity
@@ -1368,7 +1420,6 @@ export default function MyPageScreen({ navigation }) {
             }}
             activeOpacity={0.8}
           >
-            <Text style={styles.productActionIcon}>🗑️</Text>
             <Text style={[styles.productActionLabel, styles.productActionLabelDanger]}>삭제</Text>
           </TouchableOpacity>
           <TouchableOpacity
@@ -1381,44 +1432,13 @@ export default function MyPageScreen({ navigation }) {
         </View>
       </Modal>
 
-      {/* ── Child Picker Modal ── */}
-      <Modal
-        visible={childPickerOpen}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setChildPickerOpen(false)}
-      >
-        <TouchableWithoutFeedback onPress={() => setChildPickerOpen(false)}>
-          <View style={styles.backdrop} />
-        </TouchableWithoutFeedback>
-        <View style={styles.childPickerCard}>
-          <Text style={styles.childPickerTitle}>아이 선택</Text>
-          {children.map((child) => {
-            const isActive = child.id === selectedChild?.id;
-            return (
-              <TouchableOpacity
-                key={child.id}
-                style={[styles.childPickerRow, isActive && styles.childPickerRowActive]}
-                onPress={() => { handleSelectChild(child.id); setChildPickerOpen(false); }}
-                activeOpacity={0.8}
-              >
-                <Text style={styles.childPickerRowEmoji}>{childEmoji(child)}</Text>
-                <Text style={[styles.childPickerRowName, isActive && styles.childPickerRowNameActive]}>
-                  {child.name}
-                </Text>
-                {isActive && <Text style={styles.childPickerCheck}>✓</Text>}
-              </TouchableOpacity>
-            );
-          })}
-          <TouchableOpacity
-            style={styles.childPickerAddRow}
-            onPress={() => { setChildPickerOpen(false); navigation.navigate('ChildAdd'); }}
-            activeOpacity={0.8}
-          >
-            <Text style={styles.childPickerAddText}>+ 새 아이 추가</Text>
-          </TouchableOpacity>
+      {/* ── In-app Toast ── */}
+      {!!toastMsg && (
+        <View style={styles.toast} pointerEvents="none">
+          <Text style={styles.toastText}>{toastMsg}</Text>
         </View>
-      </Modal>
+      )}
+
     </View>
   );
 }
@@ -1429,112 +1449,327 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#f5f7fb' },
   center:    { flex: 1, alignItems: 'center', justifyContent: 'center' },
 
+  // ── In-app Toast ──
+  toast: {
+    position: 'absolute', bottom: 32, alignSelf: 'center',
+    backgroundColor: 'rgba(15,23,42,0.85)',
+    paddingHorizontal: 20, paddingVertical: 10,
+    borderRadius: 24,
+  },
+  toastText: {
+    fontSize: 13, fontWeight: '600', color: '#fff',
+  },
+
   // ── Top app bar ──
   appBar: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
     paddingHorizontal: 16, paddingVertical: 12,
     backgroundColor: '#fff', borderBottomWidth: 1, borderBottomColor: '#f1f5f9',
   },
-  appBarTitle:   { fontSize: 22, fontWeight: '900', color: '#0f172a' },
+  appBarTitle:       { fontSize: 24, fontWeight: '800', color: '#0f172a' },
+  appBarTitleCenter: { fontSize: 16, fontWeight: '800', color: '#0f172a', flex: 1, textAlign: 'center' },
+  appBarSaveBtn:     { fontSize: 15, fontWeight: '800', color: COLORS.primary },
   appBarActions: { flexDirection: 'row', gap: 14, alignItems: 'center' },
   appBarIcon:    { fontSize: 22 },
 
-  // ── Profile block ──
-  profileBlock: {
-    backgroundColor: '#fff',
-    paddingHorizontal: 20, paddingTop: 16, paddingBottom: 18,
-    gap: 10,
+  // ── Avatar wrapper + edit badge ──
+  avatarWrapper: {
     position: 'relative',
+    flexShrink: 0,
   },
-  profileManageBtn: {
-    position: 'absolute', top: 12, right: 16, zIndex: 1,
-    borderRadius: 20, borderWidth: 1, borderColor: '#e2e8f0',
-    paddingHorizontal: 10, paddingVertical: 4, backgroundColor: '#f8fafc',
+  avatarCircleEdit: {
+    opacity: 0.85,
   },
-  profileManageBtnText: { fontSize: 12, fontWeight: '700', color: '#475569' },
+  avatarEditOverlay: {
+    position: 'absolute',
+    top: 0, left: 0, right: 0, bottom: 0,
+    borderRadius: 32,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  avatarImage: {
+    width: 64, height: 64, borderRadius: 32,
+  },
+  avatarEditBadge: {
+    position: 'absolute',
+    bottom: 0,
+    right: 0,
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    backgroundColor: '#fff',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1.5,
+    borderColor: '#e2e8f0',
+    ...Platform.select({
+      ios:     { shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.14, shadowRadius: 3 },
+      android: { elevation: 3 },
+    }),
+  },
 
-  // Unified profile settings modal
-  unifiedSheet: { gap: 0, paddingHorizontal: 0 },
-  unifiedProfileTab: { paddingHorizontal: 20, paddingTop: 8, paddingBottom: 12, gap: 8 },
-  unifiedNicknameRow: { flexDirection: 'row', gap: 8 },
-  unifiedDivider: { height: 6, backgroundColor: '#f1f5f9', marginVertical: 0 },
-  unifiedPillRow: {
-    flexDirection: 'row', paddingHorizontal: 20, paddingTop: 14, paddingBottom: 4, gap: 8,
+  // ── Nickname inline edit block ──
+  nicknameEditBlock: {
+    gap: 4, flex: 1,
   },
-  unifiedPill: {
-    flex: 1, paddingVertical: 8, borderRadius: 20,
-    backgroundColor: '#f1f5f9', alignItems: 'center',
+  nicknameInputEdit: {
+    fontSize: 16, fontWeight: '700', color: '#0f172a',
+    borderWidth: 1.5, borderColor: COLORS.primary, borderRadius: 8,
+    paddingHorizontal: 10, paddingVertical: 8,
+    backgroundColor: '#f8fbff',
   },
-  unifiedPillActive: { backgroundColor: '#0f172a' },
-  unifiedPillText: { fontSize: 13, fontWeight: '700', color: '#64748b' },
-  unifiedPillTextActive: { color: '#fff' },
-  profileTopRow: {
+  nicknameValidRow: {
+    flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 2,
+  },
+  nicknameValidText: {
+    fontSize: 11, fontWeight: '600', lineHeight: 15,
+  },
+
+  // ── Image picker sheet options ──
+  imgPickerOption: {
+    paddingVertical: 17,
+    borderTopWidth: 1, borderTopColor: '#f1f5f9',
+    alignItems: 'center',
+  },
+  imgPickerOptionText: {
+    fontSize: 16, fontWeight: '600', color: '#0f172a',
+  },
+  imgPickerDangerText: {
+    color: '#EF4444',
+  },
+
+  // ── Child edit button (right-aligned) ──
+  childEditBtn: {
+    flexDirection: 'row', alignItems: 'center', gap: 2,
+  },
+  childEditBtnText: {
+    fontSize: 11, fontWeight: '600', color: '#94a3b8',
+  },
+
+  // ── Nudge next-level tag ──
+  nudgeNextTag: {
+    fontSize: 11, fontWeight: '700', color: COLORS.primary,
+  },
+  nudgeQuestPrefix: {
+    fontSize: 13, fontWeight: '500', color: '#64748b',
+  },
+  nudgeQuestSuffix: {
+    fontSize: 13, fontWeight: '500', color: '#64748b',
+  },
+
+  // ── Nickname inline edit wrap + counter ──
+  nicknameEditWrap: {
+    flex: 1, flexDirection: 'row', alignItems: 'center', gap: 6,
+  },
+  nicknameCounter: {
+    fontSize: 11, fontWeight: '500', color: '#94a3b8', flexShrink: 0,
+  },
+
+  // ── Profile edit sheet ──
+  profileSheet: {
+    backgroundColor: '#fff',
+    borderTopLeftRadius: 20, borderTopRightRadius: 20,
+    paddingHorizontal: 20, paddingTop: 12, gap: 0,
+    ...Platform.select({
+      ios:     { shadowColor: '#000', shadowOffset: { width: 0, height: -3 }, shadowOpacity: 0.1, shadowRadius: 12 },
+      android: { elevation: 16 },
+    }),
+  },
+  profileSheetTitle: {
+    fontSize: 14, fontWeight: '700', color: '#94a3b8',
+    textAlign: 'center', letterSpacing: 0.3,
+    paddingVertical: 10, marginBottom: 4,
+  },
+  profileSheetOption: {
+    flexDirection: 'row', alignItems: 'center', gap: 14,
+    paddingVertical: 16,
+    borderTopWidth: 1, borderTopColor: '#f1f5f9',
+  },
+  profileSheetOptionIcon: {
+    width: 36, height: 36, borderRadius: 18,
+    backgroundColor: '#eff6ff',
+    alignItems: 'center', justifyContent: 'center',
+  },
+  profileSheetOptionText: {
+    fontSize: 16, fontWeight: '700', color: COLORS.primary,
+  },
+  profileSheetDivider: {
+    height: 8, backgroundColor: '#f8fafc',
+    marginHorizontal: -20, marginTop: 8, marginBottom: 4,
+  },
+  profileSheetCancelRow: {
+    paddingVertical: 16, alignItems: 'center',
+  },
+  profileSheetCancelText: {
+    fontSize: 16, fontWeight: '700', color: '#94a3b8',
+  },
+
+  // ── Coupon modal ──
+  couponBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0,0,0,0.45)',
+  },
+  couponModalWrap: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  couponModalBox: {
+    backgroundColor: '#fff',
+    borderRadius: 20,
+    marginHorizontal: 32,
+    paddingHorizontal: 24,
+    paddingTop: 28,
+    paddingBottom: 24,
+    alignItems: 'center',
+    gap: 10,
+    ...Platform.select({
+      ios:     { shadowColor: '#000', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.15, shadowRadius: 20 },
+      android: { elevation: 12 },
+    }),
+  },
+  couponModalTitle: {
+    fontSize: 17, fontWeight: '900', color: '#0f172a', textAlign: 'center',
+  },
+  couponModalBody: {
+    fontSize: 14, fontWeight: '500', color: '#64748b', textAlign: 'center', lineHeight: 21,
+  },
+  couponModalBtn: {
+    marginTop: 8,
+    backgroundColor: COLORS.primary,
+    borderRadius: 12,
+    paddingHorizontal: 32,
+    paddingVertical: 13,
+    alignItems: 'center',
+    alignSelf: 'stretch',
+  },
+  couponModalBtnText: {
+    fontSize: 15, fontWeight: '800', color: '#fff',
+  },
+
+  // ── Profile Card (Fintech) ──
+  profileCard: {
+    backgroundColor: '#fff',
+    marginHorizontal: 16, marginTop: 12, marginBottom: 4,
+    borderRadius: 16, borderWidth: 1, borderColor: '#e2e8f0',
+    padding: 16,
+    ...Platform.select({
+      ios:     { shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.06, shadowRadius: 8 },
+      android: { elevation: 2 },
+    }),
+  },
+  profileCardRow: {
     flexDirection: 'row', alignItems: 'center', gap: 14,
   },
+  avatarCircle: {
+    width: 64, height: 64, borderRadius: 32,
+    backgroundColor: COLORS.primary,
+    alignItems: 'center', justifyContent: 'center',
+    flexShrink: 0,
+  },
+  profileInfoCol: {
+    flex: 1, gap: 6,
+  },
+  nicknameRow: {
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+  },
+  nicknameText: {
+    fontSize: 20, fontWeight: '900', color: '#0f172a', flex: 1,
+  },
+  nicknameInput: {
+    flex: 1, fontSize: 17, fontWeight: '800', color: '#0f172a',
+    borderBottomWidth: 1.5, borderBottomColor: COLORS.primary,
+    paddingVertical: 2, paddingHorizontal: 0,
+  },
+  nicknameActionBtn: {
+    padding: 4,
+  },
+  childSummaryRow: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+  },
+  childSummaryText: {
+    fontSize: 12, fontWeight: '500', color: '#64748b', flex: 1,
+  },
+  childSummaryAdd: {
+    fontSize: 12, fontWeight: '600', color: COLORS.primary,
+  },
 
-  // Avatar with camera overlay
-  avatarWrapper:    { width: 72, height: 72, flexShrink: 0 },
-  avatar: {
-    width: 72, height: 72, borderRadius: 36,
-    backgroundColor: '#dbeafe',
+
+  // ── Level badge pill — clickable, inline in nickname row ──
+  levelBadgePillInline: {
+    marginLeft: 8, backgroundColor: '#EFF6FF', borderRadius: 12,
+    paddingHorizontal: 8, paddingVertical: 4, flexShrink: 0,
+  },
+  levelBadgePillInlineText: { fontSize: 12, fontWeight: 'bold', color: '#2E6FF2' },
+
+  // ── Profile edit bottom sheet ──
+  profileEditSheet: {
+    backgroundColor: '#fff',
+    borderTopLeftRadius: 24, borderTopRightRadius: 24,
+    paddingHorizontal: 24, paddingTop: 12,
+    gap: 20,
+    ...Platform.select({
+      ios:     { shadowColor: '#000', shadowOffset: { width: 0, height: -4 }, shadowOpacity: 0.1, shadowRadius: 16 },
+      android: { elevation: 20 },
+    }),
+  },
+  profileEditSheetTitle: {
+    fontSize: 17, fontWeight: '900', color: '#0f172a', textAlign: 'center', paddingTop: 4,
+  },
+  profileEditAvatarWrap: {
+    alignItems: 'center', gap: 8,
+  },
+  profileEditAvatarCircle: {
+    width: 80, height: 80, borderRadius: 40,
+    backgroundColor: COLORS.primary,
     alignItems: 'center', justifyContent: 'center',
   },
-  avatarInitial:    { fontSize: 30, fontWeight: '900', color: '#1d4ed8' },
-  avatarCameraIcon: {
-    position: 'absolute', bottom: 0, right: 0,
-    width: 22, height: 22, borderRadius: 11,
-    backgroundColor: '#fff', borderWidth: 1.5, borderColor: '#e2e8f0',
+  profileEditAvatarImage: {
+    width: 80, height: 80, borderRadius: 40,
+  },
+  profileEditAvatarOverlay: {
+    position: 'absolute',
+    top: 0, left: 0, right: 0, bottom: 0,
+    borderRadius: 40,
+    backgroundColor: 'rgba(0,0,0,0.32)',
     alignItems: 'center', justifyContent: 'center',
   },
-  avatarCameraText: { fontSize: 11, lineHeight: 14 },
-
-  // Name + badge area
-  profileNameArea:  { flex: 1, gap: 5 },
-  profileNameRow:   { flexDirection: 'row', alignItems: 'center' },
-  profileName:      { fontSize: 20, fontWeight: '900', color: '#0f172a' },
-  profileBadgeRow:  { flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' },
-
-  // Right chevron
-  profileEditChevron:     { paddingLeft: 4 },
-  profileEditChevronText: { fontSize: 24, color: '#cbd5e1', fontWeight: '300', lineHeight: 28 },
-
-  // Tier badge
-  tierBadgePill:     { borderRadius: 20, paddingHorizontal: 9, paddingVertical: 3 },
-  tierBadgePillText: { fontSize: 11, fontWeight: '800' },
-
-  // Title badge (shared by header + picker)
-  titleBadge:     { borderRadius: 20, paddingHorizontal: 9, paddingVertical: 3 },
-  titleBadgeText: { fontSize: 11, fontWeight: '700' },
-
-  // XP bar (standalone full-width)
-  xpBarTrack: {
-    height: 6, borderRadius: 3, backgroundColor: '#e2e8f0', overflow: 'hidden',
+  profileEditAvatarHint: {
+    fontSize: 12, fontWeight: '600', color: '#94a3b8',
   },
-  xpBarFill: {
-    height: '100%', borderRadius: 3, backgroundColor: '#2563eb',
+  profileEditInputBlock: {
+    gap: 6,
   },
-
-  // Copy + grade-info row
-  xpCopyRow: {
-    flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8,
+  profileEditInputLabel: {
+    fontSize: 12, fontWeight: '700', color: '#64748b', letterSpacing: 0.3,
   },
-  xpProgressCopy: { flex: 1, fontSize: 11, color: '#64748b', lineHeight: 16 },
-  gradeInfoBtn:   { fontSize: 11, fontWeight: '700', color: '#64748b', flexShrink: 0 },
-  gradeSettingsBtn: {
-    borderRadius: 20, borderWidth: 1, borderColor: '#e2e8f0',
-    paddingHorizontal: 8, paddingVertical: 3, backgroundColor: '#f8fafc',
+  profileEditInputRow: {
+    flexDirection: 'row', alignItems: 'center', gap: 8,
   },
-  gradeSettingsBtnText: { fontSize: 11, fontWeight: '700', color: '#475569' },
-
-  // Title picker rows
-  titlePickerRow: {
-    flexDirection: 'row', alignItems: 'center',
-    paddingVertical: 11, paddingHorizontal: 4,
-    borderRadius: 10,
+  profileEditInput: {
+    flex: 1, fontSize: 16, fontWeight: '700', color: '#0f172a',
+    borderWidth: 1.5, borderColor: COLORS.primary, borderRadius: 10,
+    paddingHorizontal: 12, paddingVertical: 10,
+    backgroundColor: '#f8fbff',
   },
-  titlePickerRowActive:  { backgroundColor: '#f8fafc' },
-  titlePickerBadge:      { flex: 1, borderRadius: 20, paddingHorizontal: 10, paddingVertical: 5, alignSelf: 'flex-start' },
-  titlePickerCheck:      { fontSize: 16, color: '#2563eb', fontWeight: '900', marginLeft: 8 },
+  profileEditCounter: {
+    fontSize: 11, fontWeight: '500', color: '#94a3b8', flexShrink: 0,
+  },
+  profileEditSaveBtn: {
+    backgroundColor: COLORS.primary,
+    borderRadius: 12,
+    paddingVertical: 14,
+    alignItems: 'center',
+    marginTop: 4,
+  },
+  profileEditSaveBtnDisabled: {
+    backgroundColor: '#cbd5e1',
+  },
+  profileEditSaveBtnText: {
+    fontSize: 16, fontWeight: '800', color: '#fff',
+  },
+  profileEditSaveBtnTextDisabled: {
+    color: '#94a3b8',
+  },
 
   // ── Grade info modal ──
   gradeSheet: {
@@ -1583,17 +1818,17 @@ const styles = StyleSheet.create({
     padding: 10, marginBottom: 6, gap: 6,
   },
   gradeTitleCardActive: {
-    borderColor: '#2563eb', borderWidth: 2, borderLeftWidth: 4,
+    borderColor: COLORS.primary, borderWidth: 2, borderLeftWidth: 4,
     backgroundColor: '#f8fbff',
   },
   gradeTitleCardHeader: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   gradeTitleActiveTag: {
-    backgroundColor: '#2563eb', borderRadius: 20,
+    backgroundColor: COLORS.primary, borderRadius: 20,
     paddingHorizontal: 6, paddingVertical: 2, marginLeft: 'auto',
   },
   gradeTitleActiveTagText: { fontSize: 9, fontWeight: '800', color: '#fff' },
   gradeTitleTapHint: {
-    fontSize: 10, color: '#2563eb', fontWeight: '600', marginTop: 1,
+    fontSize: 10, color: COLORS.primary, fontWeight: '600', marginTop: 1,
   },
   gradeTierCard: {
     borderRadius: 10, borderWidth: 1, borderColor: '#e2e8f0',
@@ -1603,9 +1838,9 @@ const styles = StyleSheet.create({
   },
   gradeTierCardUnlocked: { backgroundColor: '#fff', opacity: 1 },
   gradeTierCardCurrent: {
-    borderColor: '#2563eb', borderWidth: 2,
+    borderColor: COLORS.primary, borderWidth: 2,
     ...Platform.select({
-      ios:     { shadowColor: '#2563eb', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.1, shadowRadius: 4 },
+      ios:     { shadowColor: COLORS.primary, shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.1, shadowRadius: 4 },
       android: { elevation: 2 },
     }),
   },
@@ -1616,7 +1851,7 @@ const styles = StyleSheet.create({
   gradeTierBadgeText: { fontSize: 12, fontWeight: '800' },
   gradeTierLockIcon:  { fontSize: 14, marginLeft: 'auto' },
   gradeTierCurrentTag: {
-    backgroundColor: '#2563eb', borderRadius: 20,
+    backgroundColor: COLORS.primary, borderRadius: 20,
     paddingHorizontal: 6, paddingVertical: 2,
   },
   gradeTierCurrentTagText: { fontSize: 9, fontWeight: '800', color: '#fff' },
@@ -1632,7 +1867,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12, paddingVertical: 7,
     flex: 1, alignSelf: 'flex-start',
   },
-  childDropEmoji: { fontSize: 17 },
   childDropName:  { fontSize: 14, fontWeight: '800', color: '#0f172a', flexShrink: 1 },
   childDropCaret: { fontSize: 11, color: '#64748b', marginLeft: 2 },
 
@@ -1650,13 +1884,16 @@ const styles = StyleSheet.create({
     }),
   },
   childDashHeader: {
-    flexDirection: 'row', alignItems: 'center', gap: 10,
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+  },
+  childDashNameRow: {
+    flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1,
   },
   childDashEditBtn: {
     backgroundColor: '#f1f5f9', borderRadius: 8,
     paddingHorizontal: 10, paddingVertical: 5,
   },
-  childDashEditIcon: { fontSize: 14 },
+  childDashEditText: { fontSize: 13, fontWeight: '600', color: COLORS.primary },
   childDashBadges: {
     flexDirection: 'row', flexWrap: 'wrap', gap: 6,
   },
@@ -1700,14 +1937,14 @@ const styles = StyleSheet.create({
   childPickerRowEmoji:     { fontSize: 22 },
   childPickerRowName:      { flex: 1, fontSize: 15, fontWeight: '600', color: '#334155' },
   childPickerRowNameActive: { color: '#1d4ed8', fontWeight: '800' },
-  childPickerCheck:        { fontSize: 16, color: '#2563eb', fontWeight: '900' },
+  childPickerCheck:        { fontSize: 16, color: COLORS.primary, fontWeight: '900' },
   childPickerAddRow: {
     flexDirection: 'row', alignItems: 'center',
     marginTop: 6,
     paddingVertical: 13, paddingHorizontal: 4,
     borderTopWidth: 1, borderTopColor: '#f1f5f9',
   },
-  childPickerAddText: { fontSize: 14, fontWeight: '700', color: '#2563eb' },
+  childPickerAddText: { fontSize: 14, fontWeight: '700', color: COLORS.primary },
 
   // ── Activity stats — single fixed row ──
   statsRow: {
@@ -1716,13 +1953,153 @@ const styles = StyleSheet.create({
     borderTopWidth: 1, borderTopColor: '#f1f5f9',
     paddingVertical: 12, paddingHorizontal: 4,
   },
-  statCell:    { flex: 1, alignItems: 'center', gap: 3, paddingHorizontal: 2 },
-  statNumber:  { fontSize: 16, fontWeight: '900', color: '#0f172a' },
-  statLabel:   { fontSize: 10, fontWeight: '600', color: '#64748b', textAlign: 'center', lineHeight: 13 },
-  statDivider: { width: 1, height: 30, backgroundColor: '#e2e8f0' },
+  statCell:       { flex: 1, alignItems: 'center', gap: 3, paddingHorizontal: 2 },
+  statNumber:     { fontSize: 16, fontWeight: '900', color: '#0f172a' },
+  statActionHint: { fontSize: 11, fontWeight: '700', color: COLORS.primary },
+  statLabel:      { fontSize: 10, fontWeight: '600', color: '#64748b', textAlign: 'center', lineHeight: 13 },
+  statDivider:    { width: 1, height: 30, backgroundColor: '#e2e8f0' },
 
   // ── Section divider ──
   sectionDivider: { height: 8, backgroundColor: '#f1f5f9' },
+
+  // ── Level badge pill ──
+  levelBadgePill: {
+    flexDirection: 'row', alignItems: 'center', gap: 4,
+    borderRadius: 20, paddingHorizontal: 10, paddingVertical: 4, alignSelf: 'flex-start',
+  },
+  levelBadgePillText: { fontSize: 12, fontWeight: '800' },
+
+  // ── Action Nudge Card ──
+  nudgeCard: {
+    backgroundColor: '#F8FAFC',
+    marginHorizontal: 16, marginTop: 10, marginBottom: 0,
+    borderRadius: 14,
+    paddingHorizontal: 16, paddingVertical: 14,
+    borderWidth: 1, borderColor: '#e2e8f0',
+    gap: 10,
+  },
+  nudgeCardHeader: {
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+  },
+  nudgeCardTitle: {
+    flex: 1, fontSize: 14, lineHeight: 18,
+  },
+  nudgeCardLevelName: {
+    fontSize: 13, fontWeight: '800', color: '#0f172a',
+  },
+  nudgeCardTitleSuffix: {
+    fontWeight: '500', color: '#64748b', fontSize: 12,
+  },
+  nudgeProgressRow: {
+    flexDirection: 'row', alignItems: 'center', gap: 8,
+  },
+  nudgeProgressLabel: {
+    fontSize: 11, fontWeight: '600', color: '#475569', width: 52,
+  },
+  nudgeBarTrack: {
+    flex: 1, height: 7, borderRadius: 4, backgroundColor: '#e2e8f0', overflow: 'hidden',
+  },
+  nudgeBarFill: {
+    height: '100%', borderRadius: 4, backgroundColor: COLORS.primary,
+  },
+  nudgeBarFillDone: {
+    backgroundColor: '#22c55e',
+  },
+  nudgeProgressCount: {
+    fontSize: 11, fontWeight: '700', color: '#334155', width: 30, textAlign: 'right',
+  },
+  nudgeProgressCountDone: {
+    color: '#16a34a',
+  },
+  nudgeMaxText: {
+    fontSize: 13, fontWeight: '700', color: COLORS.primary,
+  },
+
+  // ── Savings Report Banner ──
+  savingsBanner: {
+    flexDirection: 'row', alignItems: 'center', gap: 12,
+    backgroundColor: '#EFF6FF',
+    marginHorizontal: 16, marginTop: 20, marginBottom: 4,
+    borderRadius: 16,
+    paddingHorizontal: 16, paddingVertical: 14,
+    borderWidth: 1, borderColor: '#BFDBFE',
+    ...Platform.select({
+      ios:     { shadowColor: COLORS.primary, shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.07, shadowRadius: 6 },
+      android: { elevation: 2 },
+    }),
+  },
+  savingsBannerIconWrap: {
+    width: 46, height: 46, borderRadius: 23,
+    backgroundColor: '#DBEAFE',
+    alignItems: 'center', justifyContent: 'center',
+    flexShrink: 0,
+  },
+  savingsBannerBody: {
+    flex: 1, gap: 3,
+  },
+  savingsBannerTitle: {
+    fontSize: 11, fontWeight: '700', color: COLORS.primary,
+    letterSpacing: 0.3, textTransform: 'uppercase',
+  },
+  savingsBannerText: {
+    fontSize: 13, fontWeight: '500', color: '#334155', lineHeight: 19,
+  },
+  savingsBannerAmount: {
+    fontSize: 14, fontWeight: '900', color: COLORS.primary,
+  },
+
+  // ── Gamification Banner ──
+  gamiBanner: {
+    flexDirection: 'row', alignItems: 'center', gap: 10,
+    backgroundColor: '#eff6ff',
+    marginHorizontal: 16, marginTop: 12, marginBottom: 4,
+    borderRadius: 12,
+    paddingHorizontal: 16, paddingVertical: 13,
+    borderWidth: 1, borderColor: '#bfdbfe',
+  },
+  gamiBannerText: {
+    flex: 1, fontSize: 13, fontWeight: '700', color: '#1d4ed8', lineHeight: 18,
+  },
+
+  // ── Recently Viewed ──
+  recentSection: {
+    backgroundColor: '#fff',
+    marginTop: 12,
+    paddingTop: 14, paddingBottom: 18,
+    borderTopWidth: 1, borderBottomWidth: 1, borderColor: '#f1f5f9',
+  },
+  recentHeader: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    paddingHorizontal: 16, marginBottom: 12,
+  },
+  recentTitle: { fontSize: 15, fontWeight: '800', color: '#0f172a' },
+  recentViewAllBtn: { flexDirection: 'row', alignItems: 'center', gap: 2 },
+  recentViewAllText: { fontSize: 12, fontWeight: '500', color: '#94a3b8' },
+  recentEmpty: { paddingHorizontal: 16, paddingVertical: 20, alignItems: 'center', gap: 4 },
+  recentEmptyText: { fontSize: 13, fontWeight: '600', color: '#94a3b8' },
+  recentEmptyHint: { fontSize: 12, color: '#cbd5e1' },
+  recentScroll: { paddingHorizontal: 16, paddingBottom: 4, gap: 12 },
+  recentCard: { width: 108, gap: 4 },
+  recentThumb: {
+    width: 108, height: 108, borderRadius: 12,
+    backgroundColor: '#f1f5f9',
+    alignItems: 'center', justifyContent: 'center',
+    borderWidth: 1, borderColor: '#e2e8f0',
+    position: 'relative', overflow: 'hidden',
+  },
+  recentDiscountBadge: {
+    position: 'absolute', top: 6, left: 6,
+    backgroundColor: '#EF4444', borderRadius: 4,
+    paddingHorizontal: 5, paddingVertical: 2,
+  },
+  recentDiscountText: { fontSize: 10, fontWeight: '800', color: '#fff' },
+  recentCardBrand:     { fontSize: 10, fontWeight: '600', color: '#94a3b8', marginTop: 2 },
+  recentCardName:      { fontSize: 11, fontWeight: '600', color: '#334155', lineHeight: 15 },
+  recentPriceRow:        { flexDirection: 'row', alignItems: 'baseline', gap: 4, flexWrap: 'wrap' },
+  recentCardDiscount:    { fontSize: 12, fontWeight: '800', color: '#2E6FF2' },
+  recentCardDiscountUp:  { color: '#ef4444' },
+  recentCardPrice:       { fontSize: 13, fontWeight: '900', color: '#0f172a' },
+  recentCardOrigPrice:   { fontSize: 10, color: '#94a3b8', textDecorationLine: 'line-through' },
 
   // ── Price Tracking Widget ──
   trackingWidget: {
@@ -1747,7 +2124,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#eff6ff', borderRadius: 20,
     paddingHorizontal: 12, paddingVertical: 6,
   },
-  trackingViewAllText: { fontSize: 13, fontWeight: '700', color: '#2563eb' },
+  trackingViewAllText: { fontSize: 13, fontWeight: '700', color: COLORS.primary },
 
   // ── Empty state ──
   trackingAddCardFull: {
@@ -1919,7 +2296,7 @@ const styles = StyleSheet.create({
   guideStepNum: {
     width: 28, height: 28,
     borderRadius: 14,
-    backgroundColor: '#2563eb',
+    backgroundColor: COLORS.primary,
     alignItems: 'center', justifyContent: 'center',
     flexShrink: 0,
     marginTop: 1,
@@ -1942,7 +2319,7 @@ const styles = StyleSheet.create({
   },
   guideCta: {
     marginTop: 28,
-    backgroundColor: '#2563eb',
+    backgroundColor: COLORS.primary,
     borderRadius: 12,
     paddingVertical: 14,
     alignItems: 'center',
@@ -2013,7 +2390,7 @@ const styles = StyleSheet.create({
     fontSize: 14, color: '#0f172a',
   },
   sheetRegisterBtn: {
-    backgroundColor: '#2563eb', borderRadius: 10,
+    backgroundColor: COLORS.primary, borderRadius: 10,
     paddingHorizontal: 16, paddingVertical: 10,
     alignItems: 'center', justifyContent: 'center', minWidth: 56,
   },

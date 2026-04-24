@@ -37,9 +37,16 @@ import DetailScreen from './src/screens/DetailScreen';
 import CategoryScreen from './src/screens/CategoryScreen';
 import OnboardingScreen from './src/screens/OnboardingScreen';
 import InitialOnboardingScreen from './src/screens/InitialOnboardingScreen';
+import SettingsScreen from './src/screens/SettingsScreen';
+import LevelInfoScreen from './src/screens/LevelInfoScreen';
+import NotificationSettingsScreen from './src/screens/NotificationSettingsScreen';
 import TrialGuideScreen from './src/screens/TrialGuideScreen';
 import ProfileSettingsScreen from './src/screens/ProfileSettingsScreen';
+import UserActivityScreen from './src/screens/UserActivityScreen';
+import MyActivityScreen from './src/screens/MyActivityScreen';
+import RecentlyViewedScreen from './src/screens/RecentlyViewedScreen';
 import useAuthSync from './src/hooks/useAuthSync';
+import { COLORS } from './src/constants/theme';
 import { onAuthStateChanged } from 'firebase/auth';
 import { auth } from './src/firebase/config';
 import { getChildrenByUserId } from './src/services/firestore/childrenRepository';
@@ -77,6 +84,11 @@ function PriceStack() {
         name="Notifications"
         component={NotificationScreen}
         options={{ title: '알림' }}
+      />
+      <Stack.Screen
+        name="NotificationSettings"
+        component={NotificationSettingsScreen}
+        options={{ title: '알림 설정', headerBackTitleVisible: false }}
       />
       <Stack.Screen
         name="PostDetail"
@@ -269,6 +281,46 @@ function MyPageStack() {
         component={InitialOnboardingScreen}
         options={{ title: '온보딩 체험', headerBackTitleVisible: false }}
       />
+      <Stack.Screen
+        name="Settings"
+        component={SettingsScreen}
+        options={{ headerShown: false }}
+      />
+      <Stack.Screen
+        name="LevelInfo"
+        component={LevelInfoScreen}
+        options={{ headerShown: false }}
+      />
+      <Stack.Screen
+        name="NotificationSettings"
+        component={NotificationSettingsScreen}
+        options={{ title: '알림 설정', headerBackTitleVisible: false }}
+      />
+      <Stack.Screen
+        name="UserActivity"
+        component={UserActivityScreen}
+        options={{ title: '내 활동', headerBackTitleVisible: false }}
+      />
+      <Stack.Screen
+        name="MyActivity"
+        component={MyActivityScreen}
+        options={{
+          title: '내 활동',
+          headerBackTitleVisible: false,
+          headerTitleAlign: 'center',
+          headerTitleStyle: { fontSize: 18, fontWeight: '700', color: '#0f172a' },
+        }}
+      />
+      <Stack.Screen
+        name="RecentlyViewed"
+        component={RecentlyViewedScreen}
+        options={{
+          title: '최근 본 상품',
+          headerBackTitleVisible: false,
+          headerTitleAlign: 'center',
+          headerTitleStyle: { fontSize: 18, fontWeight: '700', color: '#0f172a' },
+        }}
+      />
     </Stack.Navigator>
   );
 }
@@ -295,8 +347,8 @@ function TrackingTab() {
   );
 }
 
-const ACTIVE_COLOR   = '#0f172a';
-const INACTIVE_COLOR = '#94a3b8';
+const ACTIVE_COLOR   = COLORS.primary;
+const INACTIVE_COLOR = COLORS.textSub;
 
 function icon(active, inactive) {
   return ({ focused, size }) => (
@@ -312,10 +364,12 @@ function MainTabs() {
   return (
     <Tab.Navigator
       initialRouteName="홈"
+      backBehavior="history"
       screenOptions={{
         headerShown: false,
         tabBarActiveTintColor:   ACTIVE_COLOR,
         tabBarInactiveTintColor: INACTIVE_COLOR,
+        tabBarStyle: { backgroundColor: COLORS.white },
       }}
     >
       <Tab.Screen name="홈"      component={PriceStack}     options={{ tabBarIcon: icon('home',         'home-outline') }} />

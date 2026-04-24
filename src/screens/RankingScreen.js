@@ -22,6 +22,7 @@ import { fetchAffiliateAndNavigate } from '../utils/fetchProductData';
 import { collection, getDocs, query, where } from 'firebase/firestore';
 import { auth, db } from '../firebase/config';
 import { recordProductAction } from '../services/productActionService';
+import { resolveAgingPriceDisplay } from '../utils/priceDisplay';
 
 // ─── Stage display labels ─────────────────────────────────────────────────────
 
@@ -144,6 +145,7 @@ function RankBadge({ rank }) {
 // ─── Sub-component: RankItem ──────────────────────────────────────────────────
 
 function RankItem({ item, rank, navigation, isCustom, child }) {
+  const aging = resolveAgingPriceDisplay(item);
   return (
     <TouchableOpacity
       style={styles.rankItem}
@@ -178,20 +180,35 @@ function RankItem({ item, rank, navigation, isCustom, child }) {
           <Text style={styles.itemReviewCount}>({item.reviewCount.toLocaleString('ko-KR')})</Text>
         </View>
 
-        {/* Row 3: Standard Price Format */}
-        <View style={{ marginTop: 4 }}>
-          <View style={{ flexDirection: 'row', alignItems: 'baseline' }}>
-            <Text style={{ fontSize: 14, fontWeight: 'bold', color: '#ef4444', marginRight: 4 }}>
-              {item.discount || 15}%
+        {/* Row 3: Aging-aware Price Format */}
+        {aging.mode === 'blind' ? (
+          <View style={{ marginTop: 4 }}>
+            <Text style={{ fontSize: 14, fontWeight: '800', color: '#0f172a' }}>
+              {aging.currentPrice != null ? `₩${aging.currentPrice.toLocaleString('ko-KR')}` : '—'}
             </Text>
-            <Text style={{ fontSize: 14, fontWeight: 'bold', color: '#0f172a' }}>
-              ₩{item.price.toLocaleString('ko-KR')}
+            <Text style={{ fontSize: 10, color: '#94a3b8', marginTop: 2 }}>
+              가격 추적 중. {aging.revealLabel}부터 할인율 노출
             </Text>
           </View>
-          <Text style={{ fontSize: 11, color: '#94a3b8', textDecorationLine: 'line-through', marginTop: 2 }}>
-            ₩{(item.original || item.originalPrice || Math.round(item.price * 1.15)).toLocaleString('ko-KR')}
-          </Text>
-        </View>
+        ) : (
+          <View style={{ marginTop: 4 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: 4 }}>
+              {aging.discountPct != null && aging.discountPct > 0 && (
+                <Text style={{ fontSize: 14, fontWeight: '800', color: '#2E6FF2' }}>
+                  {aging.discountPct}%
+                </Text>
+              )}
+              <Text style={{ fontSize: 14, fontWeight: '800', color: '#0f172a' }}>
+                {aging.currentPrice != null ? `₩${aging.currentPrice.toLocaleString('ko-KR')}` : '—'}
+              </Text>
+            </View>
+            {aging.averagePrice != null && aging.averagePrice > 0 && (
+              <Text style={{ fontSize: 11, color: '#94a3b8', textDecorationLine: 'line-through', marginTop: 2 }}>
+                ₩{aging.averagePrice.toLocaleString('ko-KR')}
+              </Text>
+            )}
+          </View>
+        )}
       </View>
     </TouchableOpacity>
   );

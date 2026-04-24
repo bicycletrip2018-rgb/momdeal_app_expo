@@ -17,32 +17,37 @@ const normalizeNumberOrNull = (value) => {
 };
 
 const normalizeChildPayload = (child) => {
-  const type = child?.type === 'pregnancy' ? 'pregnancy' : 'child';
+  const rawType = child?.type;
+  const type = rawType === 'pregnancy' ? 'pregnancy'
+             : rawType === 'planning'  ? 'planning'
+             : 'child';
+
   const birthDate = type === 'child' ? child?.birthDate || null : null;
-  const computed = buildChildComputedFields({ type, birthDate });
+  const computed  = buildChildComputedFields({ type: type === 'planning' ? 'child' : type, birthDate });
   const feedingType = type === 'child' ? child?.feedingType || 'unknown' : 'unknown';
 
+  const lastName  = (child?.lastName  || '').trim();
+  const firstName = (child?.firstName || child?.name || '').trim();
+
   return {
-    userId: child?.userId || '',
-    name: child?.name?.trim() || '',
-    gender: child?.gender || 'unknown',
+    userId:     child?.userId || '',
+    lastName,
+    firstName,
+    name:       [lastName, firstName].filter(Boolean).join(' ') || '',
+    gender:     child?.gender || 'unknown',
     birthDate,
-    birthOrder: normalizeNumberOrNull(child?.birthOrder),
     type,
-    pregnancyWeek: type === 'pregnancy' ? normalizeNumberOrNull(child?.pregnancyWeek) : null,
-    dueDate: type === 'pregnancy' ? child?.dueDate || null : null,
+    pregnancyWeek:  type === 'pregnancy' ? normalizeNumberOrNull(child?.pregnancyWeek) : null,
+    dueDate:        type === 'pregnancy' ? child?.dueDate || null : null,
+    planningPeriod: type === 'planning'  ? child?.planningPeriod || null : null,
     feedingType,
-    ageMonth: computed.ageMonth,
-    stage: computed.stage,
+    ageMonth:    computed.ageMonth,
+    stage:       computed.stage,
     categoryTags: deriveCategoryTags({ stage: computed.stage, feedingType }),
-    weight: normalizeNumberOrNull(child?.weight),
-    height: normalizeNumberOrNull(child?.height),
-    // concerns: parenting concern tags; default to [] for backwards-compat with existing docs
-    concerns: Array.isArray(child?.concerns) ? child.concerns : [],
-    // Extended personalisation fields (optional, additive)
-    concernNote:       child?.concernNote?.trim()                                    || '',
-    region:            child?.region?.trim()                                          || null,
-    familyComposition: Array.isArray(child?.familyComposition) ? child.familyComposition : [],
+    weight:      normalizeNumberOrNull(child?.weight),
+    height:      normalizeNumberOrNull(child?.height),
+    concerns:    Array.isArray(child?.concerns) ? child.concerns : [],
+    careEnvironment: Array.isArray(child?.careEnvironment) ? child.careEnvironment : [],
   };
 };
 
@@ -90,7 +95,10 @@ export async function updateChild(childId, updates) {
     throw new Error('CHILD_ID_REQUIRED');
   }
 
-  const type = updates?.type === 'pregnancy' ? 'pregnancy' : updates?.type === 'child' ? 'child' : null;
+  const type = updates?.type === 'pregnancy' ? 'pregnancy'
+             : updates?.type === 'planning'  ? 'planning'
+             : updates?.type === 'child'     ? 'child'
+             : null;
   const birthDate = Object.prototype.hasOwnProperty.call(updates || {}, 'birthDate')
     ? updates.birthDate
     : undefined;

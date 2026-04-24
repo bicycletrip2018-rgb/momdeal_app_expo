@@ -24,6 +24,7 @@ import * as Clipboard from 'expo-clipboard';
 import * as IntentLauncher from 'expo-intent-launcher';
 import { registerCoupangProduct } from '../utils/registerCoupangProduct';
 import { TrackingCard } from '../components/TrackingCard';
+import { COLORS } from '../constants/theme';
 
 // ─── Curation categories ──────────────────────────────────────────────────────
 
@@ -716,10 +717,10 @@ const styles = StyleSheet.create({
   zeroStepLabel: { fontSize: 11, fontWeight: '800', color: '#3b82f6', letterSpacing: 0.6, marginBottom: 4, textTransform: 'uppercase' },
   zeroStepText:  { fontSize: 14, color: '#334155', lineHeight: 21 },
   zeroStateCta: {
-    width: '100%', backgroundColor: '#3b82f6', borderRadius: 14,
+    width: '100%', backgroundColor: COLORS.primary, borderRadius: 14,
     paddingVertical: 16, alignItems: 'center',
     ...Platform.select({
-      ios:     { shadowColor: '#3b82f6', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.35, shadowRadius: 8 },
+      ios:     { shadowColor: COLORS.primary, shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.35, shadowRadius: 8 },
       android: { elevation: 4 },
     }),
   },

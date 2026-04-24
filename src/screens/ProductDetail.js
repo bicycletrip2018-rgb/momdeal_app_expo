@@ -1,4 +1,4 @@
-import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Image,
@@ -214,6 +214,7 @@ export default function ProductDetail({ route, navigation }) {
     source === 'Ranking' ? { alertId: null, isActive: true } : null
   );
   const [offerSnapshots, setOfferSnapshots] = useState([]);
+  const [selectedRange, setSelectedRange] = useState(30);
   const [weekPriceDrop, setWeekPriceDrop] = useState(0);
   const [trustSignals, setTrustSignals] = useState({ recentBuyers: 0, peerCount: 0, viewingCount: 0, recentHourBuyers: 0, peerPurchaseCount: 0 });
   const [selectedOption, setSelectedOption] = useState(null);
@@ -661,6 +662,17 @@ export default function ProductDetail({ route, navigation }) {
   const showOptionConfirmation =
     optionConversionCount > 0 || (selectedOffer?.score ?? 0) > 0.3;
 
+  const filteredSnapshots = useMemo(() => {
+    if (offerSnapshots.length === 0) return offerSnapshots;
+    if (!selectedRange) return offerSnapshots;
+    const cutoffMs = Date.now() - selectedRange * 86_400_000;
+    const filtered = offerSnapshots.filter((s) => {
+      const ms = s.checkedAt?.toMillis?.() ?? (s.checkedAt?.seconds ? s.checkedAt.seconds * 1000 : 0);
+      return ms >= cutoffMs;
+    });
+    return filtered.length >= 2 ? filtered : offerSnapshots;
+  }, [offerSnapshots, selectedRange]);
+
   const ctaText = (() => {
     if (purchaseFeedback) return '이동했어요!';
     if (isOutOfStock) return '현재 품절된 상품입니다';
@@ -821,11 +833,26 @@ export default function ProductDetail({ route, navigation }) {
         );
       })() : null}
 
-      {/* Price line graph — visual sparkline replacing text table */}
+      {/* Price line graph — visual sparkline with range selector */}
       {offerSnapshots.length >= 2 ? (
         <View style={styles.recentPricesBlock}>
-          <Text style={styles.recentPricesTitle}>가격 변동 그래프</Text>
-          <PriceLineGraph snapshots={offerSnapshots} currentPrice={currentPrice} />
+          <View style={styles.graphHeaderRow}>
+            <Text style={styles.recentPricesTitle}>가격 변동 그래프</Text>
+            <View style={styles.rangeSelectorRow}>
+              {[7, 30, 0].map((r) => (
+                <TouchableOpacity
+                  key={r}
+                  onPress={() => setSelectedRange(r)}
+                  style={[styles.rangeBtn, selectedRange === r && styles.rangeBtnActive]}
+                >
+                  <Text style={[styles.rangeBtnText, selectedRange === r && styles.rangeBtnTextActive]}>
+                    {r === 0 ? '전체' : r === 7 ? '7일' : '30일'}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </View>
+          <PriceLineGraph snapshots={filteredSnapshots} currentPrice={currentPrice} />
         </View>
       ) : null}
 
@@ -1266,7 +1293,16 @@ const styles = StyleSheet.create({
     padding: 12,
     gap: 6,
   },
-  recentPricesTitle: { fontSize: 13, fontWeight: '700', color: '#0f172a', marginBottom: 8 },
+  recentPricesTitle: { fontSize: 13, fontWeight: '700', color: '#0f172a' },
+  graphHeaderRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 },
+  rangeSelectorRow: { flexDirection: 'row', gap: 4 },
+  rangeBtn: {
+    paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6,
+    borderWidth: 1, borderColor: '#e2e8f0', backgroundColor: '#f8fafc',
+  },
+  rangeBtnActive: { borderColor: '#2E6FF2', backgroundColor: '#eff6ff' },
+  rangeBtnText: { fontSize: 11, fontWeight: '600', color: '#94a3b8' },
+  rangeBtnTextActive: { color: '#2E6FF2' },
 
   // Line graph stats row
   lineGraphStats: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 8, paddingHorizontal: 4 },

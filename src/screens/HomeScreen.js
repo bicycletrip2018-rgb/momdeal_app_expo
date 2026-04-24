@@ -27,6 +27,7 @@ import { httpsCallable } from 'firebase/functions';
 import { onAuthStateChanged } from 'firebase/auth';
 import { auth, db, functions } from '../firebase/config';
 import { recordProductAction } from '../services/productActionService';
+import { COLORS } from '../constants/theme';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -692,7 +693,7 @@ const cm = StyleSheet.create({
   },
   stepDot:     { fontSize: 12, fontWeight: '600', color: '#94a3b8', marginBottom: 8 },
   cardText:    { fontSize: 16, fontWeight: '700', color: '#0f172a', lineHeight: 24, marginBottom: 20 },
-  nextBtn:     { backgroundColor: '#3B82F6', paddingVertical: 14, borderRadius: 10, alignItems: 'center' },
+  nextBtn:     { backgroundColor: COLORS.primary, paddingVertical: 14, borderRadius: 10, alignItems: 'center' },
   nextBtnText: { color: '#fff', fontSize: 15, fontWeight: '800' },
   ring: {
     position: 'absolute',
@@ -1252,7 +1253,7 @@ const styles = StyleSheet.create({
   },
   clipNudgeText:     { flex: 1, fontSize: 13, fontWeight: '600', color: '#fff', lineHeight: 19, marginRight: 10 },
   clipNudgeActions:  { flexDirection: 'row', alignItems: 'center', gap: 8, flexShrink: 0 },
-  clipNudgeTrackBtn: { backgroundColor: '#3B82F6', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8 },
+  clipNudgeTrackBtn: { backgroundColor: COLORS.primary, paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8 },
   clipNudgeTrackText: { color: '#fff', fontSize: 13, fontWeight: '700' },
   clipNudgeClose:    { fontSize: 16, color: '#94a3b8', fontWeight: '700', lineHeight: 20 },
 });
