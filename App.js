@@ -38,9 +38,16 @@ import CategoryScreen from './src/screens/CategoryScreen';
 import OnboardingScreen from './src/screens/OnboardingScreen';
 import InitialOnboardingScreen from './src/screens/InitialOnboardingScreen';
 import SettingsScreen from './src/screens/SettingsScreen';
+import WithdrawScreen from './src/screens/WithdrawScreen';
 import LevelInfoScreen from './src/screens/LevelInfoScreen';
 import NotificationSettingsScreen from './src/screens/NotificationSettingsScreen';
 import TrialGuideScreen from './src/screens/TrialGuideScreen';
+import TermsDetailScreen from './src/screens/TermsDetailScreen';
+import NoticeScreen from './src/screens/NoticeScreen';
+import InquiryScreen from './src/screens/InquiryScreen';
+import InquiryListScreen from './src/screens/InquiryListScreen';
+import InquiryWriteScreen from './src/screens/InquiryWriteScreen';
+import InquiryDetailScreen from './src/screens/InquiryDetailScreen';
 import ProfileSettingsScreen from './src/screens/ProfileSettingsScreen';
 import UserActivityScreen from './src/screens/UserActivityScreen';
 import MyActivityScreen from './src/screens/MyActivityScreen';
@@ -49,7 +56,9 @@ import useAuthSync from './src/hooks/useAuthSync';
 import { COLORS } from './src/constants/theme';
 import { onAuthStateChanged } from 'firebase/auth';
 import { auth } from './src/firebase/config';
-import { getChildrenByUserId } from './src/services/firestore/childrenRepository';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+
+const ONBOARDING_KEY = '@onboarding_completed';
 import { TrackingProvider } from './src/context/TrackingContext';
 import { NotificationProvider } from './src/context/NotificationContext';
 
@@ -88,7 +97,7 @@ function PriceStack() {
       <Stack.Screen
         name="NotificationSettings"
         component={NotificationSettingsScreen}
-        options={{ title: '알림 설정', headerBackTitleVisible: false }}
+        options={{ title: '알림 상세 설정', headerBackTitleVisible: false }}
       />
       <Stack.Screen
         name="PostDetail"
@@ -119,6 +128,16 @@ function PriceStack() {
         name="ProfileSettings"
         component={ProfileSettingsScreen}
         options={{ title: '맞춤 정보 설정' }}
+      />
+      <Stack.Screen
+        name="CurationDetail"
+        component={CurationDetailScreen}
+        options={({ route }) => ({ title: route.params?.title || '모아보기' })}
+      />
+      <Stack.Screen
+        name="CategoryDetail"
+        component={CategoryDetailScreen}
+        options={({ route }) => ({ title: route.params?.categoryName || '카테고리' })}
       />
     </Stack.Navigator>
   );
@@ -287,6 +306,11 @@ function MyPageStack() {
         options={{ headerShown: false }}
       />
       <Stack.Screen
+        name="Withdraw"
+        component={WithdrawScreen}
+        options={{ headerShown: false }}
+      />
+      <Stack.Screen
         name="LevelInfo"
         component={LevelInfoScreen}
         options={{ headerShown: false }}
@@ -294,7 +318,7 @@ function MyPageStack() {
       <Stack.Screen
         name="NotificationSettings"
         component={NotificationSettingsScreen}
-        options={{ title: '알림 설정', headerBackTitleVisible: false }}
+        options={{ title: '알림 상세 설정', headerBackTitleVisible: false }}
       />
       <Stack.Screen
         name="UserActivity"
@@ -320,6 +344,41 @@ function MyPageStack() {
           headerTitleAlign: 'center',
           headerTitleStyle: { fontSize: 18, fontWeight: '700', color: '#0f172a' },
         }}
+      />
+      <Stack.Screen
+        name="TermsDetail"
+        component={TermsDetailScreen}
+        options={({ route }) => ({
+          title: route.params?.title ?? '약관',
+          headerBackTitleVisible: false,
+          headerTitleAlign: 'center',
+          headerTitleStyle: { fontSize: 18, fontWeight: '700', color: '#0f172a' },
+        })}
+      />
+      <Stack.Screen
+        name="Notice"
+        component={NoticeScreen}
+        options={{
+          title: '공지사항',
+          headerBackTitleVisible: false,
+          headerTitleAlign: 'center',
+          headerTitleStyle: { fontSize: 18, fontWeight: '700', color: '#0f172a' },
+        }}
+      />
+      <Stack.Screen
+        name="Inquiry"
+        component={InquiryListScreen}
+        options={{ headerShown: false }}
+      />
+      <Stack.Screen
+        name="InquiryWrite"
+        component={InquiryWriteScreen}
+        options={{ headerShown: false }}
+      />
+      <Stack.Screen
+        name="InquiryDetail"
+        component={InquiryDetailScreen}
+        options={{ headerShown: false }}
       />
     </Stack.Navigator>
   );
@@ -388,18 +447,18 @@ export default function App() {
   const [onboardingDone, setOnboardingDone] = useState(null);
 
   useEffect(() => {
-    const unsub = onAuthStateChanged(auth, async (user) => {
-      if (!user) {
-        // No user yet (anonymous sign-in pending) — keep waiting
-        return;
-      }
+    const checkOnboardingStatus = async () => {
       try {
-        const children = await getChildrenByUserId(user.uid);
-        setOnboardingDone(children.length > 0);
+        const val = await AsyncStorage.getItem(ONBOARDING_KEY);
+        setOnboardingDone(val === 'true');
       } catch {
-        // Fail-safe: skip onboarding on error so the app is never blocked
-        setOnboardingDone(true);
+        setOnboardingDone(true); // fail-safe: never block the app
       }
+    };
+
+    const unsub = onAuthStateChanged(auth, (user) => {
+      if (!user) return; // waiting for anonymous sign-in
+      checkOnboardingStatus();
     });
     return unsub;
   }, []);
@@ -408,7 +467,7 @@ export default function App() {
   if (onboardingDone === null) {
     return (
       <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: '#fff' }}>
-        <ActivityIndicator size="large" color="#f472b6" />
+        <ActivityIndicator size="large" color="#2E6FF2" />
       </View>
     );
   }
@@ -420,22 +479,13 @@ export default function App() {
     <NotificationProvider>
     <View style={{ flex: 1 }}>
       <NavigationContainer>
-        {!onboardingDone ? (
-          // First-time user: show onboarding; completion/skip switches to MainTabs
-          <RootStack.Navigator screenOptions={{ headerShown: false }}>
-            <RootStack.Screen name="Onboarding">
-              {(props) => (
-                <OnboardingScreen
-                  {...props}
-                  onComplete={() => setOnboardingDone(true)}
-                  onSkip={() => setOnboardingDone(true)}
-                />
-              )}
-            </RootStack.Screen>
-          </RootStack.Navigator>
-        ) : (
-          <MainTabs />
-        )}
+        <RootStack.Navigator
+          initialRouteName={onboardingDone ? 'MainTabs' : 'OnboardingScreen'}
+          screenOptions={{ headerShown: false }}
+        >
+          <RootStack.Screen name="OnboardingScreen" component={OnboardingScreen} />
+          <RootStack.Screen name="MainTabs" component={MainTabs} />
+        </RootStack.Navigator>
       </NavigationContainer>
     </View>
     </NotificationProvider>

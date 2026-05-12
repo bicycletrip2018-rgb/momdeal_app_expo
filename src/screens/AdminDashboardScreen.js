@@ -1,14 +1,22 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  KeyboardAvoidingView,
+  Modal,
+  Platform,
   RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   TouchableOpacity,
   View,
 } from 'react-native';
+import {
+  collection, doc, getDocs, orderBy, query, serverTimestamp, updateDoc,
+} from 'firebase/firestore';
+import { db } from '../firebase/config';
 import {
   getDailyStats,
   getTopConvertedProducts,
@@ -17,6 +25,15 @@ import {
   getNotificationStats,
   computeAndWriteSelectionRates,
 } from '../services/adminAnalyticsService';
+
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+
+const fmtDate = (ts) => {
+  if (!ts) return '';
+  const d = ts.toDate ? ts.toDate() : ts.seconds ? new Date(ts.seconds * 1000) : null;
+  if (!d) return '';
+  return `${d.getFullYear()}.${String(d.getMonth() + 1).padStart(2, '0')}.${String(d.getDate()).padStart(2, '0')}`;
+};
 
 // ─── Relative time helper ─────────────────────────────────────────────────────
 function relativeTime(timestamp) {
@@ -29,6 +46,69 @@ function relativeTime(timestamp) {
   const diffH = Math.floor(diffM / 60);
   if (diffH < 24) return `${diffH}시간 전`;
   return `${Math.floor(diffH / 24)}일 전`;
+}
+
+// ─── Inquiry Reply Modal ──────────────────────────────────────────────────────
+
+function InquiryReplyModal({ inquiry, onClose, onSubmit, submitting }) {
+  const [reply, setReply] = useState('');
+  if (!inquiry) return null;
+  const canSubmit = reply.trim().length > 0 && !submitting;
+  return (
+    <Modal visible animationType="slide" transparent onRequestClose={onClose}>
+      <KeyboardAvoidingView
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        style={replyModal.overlay}
+      >
+        <View style={replyModal.card}>
+          {/* Header */}
+          <View style={replyModal.header}>
+            <Text style={replyModal.headerTitle}>답변 등록</Text>
+            <TouchableOpacity onPress={onClose} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+              <Text style={replyModal.closeBtn}>✕</Text>
+            </TouchableOpacity>
+          </View>
+
+          {/* Inquiry preview */}
+          <View style={replyModal.inquiryBox}>
+            {inquiry.category ? (
+              <Text style={replyModal.cat}>{inquiry.category}</Text>
+            ) : null}
+            <Text style={replyModal.inquiryTitle} numberOfLines={2}>{inquiry.title}</Text>
+            <Text style={replyModal.inquiryContent} numberOfLines={4}>{inquiry.content}</Text>
+            <Text style={replyModal.date}>{fmtDate(inquiry.createdAt)}</Text>
+          </View>
+
+          {/* Reply input */}
+          <TextInput
+            style={replyModal.input}
+            value={reply}
+            onChangeText={setReply}
+            placeholder="사용자에게 전달할 답변을 입력하세요"
+            placeholderTextColor="#94a3b8"
+            multiline
+            textAlignVertical="top"
+            maxLength={2000}
+            editable={!submitting}
+          />
+          <Text style={replyModal.charCount}>{reply.length} / 2000</Text>
+
+          {/* Submit */}
+          <TouchableOpacity
+            style={[replyModal.submitBtn, !canSubmit && replyModal.submitBtnDisabled]}
+            onPress={() => onSubmit(reply.trim())}
+            disabled={!canSubmit}
+            activeOpacity={0.85}
+          >
+            {submitting
+              ? <ActivityIndicator color="#fff" size="small" />
+              : <Text style={replyModal.submitText}>답변 등록</Text>
+            }
+          </TouchableOpacity>
+        </View>
+      </KeyboardAvoidingView>
+    </Modal>
+  );
 }
 
 // ─── Stat card ────────────────────────────────────────────────────────────────
@@ -59,6 +139,21 @@ export default function AdminDashboardScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [computing, setComputing] = useState(false);
 
+  const [inquiries,       setInquiries]       = useState([]);
+  const [selectedInquiry, setSelectedInquiry] = useState(null);
+  const [replying,        setReplying]        = useState(false);
+
+  const loadInquiries = useCallback(async () => {
+    try {
+      const snap = await getDocs(
+        query(collection(db, 'inquiries'), orderBy('createdAt', 'desc'))
+      );
+      setInquiries(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+    } catch (e) {
+      console.log('AdminDashboard loadInquiries error:', e);
+    }
+  }, []);
+
   const loadAll = useCallback(async () => {
     try {
       const [daily, top, stages, recent, notif] = await Promise.all([
@@ -79,11 +174,35 @@ export default function AdminDashboardScreen() {
       setLoading(false);
       setRefreshing(false);
     }
-  }, []);
+    await loadInquiries();
+  }, [loadInquiries]);
+
+  const handleSubmitReply = async (replyText) => {
+    if (!selectedInquiry || replying) return;
+    setReplying(true);
+    try {
+      await updateDoc(doc(db, 'inquiries', selectedInquiry.id), {
+        status:    'answered',
+        reply:     replyText,
+        repliedAt: serverTimestamp(),
+      });
+      setSelectedInquiry(null);
+      await loadInquiries();
+    } catch (e) {
+      console.log('AdminDashboard submitReply error:', e);
+      Alert.alert('오류', '답변 등록에 실패했습니다. 다시 시도해주세요.');
+    } finally {
+      setReplying(false);
+    }
+  };
 
   useEffect(() => {
     loadAll();
   }, [loadAll]);
+
+  useEffect(() => {
+    loadInquiries();
+  }, [loadInquiries]);
 
   const handleRefreshRates = async () => {
     setComputing(true);
@@ -109,6 +228,7 @@ export default function AdminDashboardScreen() {
   const hottestStage = stageDist[0];
 
   return (
+    <View style={{ flex: 1, backgroundColor: '#f5f7fb' }}>
     <ScrollView
       style={styles.container}
       contentContainerStyle={styles.content}
@@ -194,7 +314,47 @@ export default function AdminDashboardScreen() {
         ))
       )}
 
-      {/* ── E. Refresh selectionRate utility ── */}
+      {/* ── E. 1:1 문의 관리 ── */}
+      <SectionTitle title="1:1 문의 관리" />
+      {inquiries.length === 0 ? (
+        <Text style={styles.emptyText}>접수된 문의가 없습니다</Text>
+      ) : (
+        inquiries.map((item) => {
+          const pending = item.status !== 'answered';
+          return (
+            <TouchableOpacity
+              key={item.id}
+              style={[styles.inquiryRow, pending && styles.inquiryRowPending]}
+              onPress={() => pending ? setSelectedInquiry(item) : null}
+              activeOpacity={pending ? 0.72 : 1}
+            >
+              <View style={styles.inquiryMeta}>
+                {item.category ? (
+                  <View style={styles.inquiryCatBadge}>
+                    <Text style={styles.inquiryCatText}>{item.category}</Text>
+                  </View>
+                ) : null}
+                <View style={[styles.inquiryStatusBadge, pending ? styles.statusBadgePending : styles.statusBadgeAnswered]}>
+                  <Text style={[styles.inquiryStatusText, pending ? styles.statusTextPending : styles.statusTextAnswered]}>
+                    {pending ? '답변 대기' : '답변 완료'}
+                  </Text>
+                </View>
+              </View>
+              <Text style={[styles.inquiryTitle, pending && styles.inquiryTitlePending]} numberOfLines={1}>
+                {item.title}
+              </Text>
+              <Text style={styles.inquiryDate}>{fmtDate(item.createdAt)}</Text>
+              {pending && (
+                <View style={styles.inquiryReplyBtn}>
+                  <Text style={styles.inquiryReplyBtnText}>답변하기 →</Text>
+                </View>
+              )}
+            </TouchableOpacity>
+          );
+        })
+      )}
+
+      {/* ── F. Refresh selectionRate utility ── */}
       <View style={styles.utilSection}>
         <Text style={styles.utilTitle}>상품 선택률 (selectionRate) 업데이트</Text>
         <Text style={styles.utilSub}>
@@ -215,6 +375,16 @@ export default function AdminDashboardScreen() {
         </TouchableOpacity>
       </View>
     </ScrollView>
+
+    {selectedInquiry && (
+      <InquiryReplyModal
+        inquiry={selectedInquiry}
+        onClose={() => setSelectedInquiry(null)}
+        onSubmit={handleSubmitReply}
+        submitting={replying}
+      />
+    )}
+    </View>
   );
 }
 
@@ -313,6 +483,35 @@ const styles = StyleSheet.create({
   recentId: { fontSize: 10, color: '#94a3b8' },
   recentTime: { fontSize: 11, color: '#64748b', flexShrink: 0 },
 
+  // Inquiry rows
+  inquiryRow: {
+    backgroundColor: '#fff', borderRadius: 10,
+    borderWidth: 1, borderColor: '#f1f5f9',
+    paddingHorizontal: 14, paddingVertical: 12, gap: 4,
+  },
+  inquiryRowPending: { borderColor: '#fecaca', backgroundColor: '#fff7f7' },
+  inquiryMeta: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 2 },
+  inquiryCatBadge: {
+    backgroundColor: '#f0fdf4', borderRadius: 20,
+    paddingHorizontal: 8, paddingVertical: 2,
+  },
+  inquiryCatText:  { fontSize: 10, fontWeight: '700', color: '#15803d' },
+  inquiryStatusBadge: { borderRadius: 20, paddingHorizontal: 8, paddingVertical: 2 },
+  statusBadgePending:  { backgroundColor: '#fee2e2' },
+  statusBadgeAnswered: { backgroundColor: '#dbeafe' },
+  inquiryStatusText:     { fontSize: 10, fontWeight: '700' },
+  statusTextPending:  { color: '#dc2626' },
+  statusTextAnswered: { color: '#1d4ed8' },
+  inquiryTitle:        { fontSize: 13, fontWeight: '600', color: '#0f172a' },
+  inquiryTitlePending: { fontWeight: '800', color: '#7f1d1d' },
+  inquiryDate:         { fontSize: 11, color: '#94a3b8' },
+  inquiryReplyBtn: {
+    alignSelf: 'flex-start', marginTop: 4,
+    backgroundColor: '#dc2626', borderRadius: 6,
+    paddingHorizontal: 10, paddingVertical: 4,
+  },
+  inquiryReplyBtnText: { fontSize: 11, fontWeight: '700', color: '#fff' },
+
   // Util section
   utilSection: {
     backgroundColor: '#fff',
@@ -333,4 +532,48 @@ const styles = StyleSheet.create({
   },
   utilBtnDisabled: { backgroundColor: '#93c5fd' },
   utilBtnText: { fontSize: 13, fontWeight: '700', color: '#fff' },
+});
+
+const replyModal = StyleSheet.create({
+  overlay: {
+    flex: 1, backgroundColor: 'rgba(0,0,0,0.55)',
+    justifyContent: 'flex-end',
+  },
+  card: {
+    backgroundColor: '#fff', borderTopLeftRadius: 20, borderTopRightRadius: 20,
+    paddingHorizontal: 20, paddingTop: 20, paddingBottom: 36,
+    ...Platform.select({
+      ios:     { shadowColor: '#000', shadowOffset: { width: 0, height: -4 }, shadowOpacity: 0.1, shadowRadius: 12 },
+      android: { elevation: 12 },
+    }),
+  },
+  header: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    marginBottom: 16,
+  },
+  headerTitle: { fontSize: 17, fontWeight: '800', color: '#0f172a' },
+  closeBtn:    { fontSize: 18, color: '#64748b', fontWeight: '600' },
+
+  inquiryBox: {
+    backgroundColor: '#f8fafc', borderRadius: 12,
+    padding: 14, marginBottom: 16, gap: 4,
+  },
+  cat:           { fontSize: 11, fontWeight: '700', color: '#15803d', marginBottom: 2 },
+  inquiryTitle:  { fontSize: 14, fontWeight: '700', color: '#0f172a' },
+  inquiryContent:{ fontSize: 13, color: '#475569', lineHeight: 20 },
+  date:          { fontSize: 11, color: '#94a3b8', marginTop: 2 },
+
+  input: {
+    backgroundColor: '#f8fafc', borderWidth: 1, borderColor: '#e2e8f0',
+    borderRadius: 12, paddingHorizontal: 14, paddingVertical: 12,
+    fontSize: 14, color: '#0f172a', height: 140, textAlignVertical: 'top',
+  },
+  charCount: { fontSize: 11, color: '#94a3b8', textAlign: 'right', marginTop: 4, marginBottom: 16 },
+
+  submitBtn: {
+    backgroundColor: '#1d4ed8', borderRadius: 12,
+    paddingVertical: 14, alignItems: 'center',
+  },
+  submitBtnDisabled: { backgroundColor: '#93c5fd' },
+  submitText: { fontSize: 15, fontWeight: '800', color: '#fff' },
 });

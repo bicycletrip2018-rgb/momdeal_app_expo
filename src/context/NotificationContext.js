@@ -1,19 +1,44 @@
 import React, { createContext, useContext, useState } from 'react';
+import * as Notifications from 'expo-notifications';
 
-// Initial count matches MOCK_NOTIFICATIONS unread items (mn1 + mn3)
 const INITIAL_UNREAD = 2;
 
 const NotificationContext = createContext(null);
 
-export function NotificationProvider({ children }) {
-  const [unreadCount, setUnreadCount] = useState(INITIAL_UNREAD);
+async function checkOsPermission() {
+  const { status } = await Notifications.getPermissionsAsync();
+  return status !== 'denied';
+}
 
-  function clearBadge() {
-    setUnreadCount(0);
+export function NotificationProvider({ children }) {
+  const [unreadCount,    setUnreadCount]    = useState(INITIAL_UNREAD);
+  const [priceAlerts,    setPriceAlertsRaw] = useState(true);
+  const [activityAlerts, setActivityAlerts] = useState(false);
+
+  function clearBadge() { setUnreadCount(0); }
+
+  async function setPriceAlerts(val) {
+    if (!val) { setPriceAlertsRaw(false); return true; }
+    const granted = await checkOsPermission();
+    if (!granted) return false;
+    setPriceAlertsRaw(true);
+    return true;
+  }
+
+  async function toggleActivityAlerts(val) {
+    if (!val) { setActivityAlerts(false); return true; }
+    const granted = await checkOsPermission();
+    if (!granted) return false;
+    setActivityAlerts(true);
+    return true;
   }
 
   return (
-    <NotificationContext.Provider value={{ unreadCount, clearBadge }}>
+    <NotificationContext.Provider value={{
+      unreadCount, clearBadge,
+      priceAlerts,    setPriceAlerts,
+      activityAlerts, setActivityAlerts: toggleActivityAlerts,
+    }}>
       {children}
     </NotificationContext.Provider>
   );

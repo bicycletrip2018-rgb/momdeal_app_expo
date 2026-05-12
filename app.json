@@ -47,7 +47,8 @@
       "favicon": "./assets/favicon.png"
     },
     "plugins": [
-      "@react-native-community/datetimepicker"
+      "@react-native-community/datetimepicker",
+      ["@react-native-seoul/kakao-login", { "kakaoAppKey": "368bdabdb629cc39e9a7cb0fcc21de2d", "kotlinVersion": "2.1.0" }]
     ]
   }
 }

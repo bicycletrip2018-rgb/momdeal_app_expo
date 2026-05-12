@@ -1,33 +1,99 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
-  ScrollView,
-  StyleSheet,
-  Switch,
-  Text,
-  View,
+  AppState, Linking, Modal, Platform, ScrollView,
+  StyleSheet, Switch, Text, TouchableOpacity, View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import * as Notifications from 'expo-notifications';
 import { COLORS } from '../constants/theme';
+import { useNotification } from '../context/NotificationContext';
+
+// ─── Permission Modal ─────────────────────────────────────────────────────────
+
+function PermissionModal({ visible, onClose }) {
+  return (
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+      <View style={permModal.overlay}>
+        <View style={permModal.card}>
+          <Text style={permModal.title}>기기 알림이 꺼져있어요</Text>
+          <Text style={permModal.body}>
+            {'중요한 핫딜을 놓치지 않으려면,\n[기기 설정 > 애플리케이션 > 세이브루 > 알림] 탭에서 알림을 허용해주세요.'}
+          </Text>
+          <View style={permModal.btnRow}>
+            <TouchableOpacity style={permModal.cancelBtn} onPress={onClose} activeOpacity={0.75}>
+              <Text style={permModal.cancelText}>취소</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={permModal.confirmBtn}
+              onPress={() => { onClose(); Linking.openSettings(); }}
+              activeOpacity={0.85}
+            >
+              <Text style={permModal.confirmText}>설정으로 이동</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </View>
+    </Modal>
+  );
+}
 
 // ─── Screen ──────────────────────────────────────────────────────────────────
 
 export default function NotificationSettingsScreen() {
   const insets = useSafeAreaInsets();
 
-  const [marketing,   setMarketing]   = useState(true);
-  const [priceAlerts, setPriceAlerts] = useState(true);
-  const [momtalk,     setMomtalk]     = useState(true);
-  const [benefits,    setBenefits]    = useState(true);
-  const [quietHours,  setQuietHours]  = useState(false);
+  const {
+    priceAlerts,    setPriceAlerts,
+    activityAlerts, setActivityAlerts,
+  } = useNotification();
 
-  // When master marketing toggle turns off, disable all sub-toggles
+  const [marketing,        setMarketing]        = useState(false);
+  const [benefits,         setBenefits]         = useState(true);
+  const [quietHours,       setQuietHours]       = useState(false);
+  const [permModalVisible, setPermModalVisible] = useState(false);
+
+  const appState = useRef(AppState.currentState);
+
+  useEffect(() => {
+    const syncOsPermission = async () => {
+      const { status } = await Notifications.getPermissionsAsync();
+      if (status === 'denied') {
+        setPriceAlerts(false);
+        setActivityAlerts(false);
+        setBenefits(false);
+      }
+    };
+
+    syncOsPermission();
+
+    const sub = AppState.addEventListener('change', (next) => {
+      if (appState.current.match(/inactive|background/) && next === 'active') {
+        syncOsPermission();
+      }
+      appState.current = next;
+    });
+
+    return () => sub.remove();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
   const handleMarketingToggle = (val) => {
     setMarketing(val);
     if (!val) {
       setPriceAlerts(false);
-      setMomtalk(false);
+      setActivityAlerts(false);
       setBenefits(false);
     }
+  };
+
+  const handlePriceToggle = async (val) => {
+    if (!marketing) return;
+    const ok = await setPriceAlerts(val);
+    if (ok === false) setPermModalVisible(true);
+  };
+  const handleActivityToggle = async (val) => {
+    if (!marketing) return;
+    const ok = await setActivityAlerts(val);
+    if (ok === false) setPermModalVisible(true);
   };
 
   return (
@@ -65,7 +131,7 @@ export default function NotificationSettingsScreen() {
           </View>
           <Switch
             value={priceAlerts && marketing}
-            onValueChange={(val) => { if (marketing) setPriceAlerts(val); }}
+            onValueChange={handlePriceToggle}
             disabled={!marketing}
             trackColor={{ false: '#e2e8f0', true: `${COLORS.primary}55` }}
             thumbColor={(priceAlerts && marketing) ? COLORS.primary : '#fff'}
@@ -80,11 +146,11 @@ export default function NotificationSettingsScreen() {
             <Text style={styles.rowSub}>내 글의 댓글 및 반응</Text>
           </View>
           <Switch
-            value={momtalk && marketing}
-            onValueChange={(val) => { if (marketing) setMomtalk(val); }}
+            value={activityAlerts && marketing}
+            onValueChange={handleActivityToggle}
             disabled={!marketing}
             trackColor={{ false: '#e2e8f0', true: `${COLORS.primary}55` }}
-            thumbColor={(momtalk && marketing) ? COLORS.primary : '#fff'}
+            thumbColor={(activityAlerts && marketing) ? COLORS.primary : '#fff'}
           />
         </View>
 
@@ -129,6 +195,8 @@ export default function NotificationSettingsScreen() {
         알림 설정은 기기 설정의 알림 권한과 별개로 동작합니다.{'\n'}
         알림을 받으려면 기기 설정에서도 알림이 허용되어야 합니다.
       </Text>
+
+      <PermissionModal visible={permModalVisible} onClose={() => setPermModalVisible(false)} />
     </ScrollView>
   );
 }
@@ -138,19 +206,13 @@ export default function NotificationSettingsScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#f8fafc' },
 
-  sectionLabel: { paddingHorizontal: 20, paddingTop: 24, paddingBottom: 8 },
-  sectionLabelText: {
-    fontSize: 11, fontWeight: '700', color: '#94a3b8',
-    letterSpacing: 0.8, textTransform: 'uppercase',
-  },
+  sectionLabel:     { paddingHorizontal: 20, paddingTop: 24, paddingBottom: 8 },
+  sectionLabelText: { fontSize: 11, fontWeight: '700', color: '#94a3b8', letterSpacing: 0.8, textTransform: 'uppercase' },
 
   sectionCard: {
     backgroundColor: '#fff',
-    marginHorizontal: 0,
-    borderTopWidth: 1, borderBottomWidth: 1,
-    borderColor: '#f1f5f9',
+    borderTopWidth: 1, borderBottomWidth: 1, borderColor: '#f1f5f9',
   },
-
   row: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
     paddingHorizontal: 20, paddingVertical: 14,
@@ -159,11 +221,32 @@ const styles = StyleSheet.create({
   rowLabel:         { fontSize: 15, fontWeight: '500', color: '#0f172a' },
   rowLabelDisabled: { color: '#94a3b8' },
   rowSub:           { fontSize: 12, color: '#94a3b8', marginTop: 2 },
-
-  divider: { height: 1, backgroundColor: '#f1f5f9', marginLeft: 20 },
+  divider:          { height: 1, backgroundColor: '#f1f5f9', marginLeft: 20 },
 
   footerNote: {
     fontSize: 12, color: '#94a3b8', lineHeight: 18,
     textAlign: 'center', paddingHorizontal: 24, marginTop: 24,
   },
+});
+
+const permModal = StyleSheet.create({
+  overlay: {
+    flex: 1, backgroundColor: 'rgba(0,0,0,0.5)',
+    alignItems: 'center', justifyContent: 'center', paddingHorizontal: 24,
+  },
+  card: {
+    width: '100%', backgroundColor: '#fff',
+    borderRadius: 20, paddingHorizontal: 24, paddingVertical: 28,
+    ...Platform.select({
+      ios:     { shadowColor: '#000', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.15, shadowRadius: 20 },
+      android: { elevation: 12 },
+    }),
+  },
+  title:      { fontSize: 17, fontWeight: '800', color: '#0f172a', marginBottom: 10 },
+  body:       { fontSize: 13, color: '#64748b', lineHeight: 20, marginBottom: 24 },
+  btnRow:     { flexDirection: 'row', gap: 12 },
+  cancelBtn:  { flex: 1, paddingVertical: 14, borderRadius: 12, backgroundColor: '#f1f5f9', alignItems: 'center' },
+  cancelText: { fontSize: 15, fontWeight: '700', color: '#475569' },
+  confirmBtn: { flex: 1, paddingVertical: 14, borderRadius: 12, backgroundColor: '#2E6FF2', alignItems: 'center' },
+  confirmText:{ fontSize: 15, fontWeight: '800', color: '#fff' },
 });

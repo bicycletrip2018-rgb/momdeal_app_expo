@@ -107,6 +107,11 @@ export default function TrackingListScreen({ navigation }) {
   const [isSortModalVisible,   setIsSortModalVisible]   = useState(false);
   const [isFilterModalVisible, setIsFilterModalVisible] = useState(false);
 
+  // Custom modals (RULE-9.4: no native Alert)
+  const [clipConfirmUrl,    setClipConfirmUrl]    = useState(null);   // truthy = show confirm modal
+  const [successModal,      setSuccessModal]      = useState(null);   // { title, body }
+  const [pendingClipAction, setPendingClipAction] = useState(null);   // async fn to run on confirm
+
   // Items shown in the FlatList — favorites filter applied when active.
   const listData = showOnlyFavorites
     ? globalTrackedItems.filter((i) => i.isFavorite)
@@ -143,44 +148,35 @@ export default function TrackingListScreen({ navigation }) {
         if (hasString) {
           const text = await Clipboard.getStringAsync();
           if (text.includes('coupang.com')) {
-            Alert.alert(
-              '알림',
-              '복사한 쿠팡 상품을 등록할까요?',
-              [
-                { text: '아니오', style: 'cancel' },
-                {
-                  text: '예',
-                  onPress: async () => {
-                    try {
-                      console.log('데이터 파싱 시작: ', text);
-                      const result = await registerCoupangProduct(text);
-                      if (result && result.ok) {
-                        addTrackedItem({
-                          productId: result.productGroupId,
-                          name: result.name || '쿠팡 상품',
-                          coupangUrl: result.affiliateUrl || text,
-                          image: result.image || null,
-                          isRocket: result.isRocket || false,
-                          currentPrice: null,
-                          deliveryType: result.isRocket ? 'rocket' : null,
-                        });
-                        if (result.isMonetized) {
-                          Alert.alert('🎉 수익화 연동 성공', '상품이 추가되었으며, 쿠팡 파트너스 수익화 링크로 완벽하게 변환되었습니다!');
-                        } else {
-                          Alert.alert('⚠️ 상품 추가됨 (수익화 실패)', `파트너스 링크 변환에 실패했습니다.\n\n쿠팡 서버 응답: ${result.apiError}`);
-                        }
-                      } else {
-                        throw new Error(result?.errorMessage || '상품 데이터를 가져오지 못했습니다.');
-                      }
-                    } catch (error) {
-                      console.error('Scraping Error: ', error);
-                      Alert.alert('오류', '상품 정보를 불러오는데 실패했습니다. 링크를 다시 확인해주세요.');
-                    }
-                  },
-                },
-              ]
-            );
             await Clipboard.setStringAsync('');
+            setPendingClipAction(() => async () => {
+              try {
+                console.log('데이터 파싱 시작: ', text);
+                const result = await registerCoupangProduct(text);
+                if (result && result.ok) {
+                  addTrackedItem({
+                    productId: result.productGroupId,
+                    name: result.name || '쿠팡 상품',
+                    coupangUrl: result.affiliateUrl || text,
+                    image: result.image || null,
+                    isRocket: result.isRocket || false,
+                    currentPrice: null,
+                    deliveryType: result.isRocket ? 'rocket' : null,
+                  });
+                  if (result.isMonetized) {
+                    setSuccessModal({ title: '🎉 관심상품 추가 완료!', body: '가격이 떨어지면 즉시 알려드릴게요!' });
+                  } else {
+                    setSuccessModal({ title: '🎉 관심상품 추가 완료!', body: '가격이 떨어지면 즉시 알려드릴게요!' });
+                  }
+                } else {
+                  throw new Error(result?.errorMessage || '상품 데이터를 가져오지 못했습니다.');
+                }
+              } catch (error) {
+                console.error('Scraping Error: ', error);
+                setSuccessModal({ title: '오류', body: '상품 정보를 불러오는데 실패했습니다. 링크를 다시 확인해주세요.' });
+              }
+            });
+            setClipConfirmUrl(text);
           }
         }
       }
@@ -678,6 +674,65 @@ export default function TrackingListScreen({ navigation }) {
 
         </View>
       )}
+      {/* ── Custom Confirm Modal: Magic Nudge "추적할까요?" ── */}
+      <Modal
+        visible={!!clipConfirmUrl}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setClipConfirmUrl(null)}
+      >
+        <View style={styles.alertOverlay}>
+          <View style={styles.alertBox}>
+            <Text style={styles.alertTitle}>쿠팡 상품을 발견했어요!</Text>
+            <Text style={styles.alertBody}>복사하신 상품의 최저가를 추적할까요?</Text>
+            <View style={styles.alertBtnRow}>
+              <TouchableOpacity
+                style={styles.alertBtnCancel}
+                onPress={() => { setClipConfirmUrl(null); setPendingClipAction(null); }}
+                activeOpacity={0.8}
+              >
+                <Text style={styles.alertBtnCancelText}>아니오</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.alertBtnConfirm}
+                onPress={async () => {
+                  setClipConfirmUrl(null);
+                  if (pendingClipAction) await pendingClipAction();
+                  setPendingClipAction(null);
+                }}
+                activeOpacity={0.8}
+              >
+                <Text style={styles.alertBtnConfirmText}>추적하기</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* ── Custom Success/Error Modal ── */}
+      <Modal
+        visible={!!successModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setSuccessModal(null)}
+      >
+        <View style={styles.alertOverlay}>
+          <View style={styles.alertBox}>
+            <Text style={styles.alertTitle}>{successModal?.title}</Text>
+            <Text style={styles.alertBody}>{successModal?.body}</Text>
+            <View style={styles.alertBtnRow}>
+              <TouchableOpacity
+                style={[styles.alertBtnConfirm, { flex: 1 }]}
+                onPress={() => setSuccessModal(null)}
+                activeOpacity={0.8}
+              >
+                <Text style={styles.alertBtnConfirmText}>확인</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
     </SafeAreaView>
   );
 }
@@ -964,4 +1019,38 @@ const styles = StyleSheet.create({
   deleteText: { fontSize: 14, fontWeight: '700', color: '#fff' },
   confirmBtn: { flex: 1, paddingVertical: 12, borderRadius: 10, backgroundColor: '#3b82f6', alignItems: 'center' },
   confirmText:{ fontSize: 14, fontWeight: '700', color: '#fff' },
+
+  // Custom alert modals (RULE-9.4 compliant)
+  alertOverlay: {
+    flex: 1, backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'center', alignItems: 'center', paddingHorizontal: 32,
+  },
+  alertBox: {
+    width: '100%', backgroundColor: '#FFFFFF',
+    borderRadius: 16, padding: 24,
+  },
+  alertTitle: {
+    fontSize: 17, fontWeight: '800', color: '#0f172a',
+    marginBottom: 10, lineHeight: 24,
+  },
+  alertBody: {
+    fontSize: 14, color: '#475569', lineHeight: 22, marginBottom: 24,
+  },
+  alertBtnRow: {
+    flexDirection: 'row', gap: 10,
+  },
+  alertBtnCancel: {
+    flex: 1, paddingVertical: 14, borderRadius: 10,
+    backgroundColor: '#f1f5f9', alignItems: 'center',
+  },
+  alertBtnCancelText: {
+    fontSize: 15, fontWeight: '600', color: '#475569',
+  },
+  alertBtnConfirm: {
+    flex: 1, paddingVertical: 14, borderRadius: 10,
+    backgroundColor: '#2E6FF2', alignItems: 'center',
+  },
+  alertBtnConfirmText: {
+    fontSize: 15, fontWeight: '700', color: '#fff',
+  },
 });

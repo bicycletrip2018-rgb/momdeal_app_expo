@@ -20,13 +20,13 @@ import { COLORS } from '../constants/theme';
 // ─── Age Groups ──────────────────────────────────────────────────────────────
 
 const AGE_GROUP = {
-  PREGNANT:     'PREGNANT',
-  INFANT:       'INFANT',        // 0–2 years   (0–35 months)
-  TODDLER:      'TODDLER',       // 3–7 years   (36–95 months)
-  KIDS_LOWER:   'KIDS_LOWER',   // 8–10 years  (96–131 months)
-  KIDS_UPPER:   'KIDS_UPPER',   // 11–13 years (132–167 months)
-  TEEN:         'TEEN',          // 14–19 years (168–239 months)
-  ADULT_CHILD:  'ADULT_CHILD',  // 20+ years   (240+ months)
+  PREGNANT:    'PREGNANT',
+  INFANT:      'INFANT',
+  TODDLER:     'TODDLER',
+  KIDS_LOWER:  'KIDS_LOWER',
+  KIDS_UPPER:  'KIDS_UPPER',
+  TEEN:        'TEEN',
+  ADULT_CHILD: 'ADULT_CHILD',
 };
 
 const AGE_GROUP_LABEL = {
@@ -39,7 +39,7 @@ const AGE_GROUP_LABEL = {
   ADULT_CHILD: '성인 자녀/가구 맞춤 (20세 이상)',
 };
 
-// ─── Concern Categories (mirrors InitialOnboardingScreen) ────────────────────
+// ─── V2 Data constants (mirrors InitialOnboardingScreen) ─────────────────────
 
 const NONE_CONCERN = '없음';
 
@@ -47,23 +47,23 @@ const BORN_CONCERNS = [
   '피부/기저귀', '수면/재우기', '수유/이유식', '발달/놀이',
   '안전/외출', '건강/면역', '교육/언어', '육아비용 절약', '기타', NONE_CONCERN,
 ];
-
 const PREGNANT_CONCERNS = [
   '출산 준비물', '산모 건강/회복', '태아 발달/검사', '산후조리/도우미',
   '육아비용 절약', '기타', NONE_CONCERN,
 ];
-
 const PLANNING_CONCERNS = [
   '임신 준비템(영양제)', '배란/건강관리', '임신 정보/팁', '육아비용 절약', '기타', NONE_CONCERN,
 ];
 
 const PLANNING_PERIODS = ['6개월 이내', '1년 이내', '1~2년 후', '아직 미정'];
 
-const CARE_ENV_OPTIONS = ['엄마+아빠', '엄마 혼자', '아빠 혼자', '조부모 도움', '시터/도우미', '기관 이용'];
+// V2 — replaces legacy V1 care environment options
+const ENVIRONMENTS = ['워킹맘', '전업맘', '조부모 양육', '한부모', '다자녀'];
+const PET_TYPES    = ['강아지', '고양이', '기타'];
 
-// ─── Constants ──────────────────────────────────────────────────────────────
+// ─── Constants ───────────────────────────────────────────────────────────────
 
-const PICKER_ITEM_H = 44;
+const PICKER_ITEM_H  = 44;
 const PICKER_VISIBLE = 5;
 
 // ─── Helper: compute ageGroup from birthDate ─────────────────────────────────
@@ -75,24 +75,16 @@ function deriveAgeGroup(birthDate, type) {
   if (birthDate > now) return AGE_GROUP.PREGNANT;
   const ageMonths =
     (now.getFullYear() - birthDate.getFullYear()) * 12 +
-    (now.getMonth() - birthDate.getMonth());
-  if (ageMonths < 36)  return AGE_GROUP.INFANT;       // 0–2 years
-  if (ageMonths < 96)  return AGE_GROUP.TODDLER;      // 3–7 years
-  if (ageMonths < 132) return AGE_GROUP.KIDS_LOWER;   // 8–10 years
-  if (ageMonths < 168) return AGE_GROUP.KIDS_UPPER;   // 11–13 years
-  if (ageMonths < 240) return AGE_GROUP.TEEN;          // 14–19 years
-  return AGE_GROUP.ADULT_CHILD;                        // 20+ years
+    (now.getMonth()   - birthDate.getMonth());
+  if (ageMonths < 36)  return AGE_GROUP.INFANT;
+  if (ageMonths < 96)  return AGE_GROUP.TODDLER;
+  if (ageMonths < 132) return AGE_GROUP.KIDS_LOWER;
+  if (ageMonths < 168) return AGE_GROUP.KIDS_UPPER;
+  if (ageMonths < 240) return AGE_GROUP.TEEN;
+  return AGE_GROUP.ADULT_CHILD;
 }
 
-// ─── Helpers ────────────────────────────────────────────────────────────────
-
-const formatBirthDateSummary = (date) => {
-  if (!date) return '';
-  const y = date.getFullYear();
-  const m = String(date.getMonth() + 1).padStart(2, '0');
-  const d = String(date.getDate()).padStart(2, '0');
-  return `${y}.${m}.${d}`;
-};
+// ─── Helpers ─────────────────────────────────────────────────────────────────
 
 const formatDateDisplay = (date) => {
   if (!date) return '';
@@ -102,7 +94,7 @@ const formatDateDisplay = (date) => {
   return `${y}년 ${Number(m)}월 ${Number(d)}일`;
 };
 
-const parseBirthDateParam = (val) => {
+const parseDateParam = (val) => {
   if (!val) return null;
   if (val instanceof Date) return val;
   if (typeof val === 'string') {
@@ -112,7 +104,7 @@ const parseBirthDateParam = (val) => {
   return null;
 };
 
-// ─── ScrollPickerColumn ─────────────────────────────────────────────────────
+// ─── ScrollPickerColumn ──────────────────────────────────────────────────────
 
 function ScrollPickerColumn({ data, selectedIndex, onIndexChange, width }) {
   const scrollRef    = useRef(null);
@@ -185,23 +177,25 @@ function ScrollPickerColumn({ data, selectedIndex, onIndexChange, width }) {
   );
 }
 
-// ─── DatePickerModal ─────────────────────────────────────────────────────────
+// ─── DatePickerModal (configurable for past or future dates) ─────────────────
 
-function DatePickerModal({ visible, initialDate, onConfirm, onCancel }) {
-  const NOW = new Date();
+function DatePickerModal({ visible, initialDate, onConfirm, onCancel, minYear, maxYear, title = '날짜 선택' }) {
+  const NOW      = new Date();
+  const yearMin  = minYear ?? 1980;
+  const yearMax  = maxYear ?? NOW.getFullYear();
 
   const years = useMemo(() => {
     const list = [];
-    for (let y = 1980; y <= NOW.getFullYear(); y++) list.push({ value: y, label: `${y}년` });
+    for (let y = yearMin; y <= yearMax; y++) list.push({ value: y, label: `${y}년` });
     return list;
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [yearMin, yearMax]);
 
   const months = useMemo(
     () => Array.from({ length: 12 }, (_, i) => ({ value: i + 1, label: `${i + 1}월` })),
     []
   );
 
-  const initYear  = initialDate ? initialDate.getFullYear() : NOW.getFullYear() - 1;
+  const initYear  = initialDate ? initialDate.getFullYear() : yearMax;
   const initMonth = initialDate ? initialDate.getMonth()    : 0;
   const initDay   = initialDate ? initialDate.getDate() - 1 : 0;
 
@@ -209,7 +203,7 @@ function DatePickerModal({ visible, initialDate, onConfirm, onCancel }) {
   const [monthIdx, setMonthIdx] = useState(initMonth);
   const [dayIdx,   setDayIdx]   = useState(initDay);
 
-  const selectedYear     = years[yearIdx]?.value ?? NOW.getFullYear();
+  const selectedYear     = years[yearIdx]?.value ?? yearMax;
   const selectedMonthNum = monthIdx + 1;
 
   const daysInMonth = useMemo(
@@ -243,7 +237,7 @@ function DatePickerModal({ visible, initialDate, onConfirm, onCancel }) {
           <TouchableOpacity onPress={onCancel} style={{ padding: 4 }}>
             <Text style={styles.pickerCancelText}>취소</Text>
           </TouchableOpacity>
-          <Text style={styles.pickerTitle}>생년월일</Text>
+          <Text style={styles.pickerTitle}>{title}</Text>
           <TouchableOpacity onPress={handleConfirm} style={{ padding: 4 }}>
             <Text style={styles.pickerConfirmText}>확인</Text>
           </TouchableOpacity>
@@ -266,10 +260,10 @@ function DatePickerModal({ visible, initialDate, onConfirm, onCancel }) {
 
 // ─── ChoiceChip ──────────────────────────────────────────────────────────────
 
-function ChoiceChip({ label, selected, onPress }) {
+function ChoiceChip({ label, selected, onPress, flex }) {
   return (
     <TouchableOpacity
-      style={[styles.chip, selected && styles.chipActive]}
+      style={[styles.chip, selected && styles.chipActive, flex && { flex: 1 }]}
       onPress={onPress}
       activeOpacity={0.85}
     >
@@ -292,7 +286,7 @@ function SectionLabel({ text, required = false, note }) {
   );
 }
 
-// ─── Screen ─────────────────────────────────────────────────────────────────
+// ─── Screen ──────────────────────────────────────────────────────────────────
 
 export default function ChildAddScreen({ navigation, route }) {
   const insets = useSafeAreaInsets();
@@ -301,17 +295,13 @@ export default function ChildAddScreen({ navigation, route }) {
   const initChild  = route?.params?.child   ?? null;
   const isEditMode = Boolean(childId);
 
-  // The DB's original type — used for one-way ratchet and immutability rules.
   const initType       = initChild?.type ?? 'child';
-  // True when the DB record is already a born child (immutable: no rollback, no field changes).
   const isInitiallyBorn = isEditMode && initType === 'child';
-  // True when the user is transitioning from pregnancy/planning → child in this session.
-  const isTransitioningToBorn = isEditMode && initType !== 'child' && type === 'child';
 
-  const initBirthDate = parseBirthDateParam(initChild?.birthDate);
+  const initBirthDate = parseDateParam(initChild?.birthDate);
+  const initDueDate   = parseDateParam(initChild?.dueDate);
 
-  // ── Form state ────────────────────────────────────────────────────────────
-  // Legacy name auto-split: if DB has old `name` but no structured lastName/firstName, split it.
+  // ── Form state ───────────────────────────────────────────────────────────
   const hasStructuredName = !!(initChild?.lastName || initChild?.firstName);
   const legacyName = (initChild?.name || '').trim();
   const [lastName,  setLastName]  = useState(
@@ -323,31 +313,44 @@ export default function ChildAddScreen({ navigation, route }) {
   const [gender, setGender] = useState(initChild?.gender ?? 'female');
   const [type,   setType]   = useState(initChild?.type   ?? 'child');
 
-  // ── Age / measurements ────────────────────────────────────────────────────
-  const [birthDate,      setBirthDate]      = useState(initBirthDate);
-  const [pregnancyWeek,  setPregnancyWeek]  = useState(
-    initChild?.pregnancyWeek != null ? String(initChild.pregnancyWeek) : ''
-  );
+  // ── Date fields ──────────────────────────────────────────────────────────
+  const [birthDate,        setBirthDate]        = useState(initBirthDate);
+  const [dueDate,          setDueDate]          = useState(initDueDate);
+  const [showBirthPicker,  setShowBirthPicker]  = useState(false);
+  const [showDuePicker,    setShowDuePicker]    = useState(false);
+
+  // ── Planning period ──────────────────────────────────────────────────────
   const [planningPeriod, setPlanningPeriod] = useState(initChild?.planningPeriod ?? '');
+
+  // ── Physical measurements ────────────────────────────────────────────────
   const [height, setHeight] = useState(initChild?.height != null ? String(initChild.height) : '');
   const [weight, setWeight] = useState(initChild?.weight != null ? String(initChild.weight) : '');
-  const [showDatePicker, setShowDatePicker] = useState(false);
 
-  // ── Derived: ageGroup recomputes whenever birthDate or type changes ────────
-  const ageGroup = useMemo(
-    () => deriveAgeGroup(birthDate, type),
-    [birthDate, type]
-  );
+  // ── Derived: ageGroup ────────────────────────────────────────────────────
+  const ageGroup = useMemo(() => deriveAgeGroup(birthDate, type), [birthDate, type]);
 
-  // ── Care environment (multi-select) ──────────────────────────────────────
-  const [careEnvironment, setCareEnvironment] = useState(initChild?.careEnvironment ?? []);
+  // ── Care environment (V2) ────────────────────────────────────────────────
+  const [careEnvironment, setCareEnvironment] = useState(() => {
+    const saved = initChild?.careEnvironment ?? [];
+    // Migrate V1 labels to V2 if any
+    return saved.filter((v) => ENVIRONMENTS.includes(v));
+  });
   const toggleCareEnv = useCallback((val) => {
     setCareEnvironment((prev) =>
       prev.includes(val) ? prev.filter((v) => v !== val) : [...prev, val]
     );
   }, []);
 
-  // ── Concerns (RULE-03: '없음' is mutually exclusive) ─────────────────────
+  // ── Pet ownership (V2) ───────────────────────────────────────────────────
+  const [hasPet,   setHasPet]   = useState(initChild?.hasPet   ?? null);
+  const [petTypes, setPetTypes] = useState(initChild?.petTypes  ?? []);
+  const togglePetType = useCallback((val) => {
+    setPetTypes((prev) =>
+      prev.includes(val) ? prev.filter((v) => v !== val) : [...prev, val]
+    );
+  }, []);
+
+  // ── Concerns ─────────────────────────────────────────────────────────────
   const [concerns, setConcerns] = useState(initChild?.concerns ?? []);
 
   const currentConcernOptions = useMemo(() => {
@@ -366,12 +369,13 @@ export default function ChildAddScreen({ navigation, route }) {
     });
   }, []);
 
-  // ── Reset concerns when type changes ─────────────────────────────────────
+  // Reset concerns & env when type changes
   const prevTypeRef = useRef(type);
   useEffect(() => {
     if (prevTypeRef.current !== type) {
       prevTypeRef.current = type;
       setConcerns([]);
+      setCareEnvironment([]);
     }
   }, [type]);
 
@@ -379,40 +383,31 @@ export default function ChildAddScreen({ navigation, route }) {
   const [showSuccessModal, setShowSuccessModal] = useState(false);
   const [successMessage,   setSuccessMessage]   = useState('');
 
-  // ── Navigation ───────────────────────────────────────────────────────────
-  const handleBack = () => navigation.goBack();
-
+  // ── Validation & submit ──────────────────────────────────────────────────
   const handleNext = () => {
     if (type === 'child' && !lastName.trim())  { Alert.alert('안내', '성(姓)을 입력해 주세요.'); return; }
     if (type === 'child' && !firstName.trim()) { Alert.alert('안내', '이름을 입력해 주세요.'); return; }
-    // pregnancy: firstName (태명) is optional — no validation required
-    if (type === 'child' && !birthDate) {
-      Alert.alert('안내', '생년월일을 선택해 주세요.'); return;
-    }
-    if (type === 'pregnancy' && !pregnancyWeek.trim()) {
-      Alert.alert('안내', '임신 주차를 입력해 주세요.'); return;
-    }
+    if (type === 'child' && !birthDate)        { Alert.alert('안내', '생년월일을 선택해 주세요.'); return; }
     handleSubmit();
   };
 
-  // ── Build Firestore payload ───────────────────────────────────────────────
   const buildPayload = () => ({
-    lastName:      lastName.trim(),
-    firstName:     firstName.trim(),
-    name:          [lastName.trim(), firstName.trim()].filter(Boolean).join(' '),
+    lastName:       lastName.trim(),
+    firstName:      firstName.trim(),
+    name:           [lastName.trim(), firstName.trim()].filter(Boolean).join(' '),
     gender,
     type,
-    birthDate:     type === 'child'     ? birthDate : null,
-    pregnancyWeek: type === 'pregnancy' ? Number(pregnancyWeek) : null,
-    planningPeriod: type === 'planning' ? planningPeriod : null,
-    dueDate:       null,
-    height:        height.trim()  ? Number(height)  : null,
-    weight:        weight.trim()  ? Number(weight)  : null,
+    birthDate:      type === 'child'    ? birthDate : null,
+    dueDate:        type === 'pregnancy' ? dueDate  : null,
+    planningPeriod: type === 'planning'  ? planningPeriod : null,
+    height:         height.trim() ? Number(height) : null,
+    weight:         weight.trim() ? Number(weight) : null,
     ageGroup,
     careEnvironment,
+    hasPet,
+    petTypes:       hasPet ? petTypes : [],
     concerns,
-    // backward-compat aliases used by recommendation engine
-    categoryTags:  concerns,
+    categoryTags:   concerns,
   });
 
   const handleSubmit = async () => {
@@ -422,12 +417,11 @@ export default function ChildAddScreen({ navigation, route }) {
       if (isEditMode) {
         await updateChild(childId, payload);
         setSuccessMessage('아이 정보가 업데이트되었습니다.');
-        setShowSuccessModal(true);
       } else {
         await createChild({ userId: auth.currentUser?.uid || '', ...payload });
         setSuccessMessage('아이 정보가 저장되었습니다.');
-        setShowSuccessModal(true);
       }
+      setShowSuccessModal(true);
     } catch (error) {
       console.log('ChildAddScreen submit error:', error);
       Alert.alert('오류', isEditMode ? '수정에 실패했습니다.' : '저장에 실패했습니다.');
@@ -436,6 +430,9 @@ export default function ChildAddScreen({ navigation, route }) {
     }
   };
 
+  const NOW = new Date();
+  const currentYear = NOW.getFullYear();
+
   // ── Render ───────────────────────────────────────────────────────────────
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
@@ -443,7 +440,7 @@ export default function ChildAddScreen({ navigation, route }) {
       {/* ── Top bar ── */}
       <View style={styles.topBar}>
         <TouchableOpacity
-          onPress={handleBack}
+          onPress={() => navigation.goBack()}
           hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
           style={styles.topBarBack}
         >
@@ -455,7 +452,6 @@ export default function ChildAddScreen({ navigation, route }) {
         <View style={{ width: 40 }} />
       </View>
 
-      {/* ── Single-page form ── */}
       <ScrollView
         style={styles.scroll}
         contentContainerStyle={styles.scrollContent}
@@ -469,59 +465,41 @@ export default function ChildAddScreen({ navigation, route }) {
           {isEditMode ? '아이의 최신 정보를 업데이트해 주세요.' : '이름과 기본 정보를 알려주세요.'}
         </Text>
 
-        {/* ── 기본 정보 ── */}
+        {/* ── Card 1: 기본 정보 ── */}
         <View style={styles.card}>
+          {/* Type selection */}
           {!isInitiallyBorn && (
             <>
               <SectionLabel text="유형" required />
-          {isEditMode ? (
-            isInitiallyBorn ? (
-              // Born child: type is fully locked — no rollback to pregnancy
-              <View style={styles.lockedTypeRow}>
-                <Text style={styles.lockedTypeText}>아이</Text>
-              </View>
-            ) : (
-              // Pregnancy/planning: one-way ratchet — can upgrade to child only
-              <View>
-                <View style={styles.chipRow}>
-                  <ChoiceChip
-                    label="아이"
-                    selected={type === 'child'}
-                    onPress={() => { setType('child'); setBirthDate(null); setGender('female'); }}
-                  />
-                  <ChoiceChip
-                    label={initType === 'pregnancy' ? '임신 중' : '임신 준비 중'}
-                    selected={type !== 'child'}
-                    onPress={() => setType(initType)}
-                  />
+              {isEditMode ? (
+                <View>
+                  <View style={styles.chipRow}>
+                    <ChoiceChip
+                      label="아이"
+                      selected={type === 'child'}
+                      onPress={() => { setType('child'); setBirthDate(null); setGender('female'); }}
+                    />
+                    <ChoiceChip
+                      label={initType === 'pregnancy' ? '임신 중' : '임신 준비 중'}
+                      selected={type !== 'child'}
+                      onPress={() => setType(initType)}
+                    />
+                  </View>
+                  {type === 'child' && initType !== 'child' && (
+                    <Text style={styles.ratchetHint}>출산 후 아이 정보로 전환돼요. 저장 후 되돌릴 수 없어요.</Text>
+                  )}
                 </View>
-                {type === 'child' && (
-                  <Text style={styles.ratchetHint}>출산 후 아이 정보로 전환돼요. 저장 후 되돌릴 수 없어요.</Text>
-                )}
-              </View>
-            )
-          ) : (
-            <View style={styles.chipRow}>
-              <ChoiceChip
-                label="아이"
-                selected={type === 'child'}
-                onPress={() => { setType('child'); if (gender === 'unknown') setGender('female'); }}
-              />
-              <ChoiceChip
-                label="임신 중"
-                selected={type === 'pregnancy'}
-                onPress={() => { setType('pregnancy'); setGender('unknown'); }}
-              />
-              <ChoiceChip
-                label="임신 준비 중"
-                selected={type === 'planning'}
-                onPress={() => { setType('planning'); setGender('unknown'); }}
-              />
-            </View>
-          )}
+              ) : (
+                <View style={styles.chipRow}>
+                  <ChoiceChip label="아이"       selected={type === 'child'}    onPress={() => { setType('child');    if (gender === 'unknown') setGender('female'); }} />
+                  <ChoiceChip label="임신 중"    selected={type === 'pregnancy'} onPress={() => { setType('pregnancy'); setGender('unknown'); }} />
+                  <ChoiceChip label="임신 준비 중" selected={type === 'planning'}  onPress={() => { setType('planning');  setGender('unknown'); }} />
+                </View>
+              )}
             </>
           )}
 
+          {/* Name field */}
           {type !== 'planning' && (
             <>
               {!isInitiallyBorn && <View style={styles.cardDivider} />}
@@ -559,6 +537,7 @@ export default function ChildAddScreen({ navigation, route }) {
             </>
           )}
 
+          {/* Gender — born child only */}
           {type === 'child' && (
             <>
               <View style={styles.cardDivider} />
@@ -571,32 +550,29 @@ export default function ChildAddScreen({ navigation, route }) {
           )}
         </View>
 
-        {/* ── 날짜 / 신체 정보 — hidden for planning ── */}
-        {type !== 'planning' && <View style={[styles.card, { marginTop: 12 }]}>
-          {type === 'child' ? (
+        {/* ── Card 2: 날짜 / 시기 정보 ── */}
+        <View style={[styles.card, { marginTop: 12 }]}>
+          {type === 'child' && (
             <>
-              <>
-                  <SectionLabel text="생년월일" required />
-                  <TouchableOpacity
-                    style={styles.datePickerTrigger}
-                    onPress={() => setShowDatePicker(true)}
-                    activeOpacity={0.8}
-                  >
-                    <Text style={birthDate ? styles.datePickerValue : styles.datePickerPlaceholder}>
-                      {birthDate ? formatDateDisplay(birthDate) : '날짜를 선택해 주세요'}
-                    </Text>
-                    <Text style={styles.datePickerIcon}>›</Text>
-                  </TouchableOpacity>
-                  {ageGroup && (
-                    <View style={styles.ageGroupBadge}>
-                      <Text style={styles.ageGroupBadgeText}>
-                        {AGE_GROUP_LABEL[ageGroup]}로 맞춤 추천을 준비할게요
-                      </Text>
-                    </View>
-                  )}
-                  <View style={styles.cardDivider} />
-                </>
-
+              <SectionLabel text="생년월일" required />
+              <TouchableOpacity
+                style={styles.datePickerTrigger}
+                onPress={() => setShowBirthPicker(true)}
+                activeOpacity={0.8}
+              >
+                <Text style={birthDate ? styles.datePickerValue : styles.datePickerPlaceholder}>
+                  {birthDate ? formatDateDisplay(birthDate) : '날짜를 선택해 주세요'}
+                </Text>
+                <Text style={styles.datePickerIcon}>›</Text>
+              </TouchableOpacity>
+              {ageGroup && (
+                <View style={styles.ageGroupBadge}>
+                  <Text style={styles.ageGroupBadgeText}>
+                    {AGE_GROUP_LABEL[ageGroup]}로 맞춤 추천을 준비할게요
+                  </Text>
+                </View>
+              )}
+              <View style={styles.cardDivider} />
               <SectionLabel text="신체 정보" note="(선택)" />
               <View style={styles.bodyRow}>
                 <View style={{ flex: 1 }}>
@@ -624,37 +600,83 @@ export default function ChildAddScreen({ navigation, route }) {
                 </View>
               </View>
             </>
-          ) : type === 'pregnancy' ? (
+          )}
+
+          {type === 'pregnancy' && (
             <>
-              <SectionLabel text="임신 주차" required />
-              <TextInput
-                style={styles.input}
-                value={pregnancyWeek}
-                onChangeText={setPregnancyWeek}
-                keyboardType="number-pad"
-                placeholder="예: 28"
-                placeholderTextColor="#aaa"
-              />
+              <SectionLabel text="출산 예정일" note="(선택)" />
+              <TouchableOpacity
+                style={styles.datePickerTrigger}
+                onPress={() => setShowDuePicker(true)}
+                activeOpacity={0.8}
+              >
+                <Text style={dueDate ? styles.datePickerValue : styles.datePickerPlaceholder}>
+                  {dueDate ? formatDateDisplay(dueDate) : '날짜를 선택해 주세요'}
+                </Text>
+                <Text style={styles.datePickerIcon}>›</Text>
+              </TouchableOpacity>
             </>
-          ) : null}
-        </View>}
+          )}
 
-        {/* ── 주 양육 환경 — child only ── */}
-        {type === 'child' && <View style={[styles.card, { marginTop: 12 }]}>
-          <SectionLabel text="주 양육 환경" note="(선택 · 복수 선택 가능)" />
-          <View style={styles.chipWrap}>
-            {CARE_ENV_OPTIONS.map((opt) => (
-              <ChoiceChip
-                key={opt}
-                label={opt}
-                selected={careEnvironment.includes(opt)}
-                onPress={() => toggleCareEnv(opt)}
-              />
-            ))}
+          {type === 'planning' && (
+            <>
+              <SectionLabel text="임신 계획 시기" note="(선택)" />
+              <View style={styles.chipWrap}>
+                {PLANNING_PERIODS.map((p) => (
+                  <ChoiceChip
+                    key={p}
+                    label={p}
+                    selected={planningPeriod === p}
+                    onPress={() => setPlanningPeriod(planningPeriod === p ? '' : p)}
+                  />
+                ))}
+              </View>
+            </>
+          )}
+        </View>
+
+        {/* ── Card 3: 육아 환경 + 반려동물 (child & pregnancy, NOT planning) ── */}
+        {type !== 'planning' && (
+          <View style={[styles.card, { marginTop: 12 }]}>
+            <SectionLabel text="육아 환경" note="(선택 · 복수 선택 가능)" />
+            <View style={styles.chipWrap}>
+              {ENVIRONMENTS.map((opt) => (
+                <ChoiceChip
+                  key={opt}
+                  label={opt}
+                  selected={careEnvironment.includes(opt)}
+                  onPress={() => toggleCareEnv(opt)}
+                />
+              ))}
+            </View>
+
+            <View style={styles.cardDivider} />
+
+            <SectionLabel text="반려동물과 함께하시나요?" note="(선택)" />
+            <View style={styles.chipRow}>
+              <ChoiceChip label="네, 있어요" selected={hasPet === true}  onPress={() => { setHasPet(true);  setPetTypes([]); }} flex />
+              <ChoiceChip label="아니요"    selected={hasPet === false} onPress={() => { setHasPet(false); setPetTypes([]); }} flex />
+            </View>
+
+            {hasPet === true && (
+              <View style={{ marginTop: 14 }}>
+                <SectionLabel text="어떤 반려동물인가요?" />
+                <View style={styles.chipWrap}>
+                  {PET_TYPES.map((pt) => (
+                    <ChoiceChip
+                      key={pt}
+                      label={pt}
+                      selected={petTypes.includes(pt)}
+                      onPress={() => togglePetType(pt)}
+                    />
+                  ))}
+                </View>
+              </View>
+            )}
           </View>
-        </View>}
+        )}
 
-        {/* ── 관심사 / 고민 ── */}
+        {/* ── Card 4: 관심사 / 고민 ── */}
         <View style={[styles.card, { marginTop: 12 }]}>
           <Text style={styles.stepHeading2}>
             {type === 'pregnancy'
@@ -675,12 +697,15 @@ export default function ChildAddScreen({ navigation, route }) {
               />
             ))}
           </View>
+          {concerns.length === 3 && (
+            <Text style={styles.maxNote}>최대 3개까지 선택할 수 있어요.</Text>
+          )}
         </View>
 
         <View style={{ height: 32 }} />
       </ScrollView>
 
-      {/* ── Single submit button ── */}
+      {/* ── Bottom CTA ── */}
       <View style={[styles.bottomBar, { paddingBottom: insets.bottom + 8 }]}>
         <TouchableOpacity
           style={[styles.nextBtn, saving && styles.nextBtnDisabled]}
@@ -688,22 +713,33 @@ export default function ChildAddScreen({ navigation, route }) {
           disabled={saving}
           activeOpacity={0.85}
         >
-          {saving ? (
-            <ActivityIndicator color="#fff" />
-          ) : (
-            <Text style={styles.nextBtnText}>
-              {isEditMode ? '수정 완료' : '아이 등록'}
-            </Text>
-          )}
+          {saving
+            ? <ActivityIndicator color="#fff" />
+            : <Text style={styles.nextBtnText}>{isEditMode ? '수정 완료' : '아이 등록'}</Text>
+          }
         </TouchableOpacity>
       </View>
 
-      {/* ── Date Picker Modal ── */}
+      {/* ── Birth Date Picker ── */}
       <DatePickerModal
-        visible={showDatePicker}
+        visible={showBirthPicker}
         initialDate={birthDate}
-        onConfirm={(date) => { setBirthDate(date); setShowDatePicker(false); }}
-        onCancel={() => setShowDatePicker(false)}
+        title="생년월일"
+        minYear={1980}
+        maxYear={currentYear}
+        onConfirm={(date) => { setBirthDate(date); setShowBirthPicker(false); }}
+        onCancel={() => setShowBirthPicker(false)}
+      />
+
+      {/* ── Due Date Picker ── */}
+      <DatePickerModal
+        visible={showDuePicker}
+        initialDate={dueDate || new Date(currentYear, NOW.getMonth(), 1)}
+        title="출산 예정일"
+        minYear={currentYear}
+        maxYear={currentYear + 2}
+        onConfirm={(date) => { setDueDate(date); setShowDuePicker(false); }}
+        onCancel={() => setShowDuePicker(false)}
       />
 
       {/* ── Success Modal ── */}
@@ -735,12 +771,11 @@ export default function ChildAddScreen({ navigation, route }) {
   );
 }
 
-// ─── Styles ─────────────────────────────────────────────────────────────────
+// ─── Styles ──────────────────────────────────────────────────────────────────
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#f5f7fb' },
 
-  // ── Top bar ──
   topBar: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
     backgroundColor: '#fff',
@@ -752,29 +787,13 @@ const styles = StyleSheet.create({
   topBarCenter:   { alignItems: 'center' },
   topBarTitle:    { fontSize: 16, fontWeight: '800', color: '#0f172a' },
 
-  // ── Scroll ──
   scroll:        { flex: 1 },
   scrollContent: { padding: 16, paddingBottom: 24 },
 
-  // ── Step heading ──
   stepHeading:  { fontSize: 22, fontWeight: '900', color: '#0f172a', lineHeight: 30, marginBottom: 4 },
   stepHeading2: { fontSize: 16, fontWeight: '800', color: '#0f172a', lineHeight: 22, marginBottom: 10 },
   stepSub:      { fontSize: 13, color: '#64748b', lineHeight: 18, marginBottom: 14 },
 
-  // ── Immutable summary card ──
-  summaryCard: {
-    backgroundColor: '#f8fafc', borderRadius: 12,
-    borderWidth: 1, borderColor: '#e2e8f0',
-    paddingHorizontal: 14, paddingVertical: 12,
-    marginBottom: 12,
-  },
-  summaryRow:      { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 8 },
-  summaryBadge:    { backgroundColor: '#e2e8f0', borderRadius: 999, paddingHorizontal: 10, paddingVertical: 4 },
-  summaryBadgeText:{ fontSize: 13, fontWeight: '700', color: '#334155' },
-  summarySep:      { fontSize: 13, color: '#94a3b8', fontWeight: '400' },
-  summaryNote:     { fontSize: 11, color: '#94a3b8', marginTop: 8 },
-
-  // ── Age group badge ──
   ageGroupBadge: {
     alignSelf: 'flex-start',
     backgroundColor: '#eff6ff',
@@ -784,7 +803,6 @@ const styles = StyleSheet.create({
   },
   ageGroupBadgeText: { fontSize: 13, fontWeight: '700', color: '#1d4ed8' },
 
-  // ── Card ──
   card: {
     backgroundColor: '#fff', borderRadius: 16, padding: 16,
     ...Platform.select({
@@ -794,13 +812,11 @@ const styles = StyleSheet.create({
   },
   cardDivider: { height: 1, backgroundColor: '#f1f5f9', marginVertical: 16 },
 
-  // ── Section label ──
   sectionLabelRow:  { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 10 },
   sectionLabel:     { fontSize: 14, fontWeight: '700', color: '#334155' },
   sectionLabelNote: { fontSize: 12, color: '#94a3b8', fontWeight: '500' },
   requiredAsterisk: { color: '#ef4444', fontSize: 13 },
 
-  // ── Text inputs ──
   input: {
     backgroundColor: '#f8fafc',
     borderWidth: 1, borderColor: '#e2e8f0',
@@ -810,16 +826,10 @@ const styles = StyleSheet.create({
   bodyRow:      { flexDirection: 'row' },
   measureLabel: { fontSize: 12, fontWeight: '700', color: '#64748b', marginBottom: 6 },
 
-  // ── Locked / disabled field display ──
-  lockedTypeRow:   { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  lockedTypeText:  { fontSize: 15, fontWeight: '700', color: '#64748b', backgroundColor: '#f1f5f9', borderRadius: 999, paddingHorizontal: 14, paddingVertical: 8 },
-  lockedTypeNote:  { fontSize: 12, color: '#94a3b8' },
-  lockedFieldRow:  { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  lockedFieldText: { fontSize: 15, fontWeight: '600', color: '#64748b', backgroundColor: '#f1f5f9', borderRadius: 999, paddingHorizontal: 14, paddingVertical: 8 },
-  disabledField:   { backgroundColor: '#f1f5f9', borderColor: '#e2e8f0', opacity: 0.7 },
-  ratchetHint:     { fontSize: 12, color: '#f59e0b', marginTop: 8, fontWeight: '600' },
+  lockedTypeRow:  { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  lockedTypeText: { fontSize: 15, fontWeight: '700', color: '#64748b', backgroundColor: '#f1f5f9', borderRadius: 999, paddingHorizontal: 14, paddingVertical: 8 },
+  ratchetHint:    { fontSize: 12, color: '#f59e0b', marginTop: 8, fontWeight: '600' },
 
-  // ── Chips ──
   chipRow:        { flexDirection: 'row', gap: 8, flexWrap: 'wrap' },
   chipWrap:       { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   chip:           { borderWidth: 1, borderColor: '#cbd5e1', borderRadius: 999, paddingHorizontal: 14, paddingVertical: 8, backgroundColor: '#fff' },
@@ -827,7 +837,8 @@ const styles = StyleSheet.create({
   chipText:       { color: '#334155', fontWeight: '600', fontSize: 13 },
   chipTextActive: { color: COLORS.primary },
 
-  // ── Date picker trigger ──
+  maxNote: { fontSize: 12, color: COLORS.primary, marginTop: 10, fontWeight: '500' },
+
   datePickerTrigger: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
     backgroundColor: '#f8fafc', borderWidth: 1, borderColor: '#e2e8f0',
@@ -837,7 +848,6 @@ const styles = StyleSheet.create({
   datePickerPlaceholder: { fontSize: 15, color: '#aaa' },
   datePickerIcon:        { fontSize: 18 },
 
-  // ── Bottom nav bar ──
   bottomBar: {
     flexDirection: 'row', gap: 10,
     paddingHorizontal: 16, paddingTop: 12,
@@ -848,7 +858,6 @@ const styles = StyleSheet.create({
   nextBtnDisabled: { opacity: 0.6 },
   nextBtnText:     { fontSize: 15, fontWeight: '800', color: '#fff' },
 
-  // ── Picker bottom sheet ──
   pickerSheet: {
     position: 'absolute', bottom: 0, left: 0, right: 0,
     backgroundColor: '#fff',

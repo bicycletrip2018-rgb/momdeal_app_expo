@@ -22,6 +22,7 @@ import { signOut } from 'firebase/auth';
 import { httpsCallable } from 'firebase/functions';
 import { collection, doc, getDoc, getDocs, limit, orderBy, query, where } from 'firebase/firestore';
 import { auth, db, functions } from '../firebase/config';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { getChildrenByUserId } from '../services/firestore/childrenRepository';
 import {
   getOrCreateNickname,
@@ -559,7 +560,15 @@ export default function MyPageScreen({ navigation }) {
         const bT = b?.updatedAt?.toDate?.().getTime() ?? 0;
         return bT - aT;
       });
-      setChildren(childList);
+
+      let effectiveChildren = childList;
+      if (effectiveChildren.length === 0) {
+        try {
+          const raw = await AsyncStorage.getItem('ONBOARDING_CHILD_DATA');
+          if (raw) effectiveChildren = [{ id: 'onboarding', ...JSON.parse(raw) }];
+        } catch {}
+      }
+      setChildren(effectiveChildren);
       // MOCK PHASE: do not overwrite context with the (empty) Firestore result.
       // Re-enable once the backend returns real saved_products data.
       // setTrackedItems(saved);
@@ -901,11 +910,13 @@ export default function MyPageScreen({ navigation }) {
               </View>
 
               {/* Line 2: Child summary */}
-              {childSummaryLine ? (
+              {selectedChild ? (
                 <View style={styles.childSummaryRow}>
-                  <Text style={styles.childSummaryText} numberOfLines={1}>{childSummaryLine}</Text>
+                  <Text style={styles.childSummaryText} numberOfLines={1}>
+                    {childSummaryLine || resolveChildDisplayName(selectedChild)}
+                  </Text>
                   <TouchableOpacity
-                    onPress={() => selectedChild ? navigateToEditChild(selectedChild) : navigation.navigate('ChildAdd')}
+                    onPress={() => navigateToEditChild(selectedChild)}
                     hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                     style={styles.childEditBtn}
                     activeOpacity={0.7}
@@ -975,9 +986,7 @@ export default function MyPageScreen({ navigation }) {
             onPress={() => navigation.navigate('MyActivity', { activeTab: 'posts', postCount, commentCount, likesCount, nickname })}
             activeOpacity={0.7}
           >
-            {postCount > 0
-              ? <Text style={styles.statNumber}>{postCount}</Text>
-              : <Text style={styles.statActionHint}>글 작성하기</Text>}
+            <Text style={styles.statNumber}>{postCount || 0}</Text>
             <Text style={styles.statLabel}>내가 쓴 글</Text>
           </TouchableOpacity>
 
@@ -988,9 +997,7 @@ export default function MyPageScreen({ navigation }) {
             onPress={() => navigation.navigate('MyActivity', { activeTab: 'comments', postCount, commentCount, likesCount, nickname })}
             activeOpacity={0.7}
           >
-            {commentCount > 0
-              ? <Text style={styles.statNumber}>{commentCount}</Text>
-              : <Text style={styles.statActionHint}>댓글 달기</Text>}
+            <Text style={styles.statNumber}>{commentCount || 0}</Text>
             <Text style={styles.statLabel}>내 댓글</Text>
           </TouchableOpacity>
 
@@ -1012,7 +1019,7 @@ export default function MyPageScreen({ navigation }) {
             onPress={() => showToast('준비 중인 기능입니다')}
             activeOpacity={0.7}
           >
-            <Text style={styles.statActionHint}>준비중</Text>
+            <Text style={styles.statNumber}>0</Text>
             <Text style={styles.statLabel}>내 쿠폰함</Text>
           </TouchableOpacity>
         </View>
@@ -1113,6 +1120,15 @@ export default function MyPageScreen({ navigation }) {
             <Text style={styles.adminBtnText}>어드민 대시보드</Text>
           </TouchableOpacity>
         ) : null}
+
+        {/* ── Temp QA entry — remove before prod ── */}
+        <TouchableOpacity
+          style={styles.qaAdminBtn}
+          onPress={() => navigation.navigate('AdminDashboard')}
+          activeOpacity={0.8}
+        >
+          <Text style={styles.qaAdminBtnText}>⚙️ 운영자 대시보드 (Test)</Text>
+        </TouchableOpacity>
 
         <View style={{ height: 30 }} />
       </ScrollView>
@@ -2352,6 +2368,12 @@ const styles = StyleSheet.create({
     paddingVertical: 14, alignItems: 'center',
   },
   adminBtnText: { color: '#fff', fontWeight: '800', fontSize: 14 },
+
+  qaAdminBtn: {
+    marginHorizontal: 16, marginTop: 8, backgroundColor: '#e2e8f0',
+    borderRadius: 12, paddingVertical: 12, alignItems: 'center',
+  },
+  qaAdminBtnText: { color: '#475569', fontWeight: '700', fontSize: 13 },
 
   // ── Bottom sheets ──
   backdrop:  { flex: 1, backgroundColor: 'rgba(0,0,0,0.45)' },

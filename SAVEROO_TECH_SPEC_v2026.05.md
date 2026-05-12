@@ -14,6 +14,7 @@
 3. **서비스명은 "세이브루(SAVEROO)"로 고정.** Firebase 프로젝트 ID만 `momdeal-494c4` (legacy, 변경 불필요).
 4. **"맘딜(MOMDEAL)"은 구 프로젝트명.** 대화 기록 내 `MOMDEAL TECH SPEC` 언급은 모두 `SAVEROO TECH SPEC`과 동일어로 처리.
 5. **규칙을 축약하거나 함축적으로 표현하지 말 것.** 4월 16일자 대화에서 기획자가 명시적으로 지적했듯, 디테일한 로직은 원형 그대로 유지해야 한다.
+6. 아키텍처 맵 출력 절대 규칙: 아키텍처 맵(Architecture Map)을 출력할 때는 절대 단순 진척도(완료/진행중)만 표기하지 말 것. 반드시 [ZONE] ➔ [기능/UI] ➔ [데이터/로직] ➔ [전체보기 등 라우팅]의 4단계 뎁스(Depth)를 가진 다이어그램 형태로 상세히 기술할 것.
 
 ---
 
@@ -233,22 +234,26 @@ users/{userId}
 해당 스키마는 유저의 자녀 또는 임신 정보를 담는 핵심 객체다. **[RULE-12]**에 의거하여 데이터 무결성을 유지한다.
 children/{childId}
 ├── userId: string (parent)
-├── lastName: string              // [Mutable] 성 (필수, CRM 및 개인화 푸시 알림용)
-├── firstName: string             // [Mutable] 이름/태명 (필수. 단, 임신 중일 때 미입력 시 '우리 아기'로 Fallback 처리)
+├── lastName: string              // [Mutable] 성 (필수 아님. 온보딩 시 '선택' 표기)
+├── firstName: string             // [Mutable] 이름/태명 (필수. 단, 임신 중 미입력 시 '우리 아기' Fallback 처리)
 ├── gender: 'female' | 'male'     // [Immutable] 성별 (Lock: 가입 후 변경 불가)
 ├── birthDate: Timestamp          // [Immutable] 생년월일 (Lock: 가입 후 변경 불가)
 ├── type: 'child' | 'pregnancy' | 'planning'  // [One-way] 상태 (임신 계획 -> 임신 -> 아이 전이만 가능, 역행 불가)
-├── careEnvironment: string[]     // [Mutable] 주 양육 환경 (맞벌이, 독박육아, 조부모 도움 등)
-├── concerns: string[]            // [Mutable] 육아 고민 (RULE-03 상호배제 적용)
+├── careEnvironment: string[]     // [Mutable] 주 양육 환경 (단, '기타'는 단일 선택 배타성 적용)
+├── concerns: string[]            // [Mutable] 육아 고민 (최대 3개 제한, RULE-03 상호배제 적용)
+├── isFirstChild: boolean | null  // [Mutable] 초산 여부 (임신 중일 때만 수집)
+├── isWorkingPregnant: boolean | null // [Mutable] 워킹 임산부 여부 (임신 중일 때만 수집)
+├── isTakingSupplement: boolean | null // [Mutable] 영양제 복용 여부 (임신 계획 중일 때만 수집)
 ├── feedingType: 'breast' | 'formula' | 'mixed' | 'unknown'
 ├── ageMonth: number              // [Computed] 월령
 ├── stage: string                 // [Computed] 발달 단계 (RULE-12 슬라이딩 윈도우 기준)
 ├── categoryTags: string[]        // [Computed] 관심 카테고리 태그
 ├── region: string                // [Mutable] 지역 (optional)
-├── pregnancyWeek: number | null  // 임신 중일 때만
-├── dueDate: Timestamp | null     // 임신 중일 때만
-├── weight: number | null         // [Mutable] 신체 정보
-└── height: number | null         // [Mutable] 신체 정보
+├── pregnancyWeek: number | null  // [Computed] 임신 주차 (수집 금지. dueDate 기반 자동 계산용)
+├── dueDate: Timestamp | null     // [Mutable] 임신 중일 때만 (UI에서 오늘+300일 Max 제한 적용)
+├── weight: number | null         // [Mutable] 신체 정보 (기저귀/의류 사이즈 정밀 추천용. 온보딩 수집 안함)
+├── height: number | null         // [Mutable] 신체 정보 (카시트/보행기 등 체격 추천용. 온보딩 수집 안함)
+└── physicalUpdatedAt: Timestamp | null // [Critical] 신체 정보 마지막 갱신일 (Time Decay 로직 가동용)
 
 #### 🔒 데이터 수정 권한 정책 (Edit Policy)
 1. **고정 데이터 (Immutable):** gender, birthDate는 초기 입력 후 수정 페이지에서 비활성화(Disabled) 처리한다.
@@ -375,16 +380,31 @@ type='child' 생후 0-2m    → stage='newborn'
 - **categoryTags 자동 생성:** `deriveCategoryTags({ stage, feedingType })` — stage별 기본 카테고리 + 수유 타입별 추가 카테고리 병합.
 
 ### 4.3 Concerns 옵션 (온보딩 Chip)
-```js
+**[이미 태어났어요 / 임신 중이에요 공통 (단, 임신 중은 7종)]**
 CONCERN_OPTIONS = [
-  '피부/기저귀',   // → 매칭 problemTags: 'diaper', 'diaper_leak', 'skin_rash'
-  '수면/재우기',   // → 'sleep', 'swaddle'
-  '수유/이유식',   // → 'feeding', 'bottle', 'weaning'
-  '발달/놀이',     // → 'development', 'toy'
-  '안전/외출',     // → 'safety', 'stroller', 'carseat'
-  '없음'           // → RULE-03 상호배제 대상
+  '피부/기저귀', '수면/재우기', '수유/이유식', '발달/놀이', '안전/외출', '없음'
 ]
+
+**[임신 계획 중이에요 전용 배열 신설]**
+CONCERNS_PLANNING = [
+  '임신 준비/영양제',      // → 고단가 건기식 타겟팅
+  '배란/가임기 확인',      // → 배란 테스트기 등 타겟팅
+  '난임/병원 검사',
+  '생활습관/체력 관리',
+  '육아비용 절약',
+  '기타',
+  '없음'
+]
+* 공통 규칙: 최대 3개까지만 선택 가능. '없음' 선택 시 [RULE-03]에 의거하여 나머지 선택은 모두 해제(상호배제)됨.
 ```
+
+### 4.4 생애주기 전이(State Transition) 및 폼 동기화 원칙
+세이브루의 핵심인 코호트 알고리즘이 깨지지 않도록, 유저의 상태 변화와 데이터 수집 폼은 아래의 절대 규칙을 따른다.
+
+1. **일방향 상태 전이:** 프로필 수정창(`ChildAddScreen.js`)에서 `type` 필드는 '임신 계획 ➔ 임신 ➔ 아이'의 앞 방향으로만 전이 가능하며, 역행은 차단한다.
+2. **출산 시 동적 폼 개방 (Dynamic Unlocking):** 유저가 '임신 중'에서 '아이(출산)'로 상태를 변경하는 순간, 과거의 '출산 예정일' 입력창이 사라지고 `이름, 성별, 생년월일, 키, 몸무게` 입력 폼이 그 자리에 즉각 활성화되어야 한다. (과거 데이터는 LAL 추천을 위해 백그라운드에 보존됨)
+3. **V2 스키마 미러링 (Mirroring):** 아이 정보 수정창은 반드시 최초 온보딩의 V2 규격(워킹맘 등 세분화된 육아 환경, 반려동물 유무 등)을 100% 동일하게 유지해야 한다. 과거 V1 규격(임신 주차, 엄마 혼자 등) 사용 시 알고리즘 붕괴로 간주한다.
+4. **신체 정보 입력 완화:** 키와 몸무게는 입력 허들을 낮추기 위해 **반드시 [선택] 값**으로 세팅하며, 입력창 상단에 "정확하지 않아도 괜찮아요! 대략적인 수치로 맞춤 상품을 찾아드릴게요."라는 마이크로 카피를 강제 적용한다.
 
 ---
 
@@ -421,74 +441,228 @@ CONCERN_OPTIONS = [
 ### 5.5 소모 주기 예측 (Replenishment Prediction)
 기저귀, 분유 등 소모성 카테고리는 유저의 과거 구매/알림 시점과 아이의 성장 속도를 계산하여, 다음 단계(Next-step) 및 재구매 필요 상품을 선제적으로 상단에 노출한다.
 
+### 5.6 신체 데이터 감가상각 및 점진적 수집 (Progressive Profiling & Decay)
+- **수집 시점:** 온보딩 단계에서는 이탈을 막기 위해 `weight`, `height`를 묻지 않는다. 대신 홈 탭 피드 탐색 중 넛지 UI를 통해 마이페이지에서 후행 수집(Progressive Profiling)한다.
+- **Steep Time Decay (강제 만료):** 영유아의 급격한 성장을 반영하여, `physicalUpdatedAt` 기준 **생후 12개월 미만은 30일, 12~36개월은 90일**이 지나면 해당 신체 데이터 가중치를 `0`으로 무력화한다.
+- **Fallback (대체):** 신체 데이터 만료 시, 추천 엔진은 유저가 입력한 옛날 데이터를 무시하고 해당 월령(ageMonth)의 '국가 표준 평균 키/몸무게'로 자동 폴백하여 추천 사이즈를 결정한다. 동시에 유저에게 "성장 정보 업데이트" 넛지를 발송한다.
+
 ---
 
 ## 📱 6. PAGE-BY-PAGE ARCHITECTURE (페이지별 상세 설계)
 
-### 6.1 온보딩 (`OnboardingScreen.js`)
-**목적:** 유저 최초 진입 시 기본 데이터 수집.
-**유입 경로:**
-- 설치 후 최초 실행 (항상)
-- 딥링크로 들어왔으나 로그인 안된 상태 (리다이렉트)
+===================================================
+🚀 SAVEROO V1 MASTER ARCHITECTURE MAP (최종 복구 & 상세 확장판)
+(이 맵은 단순히 진척도를 표기하는 것이 아닙니다. 앱의 UI Flow와 데이터 분기점을 완벽하게 텍스트로 가시화한 시스템 설계도입니다.)
+===================================================
 
-**데이터 수집 플로우:**
+🚪 [ZONE A] 문지기 구역 (Auth Flow)
+  - [A-1] 진입점: AsyncStorage 검사로 신규/기존 유저 판별
+  - [A-2] 인증: 익명 로그인(Firebase Anonymous Auth) 진행 (네트워크 에러 방어)
+
+📋 [ZONE B] 온보딩 구역 (Onboarding Pipeline: 3-Way Split)
+  - [B-0] 인트로: 텍스트 로고 및 "육아 필수템 핫딜, 이제 놓치지 마세요!" 카피 노출 ➔ 다음으로 버튼
+  - [B-1] 상태 분기(Switch): 거대한 버튼 3개 (이미 태어났어요 / 임신 중이에요 / 계획 중이에요)
+  - [B-2] 동적 정보 입력 (Dynamic Input Flow):
+      ├─ 👶 이미 태어났어요 Path: 
+      │    ├─ (1) 이름 입력 (단, '성' 필수는 배제하고 UX 간소화)
+      │    ├─ (2) 성별 버튼 선택 (남/여)
+      │    └─ (3) 생년월일 피커 휠 노출 ➔ 입력 완료 시 다음 버튼 활성화
+      ├─ 🤰 임신 중이에요 Path: 
+      │    ├─ (1) 태명 입력 (선택) ➔ 키보드 회피(KeyboardAvoiding) 로직 적용
+      │    └─ (2) 출산 예정일 (필수) ➔ 캘린더 Max Date +300일 제한, 하단에 "대략적 날짜도 괜찮아요" 안내 노출
+      └─ 💭 임신 계획 중이에요 Path: 
+           └─ (1) 계획 시기 (6개월/1년/1~2년/미정) 단일 선택 버튼 노출
+  - [B-3] 환경 설정 (공통/동적 노출): 
+      ├─ 육아 환경 (워킹맘/전업맘 등) 선택
+      ├─ 초산 여부 및 영양제 복용 여부 (B-1의 선택 상태에 따라 동적 노출)
+      └─ 반려동물 유무 (털갈이/청소포 등 타겟팅 가중치)
+  - [B-4] 고민 카테고리 (LAL 엔진 핵심): 
+      └─ 수면, 수유, 피부 등 칩(Chip) 다중 선택 ➔ [RULE-03] '없음' 선택 시 상호 배제(Clear) 로직 강제
+  - [B-5] 전환 로딩 (Labor Illusion):
+      └─ "데이터 분석 및 맞춤 큐레이션 세팅 중..." 카피와 함께 1.5초 가짜 로딩 스피너(스마트 블루) 노출
+
+🏠 [ZONE C] 메인 탭 구역 (GNB 5-Tabs)
+  - [C-0] 핵심 튜토리얼 (App Tour Guide):
+      └─ 3단계 압축 코치마크 (홈 ➔ 커뮤니티 ➔ 관심상품) ➔ 종료 시 관심상품 탭(C-4)으로 강제 랜딩
+  
+  - [C-1] 홈 탭 (HomeScreen: Header & 6-Section Dashboard):
+      ├─ [C-1-0] 상단 헤더 및 글로벌 검색 구역 (Home Header & Search Flow):
+      │    ├─ (UI/기능) 확장된 검색바 (전구 아이콘 철거 완) + 우측 🔔 알림 아이콘 노출.
+      │    ├─ (알림 라우팅) 🔔 클릭 ➔ 알림 센터 진입 ➔ 설정 텔레포트 [D-4].
+      │    └─ (글로벌 검색 라우팅) 🔍 검색바 클릭 시 `SearchScreen` 진입:
+      │         ├─ [C-1-0-1] 검색 초기 화면: 최근 검색어 및 '지금 많이 찾는 검색어' (Top 3 스마트 블루 강조).
+      │         ├─ [C-1-0-2] 결과 탭 1 [통합]: 검색어 일치 상품 Top 3 (RULE-9.4) + 커뮤니티 인기글.
+      │         │    ├─ [상호 배제 UI]: 총 결과 > 3개 시 ➔ "검색 결과 N개 더보기 >" 버튼 노출 (배너 숨김).
+      │         │    └─ [상호 배제 UI]: 총 결과 <= 3개 시 ➔ "원하는 상품이 없나요?" 등록 유도 배너 노출.
+      │         ├─ [C-1-0-3] 결과 탭 2 [상품]: 검색 결과 전체 리스트 노출 (무한 스크롤 적용).
+      │         │    ├─ [정렬 필터 순서]: `아이 또래 인기`(Default) ➔ `할인율순` ➔ `낮은 가격순`
+      │         │    └─ [동적 USP 툴팁]: `아이 또래 인기` 필터 활성화 시 하단에 안내 배너 노출.
+      │         │         └─ 카피: "ℹ️ 회원님과 비슷한 육아 환경의 또래 부모님들이 많이 찾은 순서예요."
+      │         └─ [C-1-0-4] 결과 탭 3 [커뮤니티]: 검색어 포함 맘톡 게시글 전체.
+      │              ├─ [UI 정비]: 글쓰기(FAB) 버튼 제거 (검색 화면 내 작성 불가 로직).
+      │              ├─ [카테고리 뱃지]: 질문, 꿀팁, 후기, 핫딜 (이모지 배제, 회색 캡슐형 UI).
+      │              └─ [회원 등급 4티어 컬러 시스템]: 1. 일반맘: `#6B7280` / 2. 성실맘: `#10B981` / 3. 열심맘: `#F59E0B` / 4. 우수맘: `#2E6FF2`
+      │                           
+      ├─ [C-1-1] 통합 배너: B-2에서 수집한 데이터(이름/태명 등) 동적 출력 ➔ 클릭 시 관심상품(C-4) 이동
+      ├─ [C-1-2] 5대 유니버설 퀵 메뉴 (트래픽 라우팅):
+      │    ├─ 오늘의 특가 ➔ CurationDetail(D-1: goldbox)
+      │    ├─ 또래 랭킹 ➔ Ranking(C-2) 탭 스위칭
+      │    ├─ 실시간 맘톡 ➔ Community(C-3) 탭 스위칭
+      │    ├─ 맞춤 추천 ➔ CurationDetail(D-1: reco+LAL)
+      │    └─ 전체보기 ➔ 바텀 시트 열림 ➔ CategoryDetail(D-2: 1011, 1012 등) 동적 템플릿 이동
+      ├─ [C-1-3] 또래 베스트 특가 (LAL): 금/은/동 뱃지 카드 리스트 ➔ 전체 > 클릭 시 Ranking(C-2) 이동
+      ├─ [C-1-4] 오늘의 육아 특가: 골드박스 타임딜 카드 리스트 ➔ 전체 > 클릭 시 CurationDetail(D-1) 이동
+      ├─ [C-1-5] 가성비 소모품 핫딜: PL 제품 카드 리스트 (RULE-9.4 가격 표기 엄수) ➔ 전체 > 클릭 시 CurationDetail(D-1) 이동
+      └─ [C-1-6] 홈 탭 커뮤니티 베스트 (Community Preview):
+           ├─ [헤더 UI]: 대제목 + 서브 카피("지금 또래 엄마들은...") + 1px Hairline 구분선.
+           ├─ [노출 로직]: 최근 24시간 이내 작성글 중 인게이지먼트 점수 Top 3 추출.
+           ├─ [리스트 UI (Content-First)]: `제목(댓글수)` ➔ `본문 스니펫` ➔ `[뱃지] 레벨 닉네임 · 좋아요 · 시간` 순으로 배치 (가시성 극대화).
+           ├─ [썸네일 로직]: 우측 64x64 사이즈 노출 (멀티 이미지 뱃지 적용).
+           └─ [스마트 라우팅]: '더보기 >' 클릭 시 ➔ 단순 커뮤니티(C-3)가 아닌, `{ filter: '인기' }` 파라미터를 던져 인기 피드로 강제 랜딩.
+      
+  - [C-2] 랭킹 탭 (RankingScreen): 대기 중 ⏳ (낡은 1차 카테고리 탭 구조 변경 필요)
+  - [C-3] 커뮤니티 탭 (CommunityListScreen): 대기 중 ⏳ (이모지 철거 및 핀테크형 리스트 개편 필요)
+  - [C-4] 관심상품 탭 (SavedProductsScreen): 완료 ✅
+      ├─ 텅 빈 화면 시 가이드 UI 노출
+      ├─ "쿠팡 앱 접속하기" ➔ 딥링크 호출 (RULE-02)
+      └─ 매직 넛지 (RULE-05): 백그라운드 클립보드 URL 감지 ➔ 핀테크 표준 커스텀 모달 노출
+  - [C-5] 마이페이지 탭 (MyPageScreen): 대기 중 ⏳
+
+🔍 [ZONE D] 공통 상세 구역 (Detail Views)
+  - [D-1] CurationDetailScreen (만능 도화지 A): 대기 중 ⏳ (특가, 맞춤 추천용 피드 템플릿 대기)
+  - [D-2] CategoryDetailScreen (만능 도화지 B): 대기 중 ⏳ (전체보기 카테고리용 템플릿 대기)
+  - [D-3] 단일 상품 상세 페이지 (ProductDetailScreen - PDP): 완료 ✅
+      ├─ [핵심 설계 원칙 & DB 매핑 로직]
+      │    ├─ 쇼핑몰이 아닌 '핀테크 데이터 분석 앱'의 신뢰감 있는 UX/UI(스마트 블루/레드 톤) 적용. 이모지(🚨, 🔥 등) 사용을 엄격히 금지.
+      │    └─ 데이터 매핑: 쿠팡 고유 상품 번호 기준 1:N 연동 (부모 itemId[대표상품] : 자식 vendorItemId[사이즈/색상 등 개별옵션] 구조).
+      │
+      ├─ [D-3-1] 최상단 상품 및 가격 정보 (Section 1):
+      │    ├─ [소셜 증명 (최상단 훅)]: "또래 맘 N명이 지켜보고 있어요" (10명 미만 시 카피 숨김 처리).
+      │    │    └─ 배치 및 로직: 상품 브랜드명보다도 더 위에(Absolute Top) 배치하여 최초 진입 시 사회적 증거(Social Proof)를 통한 신뢰도 극대화. 유저의 현재 월령이 아닌 '상품 등록/액션 당시의 정확한 개월 수(스냅샷)'를 기준으로 산출.
+      │    ├─ [브랜드/상품명 분리]: 브랜드명(Small Gray)과 상품명(Bold Black)으로 위계 분리 (정규식 파싱).
+      │    ├─ [현재가 블록 (Baseline Row)]: 
+      │    │    └─ `[현재가격 (회색 라벨)]` + `[₩현재가 (가장 크고 굵게)]` + `[▼/▲ N% (동적 컬러 등락률)]`을 가로 한 줄로 배치.
+      │    ├─ [커머스 메타 데이터]: 현재가 블록 바로 아래에 `✓ 쿠팡 인증 상품 (회색)` 및 `🚀 로켓배송 (블루/이탤릭)` 벡터 텍스트 노출.
+      │    └─ [데이터 클렌징]: 게이지 차트와 중복되는 기존의 '기간최고/평균/최저가' 3줄 텍스트는 인지 부하(Cognitive Load) 방지를 위해 완전히 삭제.
+      │
+      ├─ [D-3-2] 데이터 기반 가격 분석 뷰어 (Section 2 - Gauge Box):
+      │    ├─ [섹션 타이틀]: "가격 분석" (기존 텍스트 헤비형 AI 분석 박스는 뺄셈의 미학 적용하여 완전 삭제).
+      │    ├─ [게이지 헤더 (Force 1-Row)]: 아래 3가지 요소가 절대 줄바꿈되지 않도록 `flexDirection: 'row'` 적용.
+      │    │    1. 타이틀: "평균가 대비 N% [저렴해요/비싸요]!" (`flexShrink: 1` 적용)
+      │    │    2. 상태 뱃지 (5-Tier 로직):
+      │    │       - `current == min`: [최근 최저가] (스마트 블루 `#2E6FF2`)
+      │    │       - `current <= min * 1.05`: [최근 최저가 근접] (라이트 블루 `#EFF6FF`)
+      │    │       - `current <= avg`: [평균가] (그린 `#ECFDF5`)
+      │    │       - `current < max`: [평균가 이상] (그레이 `#F3F4F6`)
+      │    │       - `current == max`: [최근 최고가] (레드 `#FEE2E2`)
+      │    │    3. 공유 버튼: `[<Share Icon> 지인 공유]` 우측 끝 배치. 클릭 시 딥링크 포함 텍스트 발송 (`...최근 최저가 근접! ₩000,000 - 세이브루에서 확인하세요 \n https://saveroo.app/...`).
+      │    └─ [수학적 가격 추적 게이지 (Fintech Style)]:
+      │         ├─ 상태 동기화: 현재가가 평균가 이하일 경우 채움선은 '블루', 평균가 초과일 경우 경고성 '레드(#EF4444)'로 동적 렌더링.
+      │         ├─ 점(Dot) 위치 공식: `((현재가 - 최저가) / (최고가 - 최저가)) * 100 + '%'`. 실제 백분율 좌표에 정확히 점을 렌더링.
+      │         └─ 라벨 텍스트: 양끝에 `최근 최저가`, `최근 최고가` 배치. 중앙 틱 마커(`|`) 위에 `평균가` 절대 위치(`absolute`) 렌더링.
+      │
+      ├─ [D-3-3] 옵션 단가 비교표 (Section 3: 다른 옵션 보기):
+      │    ├─ [UI]: 60x60 썸네일 + 단위 가격(`unitPrice` 활용, 예: 1개당, 100ml당 등) 스마트 블루 강조.
+      │    ├─ [개별 액션 라우팅]: 리스트 항목(Row) 터치 시 해당 옵션 PDP로 화면 전환.
+      │    └─ [가격 추적 스위치 & 알림]: 개별 옵션 우측 종(🔔) 버튼. 토글 시 하단 슬라이드업 파란색 Toast 알림 (Hug Content 폭 동적 조절).
+      │
+      └─ [D-3-4] 대안 상품 추천 및 스티키 하단 제어 (Section 4 & Footer):
+           ├─ [추천 로직]: "또래 맘들의 관심 유사 상품" 타이틀. 협업 필터링 시 `category_id 일치` 조건 강제 (최대 10개).
+           ├─ [여백 압살 규칙 (Root Cause Nuke)]:
+           │    1. 앱 최하단 법적 고지(`legalFooter`) 컨테이너는 `marginVertical: 16`으로 고정. 내부 패딩 및 외부 잉여 Spacer 절대 금지.
+           │    2. `ScrollView`의 `paddingBottom`은 스티키 버튼의 높이를 덮지 않을 최소한의 값(`80`)으로 강제 고정.
+           └─ [하단 스티키 CTA]:
+                ├─ 🛒 이모지 철거, 벡터 외부링크 아이콘 + 쿠팡 오렌지 컬러 고정.
+                └─ `useSafeAreaInsets`의 `bottom` 값을 활용하여 기기 하단 홈 인디케이터 영역까지 붕 뜸(Floating) 없이 바닥에 꽉 차게 앵커링(Anchoring).
+
+===================================================
+
+### 6.1 온보딩 페이지 (`OnboardingScreen.js`)
+**목적:** 유저 최초 진입 시 기본 데이터 수집. (앱 내 공식 명칭: **"온보딩 페이지"**)
+단순한 1차원 설문조사가 아닌, 세이브루의 핵심인 **초개인화 큐레이션(LAL 알고리즘) 가동을 위한 다차원 코호트 기준 데이터를 수집하는 최초 진입 및 셋업 엔진**이다.
+
+**진입 트리거 (Routing Trigger):**
+1. 앱 최초 설치 후 실행 시: `AsyncStorage`에 완료 플래그가 없으면 무조건 강제 진입.
+2. 회원 탈퇴 시: 설정에서 탈퇴 시 모든 데이터를 Wipe한 후 새로운 환경 수집을 위해 1단계로 즉시 롤백(Reset).
+
+**데이터 수집 플로우 (Dynamic Inline Expansion UX 적용):**
 1. 환영 화면 (스킵 불가)
-2. 로그인 방식 선택 (기본: 익명 / 카카오·구글 SSO 준비중)
-3. **아이 정보 입력** (`ChildAddScreen.js` 와 공유):
-   - `type` (`child` / `pregnancy`)
-   - `birthDate` (child) or `pregnancyWeek`, `dueDate` (pregnancy)
-   - `gender`, `name` (optional)
-   - `feedingType` (모유/분유/혼합/모름)
-   - `weight`, `height` (optional)
-4. **고민 카테고리 선택** (Chip multi-select) — RULE-03 적용
-5. 완료 → 홈 탭 진입
+2. 로그인 방식 선택 (기본: 익명 / 카카오·구글 SSO)
+3. **생애주기 및 환경 정보 입력 (상태별 동적 렌더링):**
+   - **"이미 태어났어요" 선택 시:**
+     - `생년월일`, `성별`, `이름(성 선택화, 키보드 완료 시 성별 버튼 노출)` 스르륵 노출
+     - 헤더 마이크로카피: *"어떤 환경에서 육아하고 계세요?"*
+   - **"임신 중이에요" 선택 시:**
+     - `출산 예정일` (최대 오늘+300일 제한. 하단에 "대략적인 날짜도 괜찮아요" 카피), `태명(선택)` 노출
+     - 맞춤 타겟팅 추가: **"첫째 아이인가요?", "현재 직장에 출근 중이신가요?"** (Yes/No 토글, 재클릭 시 선택 해제 가능)
+     - 헤더 마이크로카피: *"현재 어떤 환경에서 지내고 계세요?"*
+   - **"계획 중이에요" 선택 시:**
+     - `계획 시기` 버튼군 노출
+     - 맞춤 타겟팅 추가: **"임신 준비를 위해 영양제를 챙겨 드시고 계신가요?"** (Yes/No 토글, 재클릭 시 선택 해제 가능)
+     - 헤더 마이크로카피: *"현재 어떤 환경에서 지내고 계세요?"*
+   - **(공통)** `육아 환경 ('기타' 배타성 적용)` 및 `반려동물 유무` 선택
+4. **고민 카테고리 선택** (Chip multi-select) 
+   - 상태별 배열 로드 (계획 중은 `CONCERNS_PLANNING` 로드). 최대 3개 선택 제한 및 RULE-03('없음' 배타성) 적용.
+5. 완료 버튼 클릭 ➔ **2초간 맞춤 핫딜 세팅 가짜 로딩(Labor Illusion) 화면 노출 후 홈 탭 진입**
+6. 튜토리얼 ➔ **3단계 압축 코치마크 (홈->커뮤니티->관심상품) 후 관심상품 탭 강제 랜딩**
 
 **Firestore Write:**
 - `users/{uid}` 생성 (익명 시 `provider: 'anonymous'`, `selectedChildId` 설정)
-- `children/{childId}` 생성 (computed fields 포함, concerns 포함)
-
-**추후 고도화:**
-- 공유 링크 유입자: 온보딩 스킵 → 해당 상품으로 직행 → 나중에 아이 정보 입력 유도
-- 지역(region) 필드 수집 (동네 핫딜용)
-- 관심 카테고리 선호도 (Like/Dislike) 수집으로 cold start 개선
+- `children/{childId}` 생성 (computed fields 및 환경/고민 데이터 모두 포함)
 
 ---
 
-### 6.2 홈 탭 (`HomeScreen.js`)
-**목적:** 선택된 아이 기준 맞춤 추천 피드. 세이브루의 메인 화면.
+### 6.2 [ZONE C-1] 홈 탭 (`HomeScreen.js`)
+**목적:** 단순 상품 나열이 아닌, 유저 데이터와 쿠팡 API를 결합한 **'초개인화 판단 보조 대시보드'**.
 
-**UI 구조 (Hero/Medium/List):**
-- **Hero 카드 1개** — `finalScore` 최상위 제품 (큰 이미지, 신뢰 카피)
-- **Medium 카드 2개** — 2~3위 제품 (중간 크기)
-- **리스트 형태** — 4위 이하
+**UI 구조, API 매핑 및 라우팅 (6대 섹션 아키텍처):**
 
-**신뢰 기반 1줄 추천 이유 (Trust Copy, 5개 순환):**
-- "같은 개월 수 부모님들이 가장 많이 찾은 제품이에요"
-- "또래 아이를 키우는 부모님의 96%가 선택했어요"
-- (나머지 3개 fallback은 `docs/history.txt` 참조)
+**[Section 1] 개인화 대시보드 (통합 위젯)**
+- **UI:** 화면 최상단 핀테크 스타일 배너. 온보딩(ZONE A) 데이터 기반 동적 텍스트 출력.
+  - 아이 있음: `[이름] 맞춤 핫딜 도착!`
+  - 임신 중: `[태명(없으면 '우리 아기')] 맞춤 핫딜 도착!`
+  - 계획 중: `[유저 닉네임] 맞춤 핫딜 도착!`
+- **라우팅 액션:** 배너 전체가 `<TouchableOpacity>`로 작동하며 클릭 시 `SavedProductsScreen(관심상품 탭)`으로 즉시 이동.
 
-**핵심 기능:**
-1. **매직 넛지 (RULE-05)** — `useMagicOnboarding` 훅 호출. 앱 foreground 전환 시 클립보드 감지.
-2. **지금 사면 좋은 상품 스트립** — `getFloatingWindowProducts(child)` 결과 가로 스크롤.
-3. **코치마크 (신규 유저용)** — 스포트라이트 효과 (`backgroundColor: 'rgba(255,255,255,0.3)'`, border 없음, 하단 탭 아이콘 중앙 정렬).
+**[Section 2] 5대 유니버설 퀵 메뉴 (Core Navigation)**
+- **목적:** 타겟팅 데드존(Dead Zone)을 없애고 모든 유저가 보편적으로 누릴 수 있는 핵심 기능으로 트래픽 분산.
+- **라우팅 지도:**
+  1. **🔥 오늘의 특가:** `CurationDetailScreen` 이동 (API: `GET /products/goldbox` 파라미터 전달)
+  2. **🏆 또래 랭킹:** `RankingScreen` (하단 GNB 랭킹 탭으로 스위칭)
+  3. **💬 실시간 맘톡:** `CommunityListScreen` (하단 GNB 커뮤니티 탭으로 스위칭)
+  4. **✨ 맞춤 추천:** `CurationDetailScreen` 이동 (API: `GET /products/reco` + LAL 알고리즘 파라미터 전달)
+  5. **⊞ 전체보기:** BottomSheet Modal 스르륵 호출 ➔ 모달 내에서 카테고리 선택 시 `CategoryDetailScreen` (동적 템플릿)으로 `categoryId` 파라미터 전달하여 이동.
 
-**유입 경로:**
-- 온보딩 완료 후 (기본)
-- 다른 탭 → 홈 탭 클릭
-- 딥링크 (푸시 알림, 외부 공유)
+**[Section 3] 실시간 또래 베스트 특가 (LAL 랭킹 큐레이션)**
+- **카피:** "지금 가격이 뚝 떨어진 인기 상품만 모았어요"
+- **Data Source:** 쿠팡 API `GET /products/bestcategories/1011` + 내부 코호트(동년배) 행동 데이터 결합.
+- **UI 규칙:** 썸네일 좌측 상단 랭킹 뱃지(금/은/동) 및 우측 상단 최저가 뱃지 강제 적용. 하단 Trust Copy 삽입.
+- **전체보기 라우팅:** 우측 상단 `전체 >` 클릭 시 `RankingScreen` (하단 랭킹 탭)으로 스위칭하여 1~50위 노출.
 
-**데이터 소스:**
-- `recommendationService.getRecommendedProducts(childId)` (메인 피드)
-- `recommendationService.getFloatingWindowProducts(child)` (상단 스트립)
-- 유저의 `selectedChildId` 가 없을 경우 fallback: `searchCoupangProducts('기저귀', 20)`
+**[Section 4] 오늘의 육아 특가 (골드박스 타임딜)**
+- **Data Source:** 쿠팡 API `GET /products/goldbox` 호출 후 육아/식품 카테고리 필터링.
+- **UI 규칙:** 가로 스크롤 (Section 3과 완벽히 동일한 `<ProductCard>` 재사용).
+- **전체보기 라우팅:** 우측 상단 `전체 >` 클릭 시 `CurationDetailScreen(파라미터: goldbox)`로 이동.
 
-**데이터 Write:**
-- 상품 카드 클릭 시 → `user_product_actions` 에 `product_click` 로깅
+**[Section 5] 지금 쟁여야 할 생필품 핫딜 (가성비 소모품 추천)**
+- **카피:** "기저귀·물티슈, 가격 내려갔을 때 미리 담아두세요"
+- **Data Source:** 쿠팡 API `GET /products/coupangPL/1011` (비지엔젤) 및 `1001` (탐사).
+- **절대 규칙:** **[RULE-9.4 글로벌 상품 가격 표기 정책]**을 엄격히 준수 (`[할인율] [현재가] \n [평균가(취소선)]` 포맷 강제).
+- **전체보기 라우팅:** 우측 상단 `전체 >` 클릭 시 `CurationDetailScreen(파라미터: coupangPL)`로 이동.
 
-**추후 고도화:**
-- 시간대별 콘텐츠 (아침: 이유식 / 저녁: 수면용품)
-- Hero 영역 A/B 테스트 (배너 vs 상품)
-- 스트릭 상태 뱃지 노출 (연속 접속 N일)
+**[Section 6] 맘카페 실시간 베스트 (Context-to-Commerce)**
+- **Data Source:** 내부 `posts` 컬렉션의 조회수/댓글수 상위 게시글.
+- **전체보기 라우팅:** 우측 상단 `더보기 >` 클릭 시 `CommunityListScreen` (하단 커뮤니티 탭)으로 스위칭.
+
+**[Visual Rhythm & Spacing Rules]**
+- 메인 타이틀과 '전체 >' 버튼은 반드시 수평(`alignItems: 'center'`) 정렬.
+- 이중 마진(Double Margin) 절대 금지. 오직 `marginBottom`으로만 간격 통제.
+- 배너 ↔ 퀵메뉴: `16px` (밀착) / 퀵메뉴 ↔ 섹션 간: 8px 두께 연회색 파티션(Divider, `#F3F4F6`).
+
+**[홈 ➔ 커뮤니티 진입 트래픽 라우팅 절대 규칙]**
+- 홈 화면 최하단 '지금 뜨는 맘톡' 섹션의 `[더보기 >]` 버튼을 클릭할 경우, 유저를 단순 커뮤니티의 '전체/최신순' 탭으로 랜딩시키면 안 된다.
+- 반드시 네비게이션 Payload에 `{ filter: 'hot' }` 또는 `{ tab: '인기글' }` 속성을 포함하여 라우팅해야 한다.
+- 커뮤니티 탭(C-3)은 이 파라미터를 받아, 진입 즉시 '인기/베스트' 필터가 적용된 상태의 화면을 렌더링해야 한다.
 
 ---
 
@@ -734,27 +908,82 @@ rankingScore = coupangOfficialRank * 0.6 + peerScore * 0.4
 - 네트워크 실패 → 재시도 UI
 - 중복 등록 → 기존 문서 반환 (RULE-08)
 
+### 6.9 인앱 고객센터 (CS Center: 1:1 문의)
+**목적:** 앱 이탈 없이 유저와 운영자가 소통하는 완벽한 CS 폐쇄 루프(Closed-Loop) 구축.
+
+**화면 및 로직 구성:**
+1. **리스트 (`InquiryListScreen`):** 내 문의 내역 모아보기. `답변 대기(회색)` / `답변 완료(파란색)` 상태 뱃지 노출.
+2. **작성 폼 (`InquiryWriteScreen`):** - 문의 유형 칩(서비스 오류, 앱 사용 문의, 제안/건의, 기타) 필수 선택.
+   - **UX 정책:** 접수 시 화면 멈춤(Blocking) 없이 즉시 리스트로 복귀하며 비침습적 알림(Toast) 노출.
+   - **방어 로직:** 하단에 "욕설, 비방 등 악성 문의 시 이용 제한" 경고 문구 상시 노출.
+3. **상세 화면 (`InquiryDetailScreen`):**
+   - **수정 불가:** 운영자와의 데이터 정합성을 위해 수정 기능 원천 차단.
+   - **삭제 허용:** 커스텀 모달(RULE-9.2)을 통한 자진 삭제 기능 제공.
+   - **답변 노출:** 관리자 답변 완료 시 옅은 파란색 박스로 답변 내용 렌더링 (추가 댓글/재문의 불가).
+
+### 6.10 운영자 대시보드 (`AdminDashboardScreen.js`)
+**목적:** 파이어베이스 콘솔 없이 앱 내에서 유저 문의를 확인하고 즉각 대응하는 백오피스.
+
+**핵심 로직:**
+1. **데이터 관리:** `inquiries` 컬렉션을 시간 역순으로 전체 로드.
+2. **UI/UX:** 답변 작성 모달은 반드시 `<KeyboardAvoidingView>`를 적용하여 키보드가 입력창을 가리지 않도록 제어한다.
+3. **상태 업데이트:** 답변 등록 시 해당 문서의 `status`를 'answered'로 변경하고, `reply` 내용과 `repliedAt` 타임스탬프를 서버에 기록한다.
+
+### 6.11 통합 검색 플로우 (`SearchScreen.js` & `SearchResultScreen.js`)
+**목적:** 단순 상품 검색이 아닌, 상품 가격과 커뮤니티 여론을 동시에 제공하는 하이브리드 검색 엔진.
+
+**UI 구조 및 UX 절대 규칙:**
+
+**[상태 1: 검색 초기 화면]**
+- **지금 많이 찾는 검색어:** 1~10위 노출. 단, 1~3위 숫자는 반드시 `스마트 블루(#2E6FF2)` 색상과 `ExtraBold`로 강조하여 시선을 유도한다.
+
+**[상태 2: 검색 결과 화면 - 3 Tab 구조]**
+- **로딩 모드:** 파이어베이스/쿠팡 API 쿼리 시 반드시 **스마트 블루** 색상의 `ActivityIndicator`를 노출한다. (핑크색 절대 금지)
+- **이모지 밴(RULE-04):** 검색 결과의 모든 배너 및 커뮤니티 리스트에서 이모지(🔗, 🔥, 💡 등) 사용을 엄격히 금지하고 `lucide` 아이콘 또는 텍스트 뱃지로 대체한다.
+
+**1. 통합 탭 (All Preview)**
+- **상품 미리보기:** 상위 3개 항목만 [RULE-9.4] 포맷으로 렌더링. 브랜드명은 회색 괄호 `[브랜드]`로 분리.
+- **커뮤니티 미리보기:** 검색어 포함 게시글 중 **인게이지먼트 점수 최상위 3개** 노출.
+- **상호 배제 배너 로직 (Mutually Exclusive UX):**
+  - 총검색 결과 > 3개: 하단에 `[상품 검색 결과 N개 더보기 >]` 액션 버튼 노출 (상품 탭으로 스위칭). 배너 숨김.
+  - 총검색 결과 <= 3개: 하단에 `[원하는 상품이 없나요? 추가하기]` 배너 노출. 더보기 버튼 숨김.
+
+**2. 상품 탭 (Product Infinite Scroll)**
+- **무한 스크롤 (Pagination):** 초기 10개 렌더링 후, 하단 스크롤 시 스피너 노출과 함께 10개씩 추가 로드.
+- **Pill 스타일 필터:** 선택된 필터는 파란색 배경+흰색 글씨 캡슐 형태로 렌더링.
+- **정렬 로직:**
+  - `아이 또래 인기`: peerScore(내부 점수) 내림차순 (Desc) - Default 선택 및 USP 안내 툴팁 노출.
+  - `할인율순`: discountRate 내림차순 (Desc)
+  - `낮은 가격순`: currentPrice 오름차순 (Asc)
+
+**3. 커뮤니티 탭 (Community)**
+- **필터링:** 검색어와 일치하는 제목/본문을 가진 `posts` 컬렉션 게시글만 노출.
+- **정렬 로직 (Engagement Score):** 단순히 최신순이 아닌, 최근 90일 이내 작성글 중 `(조회수 × 0.1) + (댓글 수 × 2) + (좋아요 수 × 3)` 공식을 적용한 인게이지먼트 점수 내림차순으로 정렬.
+- **UI/UX 규칙:** - 글쓰기(FAB) 버튼 강제 숨김.
+  - 4티어 레벨링 시스템 적용: `Lv.1 일반맘(#6B7280)`, `Lv.2 성실맘(#10B981)`, `Lv.3 열심맘(#F59E0B)`, `Lv.4 우수맘(#2E6FF2)`.
+
 ---
 
 ## ⚙️ 7. CLOUD FUNCTIONS (서버 로직)
 
-| Function | Trigger | Purpose |
+| Function | Trigger | API Endpoint Mapping / Purpose |
 |---|---|---|
-| `searchProducts` | Callable | 쿠팡 Partners API 키워드 검색 (HMAC 서명) |
-| `getProductDetail` | Callable | 단일 상품 메타 |
-| `generateDeeplink` | Callable | 파트너스 제휴 링크 일괄 생성 (최대 10 URL) |
-| `getBestCategoryProducts` | Callable | 쿠팡 베스트카테고리 API (카테고리당 최대 50개) |
-| `registerProductFromUrl` | Callable | URL → products 문서 생성 파이프라인 |
-| `fetchCoupangProduct` | Callable | 멀티 전략 fetch: Partners API → v4 JSON → HTML 스크레이핑 |
-| `scheduledPriceUpdate` | Scheduled (**6시간 주기**) | 전체 products 가격 재조회 → offers 서브컬렉션 append |
-| `onPriceDropNotify` | Firestore trigger (`offers` write) | 가격 하락 감지 시 FCM 푸시 (price_alerts 구독자 대상) |
-| `onReviewCreate` | Firestore trigger (`reviews` write) | 리뷰 통계 자동 증가 |
+| `searchProducts` | Callable | `GET /products/search` (쿠팡 검색 API 브릿지, 최대 50 호출/분) |
+| `getBestCategoryProducts` | Callable | `GET /products/bestcategories/{categoryId}` (카테고리별 베스트 상품. 홈 탭 랭킹용) |
+| `getGoldboxDeals` | Callable | `GET /products/goldbox` (오전 7:30 업데이트 골드박스 특가. 홈 탭 특가용) |
+| `getCoupangPLProducts` | Callable | `GET /products/coupangPL/{brandId}` (탐사/비지엔젤 등 자사브랜드 가성비 추천용) |
+| `getPersonalizedReco` | Callable | `GET /products/reco` (ADID 기반 쿠팡 개인화 추천. 홈 탭 하이브리드 추천용) |
+| `generateDeeplink` | Callable | `POST /deeplink` (파트너스 제휴 트래킹 URL 변환 생성) |
+| `registerProductFromUrl` | Callable | URL → products 문서 생성 파이프라인 (매직 넛지 트리거 시 호출) |
+| `fetchCoupangProduct` | Callable | URL 파싱 후 상품 메타(Name, Image) 수집 |
+| `scheduledPriceUpdate` | Scheduled (6시간) | 전체 products 가격 재조회 → offers 서브컬렉션 append |
+| `onPriceDropNotify` | Firestore trigger | 가격 하락 감지 시 FCM 푸시 (price_alerts 구독자 대상) |
+| `onReviewCreate` | Firestore trigger | 리뷰 통계 자동 증가 |
 
-**HMAC 서명 규칙:**
-- 알고리즘: HMAC-SHA256
-- 타임스탬프 포맷: `YYMMDDTHHMMSSZ`
+**HMAC 서명 규칙 및 보안 [RULE-07]:**
+- 알고리즘: HMAC-SHA256 (타임스탬프 포맷: `YYMMDDTHHMMSSZ`)
 - 키 저장: `functions/.env` → `EXPO_PUBLIC_COUPANG_ACCESS_KEY`, `EXPO_PUBLIC_COUPANG_SECRET_KEY`
-- **절대 client에 노출 금지 (RULE-07)**
+- **클라이언트(앱)에서 쿠팡 API 엔드포인트를 직접 `fetch/axios` 하는 것을 절대 금지한다. 반드시 위 Callable Functions를 경유할 것.**
 
 ---
 
@@ -779,11 +1008,21 @@ rankingScore = coupangOfficialRank * 0.6 + peerScore * 0.4
 - `onPriceDropNotify` FCM
 - Deep Link: `saveroo://product/{productGroupId}`
 
-### 8.2 유저 세그먼트 (추천 엔진 입력 기준)
-- **Stage Segment:** `pregnancy` / `newborn` / `early_infant` / `infant` / `toddler` / `early_child` / `child`
-- **Feeding Segment:** `breast` / `formula` / `mixed`
-- **Concern Segment:** 5종 (`피부/기저귀` / `수면/재우기` / `수유/이유식` / `발달/놀이` / `안전/외출`)
-- **Activity Segment:** 행동량 기반 `new (0-3 actions)` / `active (4-20)` / `power (20+)`
+### 8.2 다차원 유사도 코호트 알고리즘 (Look-Alike Model, LAL)
+세이브루의 추천 엔진은 1차원적 조건 매칭("강아지 키움 -> 강아지 매트 추천")을 전면 폐기하고, **다차원 클러스터링 및 시계열 행동 추적 기반의 알고리즘**으로 작동한다.
+
+**✅ [Phase 1] 유저 N차원 클러스터링 (조합 타겟팅)**
+온보딩 페이지에서 수집된 데이터를 융합하여 정밀한 소속 집단을 생성한다.
+- **로직 예시:** `[생후 7~8개월]` + `[워킹맘]` + `[실내견 보유]` + `[관심사: 수면/안전]` = **<클러스터 A-73>** 생성
+
+**✅ [Phase 2] 시계열 장바구니 행동 추적 (Time-Series Behavioral Tracking)**
+단순히 존재하는 상품을 띄우는 것이 아니라, 해당 클러스터 유저들의 실제 액션 데이터를 추적한다.
+- **로직:** <클러스터 A-73> 유저들의 `user_product_actions` 및 `product_click_logs` 데이터 분석.
+- **출력값 도출:** "이 환경의 유저들은 **생후 7.5개월 기점**으로 대용량 롤러와 무독성 롤매트를 일반 유저 대비 3.5배 높은 빈도로 탐색 및 구매한다."
+
+**✅ [Phase 3] 행동 심리학적 UI 메시징 (Social Proof)**
+위 도출된 데이터를 바탕으로, 앱 내 추천 텍스트를 판매자 시점이 아닌 '심리적 동조 현상'을 이끌어내는 문구로 동적 렌더링한다.
+- **출력 카피:** "비슷한 시기에 반려동물을 키우는 워킹맘 84%가 최근 일주일 내에 탐색한 필수템이에요."
 
 ---
 
@@ -824,6 +1063,7 @@ rankingScore = coupangOfficialRank * 0.6 + peerScore * 0.4
 2. **데이터 누적 7일 미만 (신뢰도 방어):**
    - 변동률 및 평균가 완전 블라인드.
    - 현재가 아래에 `(가격 추적 중. M월 D일부터 할인율 노출)` 표기.
+   - **네이티브 Alert 원천 금지 (Custom Modal 강제):** 계정 탈퇴, 알림 권한 유도, 에러 메시지 등 유저의 중요한 인지가 필요한 팝업은 OS 기본 기능인 `Alert.alert` 사용을 엄격히 금지한다. 반드시 배경이 어두워지는(Dimmed) 커스텀 바텀 시트 또는 중앙 `<Modal transparent={true}>`을 사용하여 핀테크 표준의 세련된 UX를 유지한다.
 
 ---
 
@@ -904,12 +1144,14 @@ rankingScore = coupangOfficialRank * 0.6 + peerScore * 0.4
 3. **또래 맞춤:** 또래 랭킹 업데이트 ➔ **앱 내 알림만 저장**
 4. **혜택·이벤트:** 체험단 당첨 등 ➔ **앱 내 + OS 푸시 (마케팅 동의자 한정)**
 
-### 14.2 앱 내 알림창(In-App) UI/UX 규칙
+### 14.2 알림 설정(Settings) 및 UI/UX 로직 규칙
 * **필터 & 정렬:** 상단 카테고리 필터 칩 제공, 최신순 정렬, '오늘/이전' 섹션 분리.
-* **읽음 처리:** 안 읽음(Bold+연한 배경), 읽음(Regular+흰색 배경). 클릭 시 개별 읽음.
-* **뱃지 초기화:** 종(🔔) 아이콘 클릭 시 즉시 0으로 초기화.
-* **설정 진입:** 알림창 우측 상단 설정(⚙️) 아이콘으로 알림 제어 화면 이동.
-* **DB 수명:** 30일 경과 시 Firebase TTL 자동 삭제.
+* **읽음 처리:** 안 읽음(Bold+연한 배경), 읽음(Regular+흰색 배경). 클릭 시 개별 읽음. 종(🔔) 뱃지는 클릭 시 즉시 0으로 초기화.
+* **마케팅 수신 동의의 법적 준수:** 혜택/이벤트 알림(마케팅)의 스위치 기본값은 정보통신망법에 의거하여 가입 시 **반드시 OFF(false)**로 설정되어야 한다.
+* **OS 권한 동기화 및 스마트 넛지 (Critical):**
+  1. 유저가 알림 설정창에 진입할 때(Mount), 반드시 `expo-notifications`를 통해 기기 OS의 실제 알림 권한 상태를 체크해야 한다.
+  2. 기기 권한이 거부(Denied) 상태라면, 앱 내의 모든 알림 스위치(가격, 활동, 혜택)는 UI 상에서 **강제로 잠금(OFF)** 처리되어야 한다.
+  3. 권한이 없는 상태에서 유저가 스위치를 켜려고 시도하면, 커스텀 모달("기기 알림이 꺼져있어요")을 띄우고 `Linking.openSettings()`를 호출하여 스마트폰 설정 앱으로 다이렉트 이동시킨다.
 
 ---
 
@@ -918,9 +1160,38 @@ rankingScore = coupangOfficialRank * 0.6 + peerScore * 0.4
 ### 15.1 하단 탭 (GNB)
 - [홈] - [랭킹] - [커뮤니티] - [관심상품] - [마이페이지] 5탭 체제 유지.
 
-### 15.2 마이페이지(MyPage) vs 설정창(Settings) 아키텍처
-- **마이페이지:** 시스템 설정 메뉴를 전면 삭제하고 오직 프로필, 활동 데이터(글, 댓글), 쿠폰 등 **개인화 대시보드** 역할만 수행한다. 우측 상단에 설정창(⚙️) 아이콘 배치.
-- **설정창(SettingsScreen):** 독립된 제어 화면. 계정 관리, 알림 세부 제어, 앱 관리(캐시 삭제), 고객센터, 로그아웃/탈퇴 기능을 통합 관리한다.
+### 15.2 설정창(SettingsScreen) 아키텍처 및 콘텐츠 명세
+
+#### 📱 UI/UX 및 메뉴 순서 (Smart Blue 테마 `#2E6FF2` 적용)
+유저 편의성과 UX 표준을 고려하여, 하단 탭 메뉴는 아래의 순서대로 정렬하며, 각 아이콘과 타이틀 텍스트는 `#2E6FF2` 컬러를 사용한다.
+
+1. **📢 공지사항:** 서비스 중요 업데이트 고지.
+2. **💬 1:1 문의:** 유저 CS 채널.
+3. **📄 서비스 이용약관:** 법적 고지 1.
+4. **🔒 개인정보 처리방침:** 법적 고지 2.
+5. **🔢 버전 정보:** 현재 앱 버전 표기 (v1.0.0).
+
+#### 🛠️ 하단 유틸리티/법적 고지 메뉴 (In-App 구현)
+과거 외부 링크(MVC) 방식을 폐기하고 모든 채널을 앱 내부에 구축하여 UX 단절을 막는다.
+
+1. **공지사항 (📢):** - **구현:** 앱 내 `NoticeScreen` 신설. 
+   - **규칙:** 카메라 노치 및 상태바 가림 방지를 위해 `SafeAreaView` 적용 필수.
+2. **1:1 문의 (💬):** - **구현:** 외부 이메일 연동을 폐기하고 Firestore 기반의 인앱 CS 센터(`InquiryListScreen`)로 라우팅한다.
+3. **이용약관 / 개인정보 처리방침 (📄/🔒):** - **구현:** `TermsDetailScreen.js`에 표준 MVP 텍스트 템플릿을 내장하여 서비스한다.
+4. **버전 정보 (🔢):** - **구현:** 네이티브 Alert 금지 규칙(9.2)에 따라 커스텀 모달로 구현하며, 현재 앱 번들 버전(v1.0.0)을 노출한다.
+
+#### 15.3 계정 탈퇴 및 데이터 유예 정책 (Withdrawal & Data Retention)
+세이브루는 전자상거래법 및 유저 데이터 보호를 위해 '즉시 파괴'가 아닌 '안전 유예' 탈퇴 정책을 시행한다.
+
+1. **탈퇴 진입점:** 설정(Settings) -> 위험 구역 -> '계정 탈퇴' 버튼.
+2. **탈퇴 프로세스 (WithdrawScreen 신설):**
+   - **단계 1 (고지):** 탈퇴 시 30일간 재가입 불가 및 데이터 보관 안내.
+   - **단계 2 (동의):** `[필수] 안내 사항을 확인하였으며 탈퇴에 동의합니다` 체크박스 활성화.
+   - **단계 3 (통신):** Firebase Auth 유저 삭제 + Kakao SDK `unlink()` 호출로 서드파티 연결 해제.
+3. **데이터 유예 기간 (30 Days Grace Period):**
+   - 유저가 탈퇴 버튼을 눌러도 Firestore의 `users/{uid}` 문서는 즉시 삭제하지 않고 `status: 'pending_deletion'`, `deletionDate: [Timestamp]` 필드를 추가하여 30일간 보관한다.
+   - 30일이 경과하면 Firebase Scheduled Functions가 해당 문서와 연관된 `children`, `reviews` 등의 개인정보를 영구 삭제한다. (단, 커뮤니티 게시글은 '탈퇴한 사용자'로 익명화 처리하여 보관)
+4. **로컬 데이터 즉시 파기:** 탈퇴 통신 성공 즉시 기기의 `AsyncStorage`를 싹 비우고(`clear`), 내비게이션 스택을 리셋하여 **온보딩 페이지 1단계**로 강제 이동시킨다.
 
 ---
 
@@ -935,3 +1206,27 @@ rankingScore = coupangOfficialRank * 0.6 + peerScore * 0.4
 - **경고 (1자 이하):** `닉네임을 2자 이상 입력해주세요.` (글자색: 빨간색 `#ef4444`)
 - **경고 (중복 발생):** `이미 사용 중인 닉네임입니다.` (글자색: 빨간색 `#ef4444`)
 - **UI 제약사항:** 상태 텍스트 옆에 글자색과 동일한 색상의 `<Info />` (lucide-react-native) SVG 아이콘을 배치한다. 글자 수 카운터(예: `2/10`)를 입력창 내 우측 하단에 배치한다.
+
+## 📢 18. MARKETING & PR ASSETS (광고/마케팅 소스)
+
+**[핵심 무기 1] 다차원 또래 매칭 알고리즘 (LAL Peer Score)**
+- **로직 요약:** 전체 판매량 1위가 아닌, 내 아이와 [동일 월령 + 성별 + 양육 환경(워킹맘 등) + 육아 고민]이 완벽히 일치하는 부모들의 '진짜 찐 구매 데이터'만 필터링하여 순위를 제공.
+
+**[광고 카피(Hook) 활용 예시]**
+
+**타겟 A: 정보 검색에 지친 워킹맘 (시간 절약 강조)**
+- 카피: "생후 7개월 워킹맘들이 지금 제일 많이 쟁여두는 기저귀는?"
+- 서브: "맘카페 뒤질 시간 없으시죠? 세이브루가 딱 맞는 동년배 랭킹만 뽑아드릴게요."
+
+**타겟 B: 실패 경험이 있는 맘 (신뢰도/사회적 증거 강조)**
+- 카피: "국민템이라고 샀는데 우리 아이한텐 안 맞나요?"
+- 서브: "수면 고민이 있는 10개월 여아 엄마들의 '진짜 1위템'을 세이브루에서 확인하세요."
+
+**타겟 C: 임신 준비/초기 (초개인화 강조)**
+- 카피: "초산이라 뭘 사야 할지 막막하다면?"
+- 서브: "나와 출산 예정일이 비슷한 예비맘들의 장바구니를 훔쳐보세요."
+
+**[마케팅 시각화(이미지) 아이디어]**
+- 좌측: [쿠팡 전체 랭킹 1위 - 무작위 상품] 
+- 우측: [세이브루 7개월 워킹맘 랭킹 1위 - 딱 맞는 상품] 
+- "내 상황에 맞는 진짜 1위를 찾아보세요" (비교형 광고 소재)

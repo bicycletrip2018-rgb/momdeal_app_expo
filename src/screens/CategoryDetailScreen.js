@@ -189,24 +189,24 @@ export default function CategoryDetailScreen({ route, navigation }) {
         </TouchableOpacity>
       </View>
 
-      {/* Sort row */}
+      {/* Sort row + count */}
       <View style={styles.sortRow}>
-        {SORT_OPTIONS.map((opt) => (
-          <TouchableOpacity
-            key={opt.key}
-            style={[styles.sortBtn, sort === opt.key && styles.sortBtnActive]}
-            onPress={() => setSort(opt.key)}
-            activeOpacity={0.8}
-          >
-            <Text style={[styles.sortBtnText, sort === opt.key && styles.sortBtnTextActive]}>
-              {opt.label}
-            </Text>
-          </TouchableOpacity>
-        ))}
+        <View style={{ flexDirection: 'row', gap: 4 }}>
+          {SORT_OPTIONS.map((opt) => (
+            <TouchableOpacity
+              key={opt.key}
+              style={[styles.sortBtn, sort === opt.key && styles.sortBtnActive]}
+              onPress={() => setSort(opt.key)}
+              activeOpacity={0.8}
+            >
+              <Text style={[styles.sortBtnText, sort === opt.key && styles.sortBtnTextActive]}>
+                {opt.label}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+        <Text style={styles.countText}>총 {sorted.length}개</Text>
       </View>
-
-      {/* Count */}
-      <Text style={styles.countText}>{sorted.length}개 상품</Text>
     </View>
   ), [filterRocket, filterInStock, sort, sorted.length]);
 
@@ -282,7 +282,7 @@ const styles = StyleSheet.create({
   filterPillText: { fontSize: 13, fontWeight: '600', color: '#475569' },
   filterPillTextActive: { color: '#fff' },
 
-  sortRow: { flexDirection: 'row', gap: 4, paddingHorizontal: 14, paddingTop: 8 },
+  sortRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 12, paddingHorizontal: 16 },
   sortBtn: {
     borderRadius: 12, paddingHorizontal: 10, paddingVertical: 5,
     backgroundColor: '#f1f5f9',
@@ -291,7 +291,7 @@ const styles = StyleSheet.create({
   sortBtnText: { fontSize: 12, fontWeight: '600', color: '#64748b' },
   sortBtnTextActive: { color: '#fff' },
 
-  countText: { fontSize: 12, color: '#94a3b8', paddingHorizontal: 14, paddingTop: 8 },
+  countText: { fontSize: 12, color: '#9CA3AF' },
 
   // Row card
   rowCard: {

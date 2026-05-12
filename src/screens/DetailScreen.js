@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
+  Animated,
   BackHandler,
   Image,
   Linking,
@@ -16,7 +17,7 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import Svg, {
   Circle,
@@ -25,6 +26,7 @@ import Svg, {
   Text as SvgText,
 } from 'react-native-svg';
 
+import { Bell, BellRing, CheckCircle, ExternalLink, Info, Share2, Sparkles, Users } from 'lucide-react-native';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { auth, db } from '../firebase/config';
 import { getChildrenByUserId } from '../services/firestore/childrenRepository';
@@ -52,17 +54,19 @@ const DATASETS = (() => {
 
   function makeSeries(numPoints, daysBack) {
     const today = new Date();
-    const step  = daysBack / (numPoints - 1);
+    const step  = daysBack / Math.max(numPoints - 1, 1);
     return Array.from({ length: numPoints }, (_, i) => {
-      const t     = i / (numPoints - 1);
+      const t     = i / Math.max(numPoints - 1, 1);
       const trend = t < 0.55
         ? lerp(0.25, 1,    t / 0.55)
         : lerp(1,    0.05, (t - 0.55) / 0.45);
       const noise = Math.sin(i * 3.1) * 0.06 + Math.cos(i * 1.7) * 0.04;
       const v     = Math.max(0, Math.min(1, trend + noise));
 
-      const high = Math.round(lerp(79500, 140000, v) / 500) * 500;
-      const low  = Math.round(lerp(56000, 115000, v) / 500) * 500;
+      // low is hero; high is strictly low + correlated margin so lines flow together
+      const low    = Math.round(lerp(56000, 115000, v) / 500) * 500;
+      const margin = Math.round(lerp(12000, 20000, Math.abs(Math.sin(i * 1.3) * 0.4 + 0.6)) / 500) * 500;
+      const high   = low + margin;
 
       const dt = new Date(today);
       dt.setDate(today.getDate() - Math.round((numPoints - 1 - i) * step));
@@ -73,9 +77,10 @@ const DATASETS = (() => {
   }
 
   return {
+    '1W': makeSeries(7,   7),
     '1M': makeSeries(30,  30),
+    '2M': makeSeries(20,  60),
     '3M': makeSeries(13,  90),
-    '6M': makeSeries(26, 180),
     '1Y': makeSeries(52, 365),
   };
 })();
@@ -94,11 +99,11 @@ const TIME_TABS = [
 // ─── Mock options (different counts/sizes of the same product) ─────────────────
 
 const MOCK_OPTIONS = [
-  { id: '1', title: '1단계 80매 (4~8kg)', price: 24900, origPrice: 31900, unitText: '1개당 311원', discountPct: 22 },
-  { id: '2', title: '2단계 100매 (6~10kg)', price: 29900, origPrice: 38000, unitText: '1개당 299원', discountPct: 21 },
-  { id: '3', title: '3단계 120매 (8~14kg)', price: 33500, origPrice: 43000, unitText: '1개당 279원', discountPct: 22 },
-  { id: '4', title: '4단계 90매 (10~16kg)', price: 27900, origPrice: 35500, unitText: '1개당 310원', discountPct: 21 },
-  { id: '5', title: '5단계 72매 (12~17kg)', price: 23500, origPrice: 30000, unitText: '1개당 326원', discountPct: 22 },
+  { id: '1', title: '1단계 80매 (4~8kg)',   price: 24900, origPrice: 31900, unitType: '1개', unitPriceValue: '311원', discountPct: 22, imageUrl: 'https://picsum.photos/seed/opt1/100' },
+  { id: '2', title: '2단계 100매 (6~10kg)', price: 29900, origPrice: 38000, unitType: '1개', unitPriceValue: '299원', discountPct: 21, imageUrl: 'https://picsum.photos/seed/opt2/100' },
+  { id: '3', title: '3단계 120매 (8~14kg)', price: 33500, origPrice: 43000, unitType: '1개', unitPriceValue: '279원', discountPct: 22, imageUrl: 'https://picsum.photos/seed/opt3/100' },
+  { id: '4', title: '4단계 90매 (10~16kg)', price: 27900, origPrice: 35500, unitType: '1개', unitPriceValue: '310원', discountPct: 21, imageUrl: 'https://picsum.photos/seed/opt4/100' },
+  { id: '5', title: '5단계 72매 (12~17kg)', price: 23500, origPrice: 30000, unitType: '1개', unitPriceValue: '326원', discountPct: 22, imageUrl: 'https://picsum.photos/seed/opt5/100' },
 ];
 
 const OPTIONS_PREVIEW_COUNT = 3; // show 3 by default, rest behind "더 보기"
@@ -106,10 +111,10 @@ const OPTIONS_PREVIEW_COUNT = 3; // show 3 by default, rest behind "더 보기"
 // ─── Mock similar products ─────────────────────────────────────────────────────
 
 const MOCK_SIMILAR = [
-  { productId: 'sim1', name: '하기스 맥스드라이 팬티형 3단계 108매', currentPrice: 31900, priceDrop: 7000, deliveryType: 'rocket', badge: '🔥 핫딜'    },
-  { productId: 'sim2', name: '마미포코 오가닉 밴드형 2단계 84매',    currentPrice: 22500, priceDrop: 4500, deliveryType: 'rocket', badge: '역대 최저가' },
-  { productId: 'sim3', name: '보솜이 프리미엄 팬티형 4단계 60매',    currentPrice: 18900, priceDrop: 3000, deliveryType: 'fresh',  badge: null         },
-  { productId: 'sim4', name: '귀염둥이 슈퍼드라이 밴드형 1단계 96매', currentPrice: 19800, priceDrop: 5200, deliveryType: 'rocket', badge: '🔥 핫딜'    },
+  { productId: 'sim1', name: '하기스 맥스드라이 팬티형 3단계 108매', currentPrice: 31900, priceDrop: 7000, deliveryType: 'rocket', badge: '최근 최저가 근접' },
+  { productId: 'sim2', name: '마미포코 오가닉 밴드형 2단계 84매',    currentPrice: 22500, priceDrop: 4500, deliveryType: 'rocket', badge: '최근 최저가'     },
+  { productId: 'sim3', name: '보솜이 프리미엄 팬티형 4단계 60매',    currentPrice: 18900, priceDrop: 3000, deliveryType: 'fresh',  badge: null            },
+  { productId: 'sim4', name: '귀염둥이 슈퍼드라이 밴드형 1단계 96매', currentPrice: 19800, priceDrop: 5200, deliveryType: 'rocket', badge: null            },
 ];
 
 // ─── Chart geometry ────────────────────────────────────────────────────────────
@@ -135,11 +140,42 @@ function ptsStr(pts) {
   return pts.map((p) => `${p.x.toFixed(2)},${p.y.toFixed(2)}`).join(' ');
 }
 
+// ─── Multi-Badge Component ─────────────────────────────────────────────────────
+
+function MultiBadgeComponent({ currentPrice, allTimeLow, periodAverage }) {
+  if (currentPrice <= allTimeLow) {
+    return (
+      <View style={{ backgroundColor: '#2E6FF2', paddingVertical: 6, paddingHorizontal: 12, alignSelf: 'flex-start', borderRadius: 4 }}>
+        <Text style={{ color: '#FFFFFF', fontWeight: '700', fontSize: 13 }}>최근 최저가</Text>
+      </View>
+    );
+  }
+  if (currentPrice <= allTimeLow * 1.05) {
+    return (
+      <View style={{ backgroundColor: '#EFF6FF', paddingVertical: 6, paddingHorizontal: 12, alignSelf: 'flex-start', borderRadius: 4 }}>
+        <Text style={{ color: '#2E6FF2', fontWeight: '700', fontSize: 13 }}>최근 최저가 근접</Text>
+      </View>
+    );
+  }
+  if (periodAverage > 0 && currentPrice <= periodAverage) {
+    return (
+      <View style={{ backgroundColor: '#EFF6FF', paddingVertical: 6, paddingHorizontal: 12, alignSelf: 'flex-start', borderRadius: 4 }}>
+        <Text style={{ color: '#2E6FF2', fontWeight: '700', fontSize: 13 }}>평균가 이하</Text>
+      </View>
+    );
+  }
+  return (
+    <View style={{ backgroundColor: '#F3F4F6', paddingVertical: 6, paddingHorizontal: 12, alignSelf: 'flex-start', borderRadius: 4 }}>
+      <Text style={{ color: '#6B7280', fontWeight: '700', fontSize: 13 }}>가격 상승 중</Text>
+    </View>
+  );
+}
+
 // ─── Gauge Bar ─────────────────────────────────────────────────────────────────
 // pct = (currentPrice − allTimeLow) / (allTimeHigh − allTimeLow)
 // Fill width = pct × 100%. Thumb dot overlaid at the same percentage left.
 
-function GaugeBar({ current, min, max, avg }) {
+function GaugeBar({ current, min, max, avg, allTimeLow, fillColor = '#2E6FF2' }) {
   const range  = max - min || 1;
   const pct    = Math.min(1, Math.max(0, (current - min) / range));
   const avgPct = Math.min(1, Math.max(0, (avg    - min) / range));
@@ -152,7 +188,7 @@ function GaugeBar({ current, min, max, avg }) {
       {/* Track + fill + avg tick + thumb (no overflow:hidden on outer) */}
       <View style={styles.gaugeOuter}>
         <View style={styles.gaugeTrack}>
-          <View style={[styles.gaugeFill, { width: fillW }]} />
+          <View style={[styles.gaugeFill, { width: fillW, backgroundColor: fillColor }]} />
         </View>
         {/* Average price vertical tick */}
         <View style={[styles.gaugeAvgTick, { left: avgL }]} />
@@ -160,18 +196,13 @@ function GaugeBar({ current, min, max, avg }) {
         <View style={[styles.gaugeThumb, { left: thumbL }]} />
       </View>
 
-      <View style={styles.gaugeLabels}>
-        <Text style={styles.gaugeLabelText}>최저 ₩{min.toLocaleString('ko-KR')}</Text>
-        <Text style={[styles.gaugeLabelText, { color: '#94a3b8' }]}>평균 ₩{avg.toLocaleString('ko-KR')}</Text>
-        <Text style={styles.gaugeLabelText}>최고 ₩{max.toLocaleString('ko-KR')}</Text>
-      </View>
     </View>
   );
 }
 
 // ─── Price Chart ───────────────────────────────────────────────────────────────
 
-function PriceChart({ data, currentPrice, width, activeIdx, onActiveIdxChange, activePeriodLabel }) {
+function PriceChart({ data, currentPrice, width, activeIdx, onActiveIdxChange, activePeriodLabel, labelCount = 5 }) {
   const highs   = data.map((d) => d.high);
   const lows    = data.map((d) => d.low);
   const dataMax = Math.max(...highs);
@@ -237,6 +268,12 @@ function PriceChart({ data, currentPrice, width, activeIdx, onActiveIdxChange, a
     ? Math.min(width - TOOLTIP_W - 2, Math.max(2, activeH.x - TOOLTIP_W / 2))
     : 0;
 
+  // Find indices of the period min (hero) and period max (context) for annotation dots
+  const minLowIdx  = lows.indexOf(dataMin);
+  const maxHighIdx = highs.indexOf(dataMax);
+  const minLowPt   = lowPts[minLowIdx];
+  const maxHighPt  = highPts[maxHighIdx];
+
   return (
     <View>
       {/* Chart wrapper — captures touch, stores pageX via measure */}
@@ -251,124 +288,125 @@ function PriceChart({ data, currentPrice, width, activeIdx, onActiveIdxChange, a
         style={{ position: 'relative' }}
       >
         <Svg width={width} height={CHART_H}>
-          {/* Period-max dashed reference line — slate */}
-          <Line
-            x1={0} y1={maxLineY} x2={width} y2={maxLineY}
-            stroke="#94a3b8" strokeWidth={1} strokeDasharray="4,4" opacity={0.7}
-          />
-          <SvgText
-            x={width - 4} y={maxLineY - 3}
-            textAnchor="end" fontSize={12} fontWeight="bold" fill="#334155" opacity={1}
-          >
-            {(activePeriodLabel ? activePeriodLabel + ' ' : '') + '최고가 ' + dataMax.toLocaleString('ko-KR') + '원'}
-          </SvgText>
-
-          {/* Period-min dashed reference line — red */}
-          <Line
-            x1={0} y1={minLineY} x2={width} y2={minLineY}
-            stroke="#ef4444" strokeWidth={1} strokeDasharray="4,4" opacity={0.5}
-          />
-          <SvgText
-            x={width - 4} y={minLineY - 3}
-            textAnchor="end" fontSize={12} fontWeight="bold" fill="#ef4444" opacity={1}
-          >
-            {(activePeriodLabel ? activePeriodLabel + ' ' : '') + '최저가 ' + dataMin.toLocaleString('ko-KR') + '원'}
-          </SvgText>
-
-          {/* Current-price dashed baseline — green */}
+          {/* Current-price dashed baseline — strong dark slate */}
           <Line
             x1={0} y1={currentY} x2={width} y2={currentY}
-            stroke="#22c55e" strokeWidth={1.5} strokeDasharray="5,5"
+            stroke="#475569" strokeWidth={1.5} strokeDasharray="4,4"
           />
-          <SvgText
-            x={width - 4} y={currentY - 3}
-            textAnchor="end" fontSize={12} fontWeight="bold" fill="#16a34a"
-          >
-            {'현재가 ' + currentPrice.toLocaleString('ko-KR') + '원'}
-          </SvgText>
 
           {/* Scrub vertical rule (drawn behind data lines) */}
           {activeH && (
             <Line
               x1={activeH.x} y1={PAD_TOP}
               x2={activeH.x} y2={CHART_H - PAD_BOTTOM}
-              stroke="#94a3b8" strokeWidth={1} strokeDasharray="3,3"
+              stroke="#CBD5E1" strokeWidth={1} strokeDasharray="3,3"
             />
           )}
 
-          {/* High polyline — blue */}
+          {/* High polyline — soft coral/red (context) */}
           <Polyline
             points={ptsStr(highPts)}
-            fill="none" stroke="#3b82f6" strokeWidth={2}
+            fill="none" stroke="#F87171" strokeWidth={2.5}
             strokeLinejoin="round" strokeLinecap="round"
           />
 
-          {/* Low polyline — red */}
+          {/* Low polyline — Smart Blue HERO */}
           <Polyline
             points={ptsStr(lowPts)}
-            fill="none" stroke="#ef4444" strokeWidth={2}
+            fill="none" stroke="#2E6FF2" strokeWidth={2.5}
             strokeLinejoin="round" strokeLinecap="round"
           />
 
-          {/* High dots */}
+          {/* High regular dots — coral */}
           {showDots && highPts.map((p, i) => (
-            <Circle key={`h${i}`} cx={p.x} cy={p.y} r={2.5} fill="#3b82f6" />
+            i !== maxHighIdx && <Circle key={`h${i}`} cx={p.x} cy={p.y} r={2} fill="#F87171" />
           ))}
 
-          {/* Low dots */}
+          {/* Low regular dots — blue */}
           {showDots && lowPts.map((p, i) => (
-            <Circle key={`l${i}`} cx={p.x} cy={p.y} r={2.5} fill="#ef4444" />
+            i !== minLowIdx && <Circle key={`l${i}`} cx={p.x} cy={p.y} r={2} fill="#2E6FF2" />
           ))}
+
+          {/* Period lowest annotation — prominent hero dot + label */}
+          {minLowPt && (
+            <>
+              <Circle cx={minLowPt.x} cy={minLowPt.y} r={7} fill="#2E6FF2" opacity={0.15} />
+              <Circle cx={minLowPt.x} cy={minLowPt.y} r={4} fill="#2E6FF2" />
+              <SvgText
+                x={minLowPt.x > width / 2 ? minLowPt.x - 6 : minLowPt.x + 6}
+                y={minLowPt.y + 14}
+                textAnchor={minLowPt.x > width / 2 ? 'end' : 'start'}
+                fontSize={10} fontWeight="bold" fill="#2E6FF2"
+              >
+                {(activePeriodLabel ? activePeriodLabel + ' ' : '') + '최저가 ' + dataMin.toLocaleString('ko-KR')}
+              </SvgText>
+            </>
+          )}
+
+          {/* Period highest annotation — smaller dot + subtle label */}
+          {maxHighPt && (
+            <>
+              <Circle cx={maxHighPt.x} cy={maxHighPt.y} r={4} fill="#F87171" />
+              <SvgText
+                x={maxHighPt.x > width / 2 ? maxHighPt.x - 6 : maxHighPt.x + 6}
+                y={maxHighPt.y - 6}
+                textAnchor={maxHighPt.x > width / 2 ? 'end' : 'start'}
+                fontSize={10} fill="#F87171"
+              >
+                {(activePeriodLabel ? activePeriodLabel + ' ' : '') + '최고가 ' + dataMax.toLocaleString('ko-KR')}
+              </SvgText>
+            </>
+          )}
 
           {/* Active enlarged dots */}
           {activeH && (
             <>
-              <Circle cx={activeH.x} cy={activeH.y} r={5} fill="#3b82f6" />
-              <Circle cx={activeL.x} cy={activeL.y} r={5} fill="#ef4444" />
+              <Circle cx={activeH.x} cy={activeH.y} r={5} fill="#F87171" />
+              <Circle cx={activeL.x} cy={activeL.y} r={5} fill="#2E6FF2" />
             </>
           )}
         </Svg>
+
+        {/* Current-price Ticker Badge — right-aligned, vertically anchored to dashed line */}
+        <View style={{
+          position: 'absolute', right: 0,
+          top: currentY - 11,
+          backgroundColor: '#334155', borderRadius: 4, overflow: 'hidden',
+          paddingHorizontal: 8, paddingVertical: 4,
+        }}>
+          <Text style={{ color: '#FFFFFF', fontWeight: '700', fontSize: 11 }}>
+            {'현재가 ' + currentPrice.toLocaleString('ko-KR') + '원'}
+          </Text>
+        </View>
 
         {/* Floating scrub tooltip */}
         {activeH && (
           <View style={[styles.tooltip, { left: tooltipX, top: PAD_TOP - 4 }]}>
             <Text style={styles.tooltipDate}>{activeDate}</Text>
             <View style={styles.tooltipRow}>
-              <View style={[styles.tooltipSquare, { backgroundColor: '#3b82f6' }]} />
-              <Text style={styles.tooltipText}>최고점 {data[activeIdx].high.toLocaleString('ko-KR')}원</Text>
+              <View style={[styles.tooltipSquare, { backgroundColor: '#2E6FF2' }]} />
+              <Text style={styles.tooltipText}>최저가 {data[activeIdx].low.toLocaleString('ko-KR')}원</Text>
             </View>
             <View style={styles.tooltipRow}>
-              <View style={[styles.tooltipSquare, { backgroundColor: '#ef4444' }]} />
-              <Text style={styles.tooltipText}>최저점 {data[activeIdx].low.toLocaleString('ko-KR')}원</Text>
+              <View style={[styles.tooltipSquare, { backgroundColor: '#F87171' }]} />
+              <Text style={styles.tooltipText}>최고가 {data[activeIdx].high.toLocaleString('ko-KR')}원</Text>
             </View>
           </View>
         )}
       </View>
 
-      {/* X-axis: one label every ~6 points, absolutely positioned to match data x coords */}
+      {/* X-axis: exactly `labelCount` uniformly-spaced labels; last is always today */}
       <View style={[styles.xAxis, { position: 'relative', height: 16 }]}>
-        {(() => {
-          const stepSize = Math.max(1, Math.ceil(data.length / 6));
-          return data.map((d, i) => {
-            const isLast   = i === data.length - 1;
-            const isPeriod = i % stepSize === 0;
-            // Always show first and last; show every stepSize-th in between
-            if (!isPeriod && !isLast) return null;
-            // Skip last if it's too close to the previous visible tick
-            const prevVisible = Math.floor((data.length - 2) / stepSize) * stepSize;
-            if (isLast && (data.length - 1 - prevVisible) < 3 && data.length > 4) return null;
-            const pt  = highPts[i];
-            const lft = pt ? Math.max(0, pt.x - 18) : undefined;
-            return (
-              <Text
-                key={i}
-                style={[styles.xAxisLabel, { position: 'absolute', left: lft }]}
-              >
-                {d.date}
-              </Text>
-            );
-          });
-        })()}
+        {Array.from({ length: labelCount }, (_, k) => {
+          const idx = Math.round(k * (data.length - 1) / Math.max(labelCount - 1, 1));
+          const pt  = lowPts[idx] ?? highPts[idx];
+          const lft = pt ? Math.max(0, pt.x - 18) : undefined;
+          return (
+            <Text key={k} style={[styles.xAxisLabel, { position: 'absolute', left: lft }]}>
+              {data[idx]?.date}
+            </Text>
+          );
+        })}
       </View>
     </View>
   );
@@ -376,38 +414,48 @@ function PriceChart({ data, currentPrice, width, activeIdx, onActiveIdxChange, a
 
 // ─── Option Row ────────────────────────────────────────────────────────────────
 
-function OptionRow({ option, isLast, navigation }) {
+function OptionRow({ option, isLast, navigation, onShowToast }) {
+  const [isTracking, setIsTracking] = useState(false);
   const mockOptionItem = { name: option.title, currentPrice: option.price };
 
+  const handleTrackingPress = () => {
+    const next = !isTracking;
+    setIsTracking(next);
+    onShowToast(next ? '관심상품 등록 완료 (가격 추적 시작)' : '관심상품 등록 취소', next);
+  };
+
   return (
-    <View style={[styles.optionRow, !isLast && styles.optionRowBorder]}>
-      {/* Tappable area: thumbnail + text → pushes a new Detail screen */}
+    <View style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 12, paddingHorizontal: 16, borderBottomWidth: isLast ? 0 : 1, borderColor: '#F3F4F6' }}>
+      {/* Thumbnail + text — tappable, navigates to option PDP */}
       <TouchableOpacity
-        style={styles.optionTappable}
         activeOpacity={0.75}
         onPress={() => navigation.push('Detail', { item: mockOptionItem })}
+        style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}
       >
-        {/* Thumbnail placeholder */}
-        <View style={styles.optionThumb}>
-          <Ionicons name="cube-outline" size={20} color="#94a3b8" />
-        </View>
-
-        {/* Text block */}
-        <View style={styles.optionBody}>
-          <Text style={styles.optionTitle} numberOfLines={1}>{option.title}</Text>
-          <View style={styles.optionPriceRow}>
-            <Text style={styles.optionPrice} numberOfLines={1}>₩{option.price.toLocaleString('ko-KR')}</Text>
-            <View style={styles.optionDiscountBadge}>
-              <Text style={styles.optionDiscountBadgeText}>▼ {option.discountPct}%</Text>
-            </View>
-          </View>
-          <Text style={styles.optionUnit}>{option.unitText}</Text>
+        <Image
+          source={{ uri: option.imageUrl }}
+          style={{ width: 60, height: 60, borderRadius: 8, backgroundColor: '#F3F4F6', marginRight: 16 }}
+        />
+        <View style={{ flex: 1 }}>
+          <Text style={{ fontSize: 13, fontWeight: '600', color: '#374151', marginBottom: 2 }} numberOfLines={1}>
+            {option.title}
+          </Text>
+          <Text style={{ fontSize: 14, fontWeight: '700', color: '#111827' }}>
+            {option.price.toLocaleString('ko-KR')}원
+          </Text>
+          <Text style={{ fontSize: 12, fontWeight: '700', color: '#2E6FF2', marginTop: 1 }}>
+            {option.unitType}당 {option.unitPriceValue}
+          </Text>
         </View>
       </TouchableOpacity>
 
-      {/* Add button — circular + icon */}
-      <TouchableOpacity style={styles.optionAddBtn} activeOpacity={0.75}>
-        <Ionicons name="add" size={20} color="#3b82f6" />
+      {/* Tracking toggle button */}
+      <TouchableOpacity
+        activeOpacity={0.75}
+        onPress={handleTrackingPress}
+        style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: isTracking ? '#EFF6FF' : '#F3F4F6', alignItems: 'center', justifyContent: 'center', marginLeft: 10 }}
+      >
+        {isTracking ? <BellRing size={18} color="#2E6FF2" /> : <Bell size={18} color="#9CA3AF" />}
       </TouchableOpacity>
     </View>
   );
@@ -419,7 +467,7 @@ function SocialProofCard({ pricePct, currentPrice }) {
   // 4-tier dynamic CTA
   let ctaText, btnColor, btnLabel;
   if (pricePct <= 0.05) {
-    ctaText  = '🎉 역대 최저가입니다! 품절 전 무조건 쟁이세요.';
+    ctaText  = '🎉 최근 최저가입니다! 품절 전 무조건 쟁이세요.';
     btnColor = '#ef4444';
     btnLabel = '당장 구매하기';
   } else if (pricePct <= 0.45) {
@@ -467,32 +515,31 @@ function SocialProofCard({ pricePct, currentPrice }) {
 // ─── Similar Product Card ──────────────────────────────────────────────────────
 
 function SimilarProductCard({ item }) {
-  const pct  = item.priceDrop
+  const pct = item.priceDrop
     ? Math.round((item.priceDrop / (item.currentPrice + item.priceDrop)) * 100)
     : null;
 
   return (
-    <View style={styles.simCard}>
-      {/* Image area with optional badge overlay */}
-      <View style={styles.simImageWrap}>
-        <Ionicons name="cube-outline" size={28} color="#94a3b8" />
+    <View style={{ width: 140, borderRadius: 10, backgroundColor: '#fff', borderWidth: 1, borderColor: '#F3F4F6', overflow: 'hidden' }}>
+      {/* Thumbnail */}
+      <View style={{ width: 140, height: 110, backgroundColor: '#F9FAFB', alignItems: 'center', justifyContent: 'center', borderRadius: 8 }}>
+        <Ionicons name="cube-outline" size={32} color="#CBD5E1" />
         {item.badge && (
-          <View style={styles.simBadge}>
-            <Text style={styles.simBadgeText}>{item.badge}</Text>
+          <View style={{ position: 'absolute', top: 6, left: 6, backgroundColor: '#2E6FF2', borderRadius: 4, paddingHorizontal: 5, paddingVertical: 2 }}>
+            <Text style={{ fontSize: 9, fontWeight: '700', color: '#fff' }}>{item.badge}</Text>
           </View>
         )}
       </View>
-      <View style={styles.simBody}>
-        <Text style={styles.simSource}>C 쿠팡</Text>
+      <View style={{ padding: 8 }}>
         {item.deliveryType === 'rocket' && (
-          <Text style={styles.simDelivery}>🚀 로켓배송</Text>
+          <Text style={{ fontSize: 10, fontWeight: '700', color: '#3b82f6', marginBottom: 2 }}>로켓배송</Text>
         )}
         {item.deliveryType === 'fresh' && (
-          <Text style={[styles.simDelivery, { color: '#16a34a' }]}>🌿 로켓프레시</Text>
+          <Text style={{ fontSize: 10, fontWeight: '700', color: '#16a34a', marginBottom: 2 }}>로켓프레시</Text>
         )}
-        <Text style={styles.simName} numberOfLines={2}>{item.name}</Text>
-        <View style={styles.simPriceRow}>
-          <Text style={styles.simPrice} numberOfLines={1}>₩{item.currentPrice.toLocaleString('ko-KR')}</Text>
+        <Text numberOfLines={2} style={{ fontSize: 13, marginTop: 2, color: '#374151', lineHeight: 18 }}>{item.name}</Text>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, flexWrap: 'nowrap', marginTop: 4 }}>
+          <Text style={{ fontSize: 15, fontWeight: '700', color: '#111827' }} numberOfLines={1}>₩{item.currentPrice.toLocaleString('ko-KR')}</Text>
           {pct != null && (
             <View style={styles.simDiscountBadge}>
               <Text style={styles.simDiscountBadgeText}>▼ {pct}%</Text>
@@ -504,9 +551,28 @@ function SimilarProductCard({ item }) {
   );
 }
 
+// ─── 5-Tier Badge Logic ────────────────────────────────────────────────────────
+
+function getBadgeState(current, min, max, avg) {
+  if (current <= min)          return { label: '최근 최저가',  bg: '#2E6FF2', color: '#FFFFFF' };
+  if (current <= min * 1.05)   return { label: '최저가 근접',  bg: '#EFF6FF', color: '#2E6FF2' };
+  if (current <= avg)          return { label: '평균가',       bg: '#ECFDF5', color: '#059669' };
+  if (current < max)           return { label: '평균가 이상',  bg: '#F3F4F6', color: '#4B5563' };
+  return                              { label: '최근 최고가',  bg: '#FEE2E2', color: '#EF4444' };
+}
+
+// ─── Delivery Tag ─────────────────────────────────────────────────────────────
+
+function renderDeliveryTag(type) {
+  if (type === 'rocket') return <Text style={{ fontSize: 13, color: '#2E6FF2', fontWeight: '800', fontStyle: 'italic' }}>로켓배송</Text>;
+  if (type === 'fresh')  return <Text style={{ fontSize: 13, color: '#16A34A', fontWeight: '800', fontStyle: 'italic' }}>로켓프레시</Text>;
+  return                        <Text style={{ fontSize: 13, color: '#6B7280', fontWeight: '600' }}>일반배송</Text>;
+}
+
 // ─── Screen ────────────────────────────────────────────────────────────────────
 
 export default function DetailScreen({ route, navigation }) {
+  const insets = useSafeAreaInsets();
   const { item, product, from } = route?.params || {};
   const mockItem = {
     name:          '하기스 네이처메이드 기저귀 신생아용 100매 초슬림 풀박스',
@@ -526,9 +592,32 @@ export default function DetailScreen({ route, navigation }) {
   const [showAllOptions,      setShowAllOptions]      = useState(false);
   const [alertOn,             setAlertOn]             = useState(false);
   const [isAlertModalVisible, setIsAlertModalVisible] = useState(false);
+  const [showPriceInfoModal,  setShowPriceInfoModal]  = useState(false);
   const [targetPriceInput,    setTargetPriceInput]    = useState('');
   const [isSaved,             setIsSaved]             = useState(false);
-  const [toastVisible,        setToastVisible]        = useState(false);
+  const [isTracking,          setIsTracking]          = useState(false);
+  const [toastMsg,            setToastMsg]            = useState('');
+  const [toastSuccess,        setToastSuccess]        = useState(true);
+  const toastAnim     = useRef(new Animated.Value(0)).current;
+  const toastTimer    = useRef(null);
+
+  const showToast = useCallback((msg, isSuccess = true) => {
+    // 1. Clear any pending hide timer
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+    // 2. Stop any running animation and reset immediately
+    toastAnim.stopAnimation(() => {
+      toastAnim.setValue(0);
+      // 3. Update message state, then animate on the next frame so React has rendered the new text
+      setToastMsg(msg);
+      setToastSuccess(isSuccess);
+      requestAnimationFrame(() => {
+        Animated.timing(toastAnim, { toValue: 1, duration: 300, useNativeDriver: true }).start();
+        toastTimer.current = setTimeout(() => {
+          Animated.timing(toastAnim, { toValue: 0, duration: 300, useNativeDriver: true }).start();
+        }, 2000);
+      });
+    });
+  }, [toastAnim]);
 
   // Selected child's name for personalized tracking text
   const [childName, setChildName] = useState('우리 아이');
@@ -641,20 +730,17 @@ export default function DetailScreen({ route, navigation }) {
 
   const handleShare = () =>
     Share.share({
-      message: `🔥 세이브루 핫딜! ₩${currentPrice.toLocaleString('ko-KR')} — 역대 최저가 근접 중 👉 https://m.coupang.com`,
+      message: `🔥 세이브루 핫딜! ₩${currentPrice.toLocaleString('ko-KR')} — 최근 최저가 근접 중 👉 https://m.coupang.com`,
       title: '최저가 공유',
     });
 
   const handleToggleSave = () => {
     const newSavedState = !isSaved;
     setIsSaved(newSavedState);
-    if (newSavedState) {
-      setToastVisible(true);
-      setTimeout(() => setToastVisible(false), 2000);
-    }
+    if (newSavedState) showToast('관심 상품에 추가되었어요!');
   };
 
-  const currentPrice  = displayItem.currentPrice || 67590;
+  const currentPrice  = 127600; // MOCK: expensive state (≈31% above average)
   const unitPriceText = '장당 768원';
 
   // Slice rawDailyPrices to the selected time range (already oldest-first).
@@ -674,9 +760,8 @@ export default function DetailScreen({ route, navigation }) {
       return { data: pts, currentHigh: high, currentLow: low, currentAverage: avg };
     }
 
-    // Fallback: mock DATASETS (map new keys to closest mock series)
-    const dsKey      = timeRange === '1W' ? '1M' : timeRange === '2M' ? '3M' : timeRange === '3M' ? '3M' : '1M';
-    const activeData = DATASETS[dsKey];
+    // Fallback: mock DATASETS — direct key mapping, all periods now have their own series
+    const activeData = DATASETS[timeRange] ?? DATASETS['1M'];
     const high = Math.max(...activeData.map((d) => d.high));
     const low  = Math.min(...activeData.map((d) => d.low));
     const avg  = Math.round(
@@ -694,9 +779,13 @@ export default function DetailScreen({ route, navigation }) {
   const pricePct    = currentHigh > currentLow
     ? Math.min(1, Math.max(0, (currentPrice - currentLow) / (currentHigh - currentLow)))
     : 0;
+  const isCheap       = (marketingDiscountPct ?? 0) >= 0;
+  const discAbs       = Math.abs(marketingDiscountPct ?? discountPct);
+  const gaugeFillColor = isCheap ? '#2E6FF2' : '#EF4444';
+  const isShareWorthy = currentPrice <= ALL_TIME_LOW * 1.05;
 
   return (
-    <SafeAreaView edges={['bottom']} style={styles.container}>
+    <SafeAreaView edges={[]} style={styles.container}>
 
       <ScrollView
         showsVerticalScrollIndicator={false}
@@ -721,109 +810,121 @@ export default function DetailScreen({ route, navigation }) {
               <Text style={styles.headerDelivery}>🚀 로켓배송</Text>
             )}
 
-            {/* Title */}
-            <Text style={styles.productName} numberOfLines={3}>
-              {displayItem.name || '상품 가격 분석'}
-            </Text>
+            {/* Social proof — absolute top of info column */}
+            <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
+              <Users size={14} color="#6B7280" />
+              <Text style={{ fontSize: 13, color: '#6B7280', marginLeft: 4 }}>또래 맘 84명이 지켜보고 있어요</Text>
+            </View>
+
+            {/* Brand + Product Name */}
+            {(() => {
+              const fullName = displayItem.name || '상품 가격 분석';
+              const brand = displayItem.brand || fullName.split(' ')[0];
+              const productName = displayItem.brand ? fullName : fullName.split(' ').slice(1).join(' ') || fullName;
+              return (
+                <>
+                  <Text style={{ fontSize: 12, color: '#6B7280', fontWeight: '700', marginBottom: 2 }}>{brand}</Text>
+                  <Text style={{ fontSize: 15, color: '#111827', fontWeight: '700', lineHeight: 21 }} numberOfLines={3}>{productName}</Text>
+                </>
+              );
+            })()}
 
             {/* Unit price badge */}
             <View style={styles.unitBadge}>
               <Text style={styles.unitBadgeText}>{unitPriceText}</Text>
             </View>
 
-            {/* Current price + discount */}
-            <View style={styles.priceRow}>
-              <Text style={styles.currentPriceText}>
-                ₩{currentPrice.toLocaleString('ko-KR')}
-              </Text>
-              {discountPct > 0 && (
-                <Text style={styles.discountText}>▼ {discountPct}%</Text>
-              )}
+            {/* Current price + label + expensive % indicator */}
+            <View style={{ flexDirection: 'row', alignItems: 'baseline', marginBottom: 8 }}>
+              <Text style={{ fontSize: 14, color: '#6B7280', fontWeight: '600', marginRight: 6 }}>현재가격</Text>
+              <Text style={{ fontSize: 26, fontWeight: '800', color: '#111827' }}>₩127,600</Text>
+              <Text style={{ fontSize: 16, fontWeight: '700', color: '#EF4444', marginLeft: 8 }}>▲ 31%</Text>
             </View>
 
-            {/* Vertical 3-price comparison — driven by selected time range */}
-            <View style={styles.priceCompare}>
-              <View style={styles.priceCompareRow}>
-                <Text style={[styles.priceCompareIcon, { color: '#ef4444' }]}>▲</Text>
-                <Text style={styles.priceCompareLabel}>기간최고가</Text>
-                <Text style={[styles.priceCompareValue, { color: '#ef4444' }]}>
-                  {currentHigh.toLocaleString('ko-KR')}원
-                </Text>
-              </View>
-              <View style={styles.priceCompareRow}>
-                <Text style={[styles.priceCompareIcon, { color: '#94a3b8' }]}>━</Text>
-                <Text style={styles.priceCompareLabel}>평균가</Text>
-                <Text style={[styles.priceCompareValue, { color: '#64748b' }]}>
-                  {currentAverage.toLocaleString('ko-KR')}원
-                </Text>
-              </View>
-              <View style={styles.priceCompareRow}>
-                <Text style={[styles.priceCompareIcon, { color: '#3b82f6' }]}>▼</Text>
-                <Text style={styles.priceCompareLabel}>기간최저가</Text>
-                <Text style={[styles.priceCompareValue, { color: '#3b82f6' }]}>
-                  {currentLow.toLocaleString('ko-KR')}원
-                </Text>
+            {/* Delivery & seller metadata */}
+            <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 6, marginBottom: 4 }}>
+              <Text style={{ fontSize: 13, color: '#4B5563', fontWeight: '500' }}>✓ 쿠팡 인증 상품</Text>
+              <View style={{ marginLeft: 8 }}>
+                {renderDeliveryTag('rocket')}
               </View>
             </View>
+
           </View>
         </View>
 
-        {/* ── Tracking banner — inside Hero, below price block ── */}
-        {displayFrom === 'Ranking' && (
-          <View style={[styles.fomoBanner, { marginTop: 0, marginBottom: 0 }]}>
-            <Text style={styles.fomoBannerText}>
-              🔥 현재 {displayItem.trackingCount || 1}명의 '{childName}'와(과) 유사 환경의 세이브루맘들이 이 상품에 관심이 있습니다.
-            </Text>
-          </View>
-        )}
+        <View style={{ height: 8, backgroundColor: '#f1f5f9', width: '100%', marginTop: 0, marginBottom: 0 }} />
 
-        <View style={{ height: 8, backgroundColor: '#f1f5f9', width: '100%', marginTop: 8, marginBottom: 8 }} />
-
-        {/* ── Social Proof / Mom-cafe Summary (Ranking entry only) ── */}
-        {displayFrom === 'Ranking' && (
-          <View style={styles.socialProofSection}>
-            <Text style={styles.socialProofTitle}>✨ 구매자 반응 AI 요약</Text>
-            <View style={styles.socialProofCard}>
-              <Text style={styles.socialProofText}>
-                "최근 리뉴얼된 초슬림 라인이라 흡수력이 훨씬 좋아졌다는 평이 많아요! 지금 역대 최저가 근접했으니 무조건 쟁여야 할 타이밍입니다."
-              </Text>
-            </View>
-          </View>
-        )}
+        {/* ── 가격 분석 section header ── */}
+        <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 12, marginBottom: 8, paddingHorizontal: 16 }}>
+          <Text style={{ fontSize: 18, fontWeight: '700', color: '#111827' }}>가격 분석</Text>
+          <TouchableOpacity
+            onPress={() => setShowPriceInfoModal(true)}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            style={{ marginLeft: 6 }}
+          >
+            <Info size={14} color="#94A3B8" />
+          </TouchableOpacity>
+        </View>
 
         {/* ── CTA Recommendation Card ── */}
-        <View style={styles.ctaCard}>
-          <Text style={styles.ctaTitle}>
-            🔥 현재 저점 도달입니다. 지금 구매하는 것을 추천합니다.
-          </Text>
+        <View style={[styles.ctaCard, { overflow: 'visible', marginTop: 0 }]}>
+          {/* Row: title + badge + share — single forced row */}
+          {(() => {
+            const badge = getBadgeState(127600, 63000, 135000, currentAverage);
+            return (
+              <View style={{ flexDirection: 'row', alignItems: 'center', width: '100%' }}>
+                <Text style={{ flexShrink: 1, fontSize: 16, fontWeight: '800', color: '#111827' }} numberOfLines={1}>
+                  평균가 대비 31% 비싸요!
+                </Text>
+                <View style={{ backgroundColor: badge.bg, paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4, marginLeft: 8 }}>
+                  <Text style={{ color: badge.color, fontSize: 11, fontWeight: '600' }}>{badge.label}</Text>
+                </View>
+                <TouchableOpacity
+                  onPress={() => Share.share({ message: '지금 종근당건강 프로메가 오메가3 트리플 최근 최저가 근접! 127,600원 - 세이브루에서 확인하세요.\nhttps://saveroo.app/link/product/12345' })}
+                  style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#F3F4F6', paddingVertical: 4, paddingHorizontal: 8, borderRadius: 6, marginLeft: 'auto' }}
+                >
+                  <Share2 size={12} color="#4B5563" />
+                  <Text style={{ fontSize: 11, color: '#4B5563', marginLeft: 4, fontWeight: '600' }}>지인 공유</Text>
+                </TouchableOpacity>
+              </View>
+            );
+          })()}
 
           <View style={styles.ctaPriceRow}>
             <Text style={styles.ctaPriceLabel}>현재가</Text>
-            <Text style={styles.ctaPrice}>
-              ₩{currentPrice.toLocaleString('ko-KR')}
-            </Text>
+            <Text style={styles.ctaPrice}>₩{currentPrice.toLocaleString('ko-KR')}</Text>
           </View>
 
           <GaugeBar
-            current={currentPrice}
-            min={currentLow}
-            max={currentHigh}
+            current={127600}
+            min={63000}
+            max={135000}
             avg={currentAverage}
+            allTimeLow={ALL_TIME_LOW}
+            fillColor="#EF4444"
           />
 
-          {/* Two-button CTA stack */}
-          <TouchableOpacity
-            style={styles.ctaBtnPrimary}
-            activeOpacity={0.82}
-            onPress={() =>
-              Linking.openURL('coupang://').catch(() =>
-                Linking.openURL('https://m.coupang.com')
-              )
-            }
-          >
-            <Text style={styles.ctaBtnPrimaryText}>🔥 품절 전 당장 구매하기</Text>
-          </TouchableOpacity>
-
+          {/* Gauge axis: min left, max right, avg absolute */}
+          {(() => {
+            const range = currentHigh - currentLow || 1;
+            const avgPct = Math.min(1, Math.max(0, (currentAverage - currentLow) / range));
+            return (
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 8, position: 'relative' }}>
+                <View style={{ alignItems: 'flex-start' }}>
+                  <Text style={{ fontSize: 12, color: '#2E6FF2', fontWeight: '600' }}>최근 최저가</Text>
+                  <Text style={{ fontSize: 12, color: '#6B7280', fontWeight: '600' }}>{currentLow.toLocaleString('ko-KR')}원</Text>
+                </View>
+                <View style={{ position: 'absolute', left: `${(avgPct * 100).toFixed(1)}%`, alignItems: 'center', transform: [{ translateX: -28 }] }}>
+                  <Text style={{ fontSize: 12, color: '#64748B', fontWeight: '600' }}>평균가</Text>
+                  <Text style={{ fontSize: 12, color: '#64748B', fontWeight: '600' }}>{currentAverage.toLocaleString('ko-KR')}원</Text>
+                </View>
+                <View style={{ alignItems: 'flex-end' }}>
+                  <Text style={{ fontSize: 12, color: '#F87171', fontWeight: '600' }}>최근 최고가</Text>
+                  <Text style={{ fontSize: 12, color: '#6B7280', fontWeight: '600' }}>{currentHigh.toLocaleString('ko-KR')}원</Text>
+                </View>
+              </View>
+            );
+          })()}
         </View>
 
         <View style={styles.sectionDivider} />
@@ -833,7 +934,7 @@ export default function DetailScreen({ route, navigation }) {
 
           {/* Chart header: title + last-updated timestamp */}
           <View style={styles.chartHeader}>
-            <Text style={styles.chartHeaderTitle}>세이브루 가격 그래프</Text>
+            <Text style={styles.chartHeaderTitle}>가격 추적 차트</Text>
             <Text style={styles.chartHeaderTs}>
               마지막 업데이트{' '}
               {(() => {
@@ -885,6 +986,7 @@ export default function DetailScreen({ route, navigation }) {
                 activeIdx={activeTooltipIdx}
                 onActiveIdxChange={setActiveTooltipIdx}
                 activePeriodLabel={TIME_TABS.find((t) => t.key === timeRange)?.label ?? timeRange}
+                labelCount={{ '1W': 4, '1M': 5, '2M': 5, '3M': 5 }[timeRange] ?? 5}
               />
             )}
           </View>
@@ -892,20 +994,16 @@ export default function DetailScreen({ route, navigation }) {
           {/* Legend */}
           <View style={styles.legend}>
             <View style={styles.legendItem}>
-              <View style={[styles.legendLine, { backgroundColor: '#3b82f6' }]} />
-              <Text style={styles.legendText}>최고가</Text>
-            </View>
-            <View style={styles.legendItem}>
-              <View style={[styles.legendLine, { backgroundColor: '#ef4444' }]} />
+              <View style={[styles.legendLine, { backgroundColor: '#2E6FF2' }]} />
               <Text style={styles.legendText}>최저가</Text>
             </View>
             <View style={styles.legendItem}>
-              <View style={[styles.legendDash, { borderColor: '#22c55e' }]} />
-              <Text style={styles.legendText}>현재가</Text>
+              <View style={[styles.legendLine, { backgroundColor: '#F87171' }]} />
+              <Text style={styles.legendText}>최고가</Text>
             </View>
             <View style={styles.legendItem}>
-              <View style={[styles.legendDash, { borderColor: '#94a3b8' }]} />
-              <Text style={styles.legendText}>기간최고</Text>
+              <View style={[styles.legendDash, { borderColor: '#64748B' }]} />
+              <Text style={styles.legendText}>현재가</Text>
             </View>
           </View>
         </View>
@@ -918,7 +1016,7 @@ export default function DetailScreen({ route, navigation }) {
           <View style={styles.optionList}>
             {(showAllOptions ? MOCK_OPTIONS : MOCK_OPTIONS.slice(0, OPTIONS_PREVIEW_COUNT)).map(
               (opt, i, arr) => (
-                <OptionRow key={opt.id} option={opt} isLast={i === arr.length - 1} navigation={navigation} />
+                <OptionRow key={opt.id} option={opt} isLast={i === arr.length - 1} navigation={navigation} onShowToast={showToast} />
               )
             )}
           </View>
@@ -945,7 +1043,7 @@ export default function DetailScreen({ route, navigation }) {
 
         {/* ── Similar Products ── */}
         <View style={[styles.sectionWrap, { paddingHorizontal: 0 }]}>
-          <Text style={[styles.sectionTitle, { paddingHorizontal: 16 }]}>해당 상품과 비슷한 상품</Text>
+          <Text style={[styles.sectionTitle, { paddingHorizontal: 16 }]}>또래 맘들의 관심 유사 상품</Text>
           <ScrollView
             horizontal
             showsHorizontalScrollIndicator={false}
@@ -960,49 +1058,44 @@ export default function DetailScreen({ route, navigation }) {
         {/* ── Legal / Disclosure Footer ── */}
         <View style={styles.legalFooter}>
           {[
-            '역대 최고/최저가는 세이브루가 수집한 기간 내의 데이터입니다.',
+            '최근 최고/최저가는 세이브루가 수집한 기간 내의 데이터입니다.',
             '세이브루의 상품 및 가격 정보는 쇼핑몰의 실제 내용과 다를 수 있습니다. 구매 시 쇼핑몰의 실제 정보를 꼭 확인하세요.',
             '실제 상품의 내용을 확인하지 못하고 구매하여 발생한 손실, 손해에 대한 책임은 이용자 본인에게 있습니다.',
-            '해당 버튼을 통해 구매 시 세이브루에 일정액의 수수료가 제공될 수 있습니다. (쿠팡 파트너스 활동의 일환)',
+            '해당 서비스를 통해 제품 구매 시 일정액의 수수료가 제공될 수 있습니다.',
           ].map((line, i) => (
             <Text key={i} style={styles.legalLine}>• {line}</Text>
           ))}
         </View>
 
-        {/* ── [DEV] Mock Data Injector ── */}
-        <TouchableOpacity
-          style={styles.devInjectorBtn}
-          onPress={injectMockData}
-          disabled={isInjecting}
-          activeOpacity={0.75}
-        >
-          <Text style={styles.devInjectorText}>
-            {isInjecting ? '⏳ 주입 중...' : '[개발자 테스트용] 60일 가상 데이터 주입'}
-          </Text>
-          {!isInjecting && (
-            <Text style={styles.devInjectorSub}>
-              현재 차트: {rawDailyPrices ? `실제 데이터 ${rawDailyPrices.length}일` : '목업 데이터'}
-            </Text>
-          )}
-        </TouchableOpacity>
-
       </ScrollView>
 
-      {toastVisible && (
-        <View style={{position: 'absolute', bottom: 90, alignSelf: 'center', backgroundColor: 'rgba(0,0,0,0.8)', paddingHorizontal: 20, paddingVertical: 12, borderRadius: 8, zIndex: 1000}}>
-          <Text style={{color: '#fff', fontWeight: 'bold'}}>✅ 관심 상품에 추가되었어요!</Text>
-        </View>
-      )}
+      <Animated.View style={{
+        position: 'absolute', bottom: 120, alignSelf: 'center',
+        flexDirection: 'row', alignItems: 'center',
+        backgroundColor: '#2E6FF2', borderRadius: 30,
+        paddingVertical: 14, paddingHorizontal: 24, zIndex: 999,
+        shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.15, shadowRadius: 8, elevation: 6,
+        opacity: toastAnim,
+        transform: [{ translateY: toastAnim.interpolate({ inputRange: [0, 1], outputRange: [20, 0] }) }],
+        pointerEvents: 'none',
+      }}>
+        {toastSuccess
+          ? <CheckCircle size={18} color="#FFFFFF" style={{ marginRight: 8 }} />
+          : <Info size={18} color="#FFFFFF" style={{ marginRight: 8 }} />}
+        <Text style={{ color: '#FFFFFF', fontSize: 14, fontWeight: '700' }}>{toastMsg}</Text>
+      </Animated.View>
 
-      <View style={{flexDirection: 'row', alignItems: 'center', padding: 16, borderTopWidth: 1, borderColor: '#e2e8f0', backgroundColor: '#fff', paddingBottom: 24}}>
-        <TouchableOpacity onPress={handleToggleSave} style={{marginRight: 16}}>
-          <Ionicons name={isSaved ? 'heart' : 'heart-outline'} size={28} color={isSaved ? '#ef4444' : '#94a3b8'} />
+      <View style={{flexDirection: 'row', alignItems: 'center', paddingTop: 12, paddingHorizontal: 16, paddingBottom: insets.bottom || 16, borderTopWidth: 1, borderColor: '#e2e8f0', backgroundColor: '#fff'}}>
+        <TouchableOpacity onPress={() => setIsTracking((v) => !v)} style={{alignItems: 'center', justifyContent: 'center', width: 60, marginRight: 8}}>
+          {isTracking ? <BellRing size={22} color="#2E6FF2" /> : <Bell size={22} color="#6B7280" />}
+          <Text style={{fontSize: 10, color: isTracking ? '#2E6FF2' : '#6B7280', marginTop: 4, fontWeight: isTracking ? '700' : '600'}}>{isTracking ? '추적 중' : '추적 시작'}</Text>
         </TouchableOpacity>
-        <TouchableOpacity onPress={() => Share.share({message: '이 상품 어때요?'})} style={{marginRight: 16}}>
-          <Ionicons name="share-outline" size={28} color="#64748b" />
-        </TouchableOpacity>
-        <TouchableOpacity style={{flex: 1, backgroundColor: '#f97316', paddingVertical: 14, borderRadius: 8, alignItems: 'center'}}>
-          <Text style={{color: '#fff', fontSize: 16, fontWeight: 'bold'}}>🛒 쿠팡 최저가 확인하기</Text>
+        <TouchableOpacity
+          style={{flex: 1, backgroundColor: '#f97316', paddingVertical: 14, borderRadius: 8, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8}}
+          onPress={() => Linking.openURL('coupang://').catch(() => Linking.openURL('https://m.coupang.com'))}
+        >
+          <ExternalLink color="#FFFFFF" size={18} />
+          <Text style={{color: '#fff', fontSize: 16, fontWeight: 'bold'}}>쿠팡 최저가 확인하기</Text>
         </TouchableOpacity>
       </View>
 
@@ -1114,6 +1207,24 @@ export default function DetailScreen({ route, navigation }) {
           </Pressable>
         </Pressable>
       </Modal>
+
+      {/* ── Price Info Modal ── */}
+      <Modal visible={showPriceInfoModal} transparent={true} animationType="fade">
+        <View style={{ flex: 1, backgroundColor: 'rgba(0, 0, 0, 0.5)', justifyContent: 'center', alignItems: 'center' }}>
+          <View style={{ width: '80%', backgroundColor: '#FFFFFF', borderRadius: 16, padding: 24, alignItems: 'center' }}>
+            <Text style={{ fontSize: 18, fontWeight: '800', color: '#111827', marginBottom: 12 }}>가격 분석 기준</Text>
+            <Text style={{ fontSize: 14, color: '#4B5563', textAlign: 'center', lineHeight: 22, marginBottom: 24 }}>
+              최근 2개월(60일)간 세이브루가 수집한 데이터를 기준으로 분석했습니다.
+            </Text>
+            <TouchableOpacity
+              onPress={() => setShowPriceInfoModal(false)}
+              style={{ width: '100%', backgroundColor: '#2E6FF2', paddingVertical: 14, borderRadius: 12, alignItems: 'center' }}
+            >
+              <Text style={{ color: '#FFFFFF', fontSize: 15, fontWeight: '700' }}>확인</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -1122,14 +1233,14 @@ export default function DetailScreen({ route, navigation }) {
 
 const styles = StyleSheet.create({
   container:    { flex: 1, backgroundColor: '#f8fafc' },
-  scrollContent: { paddingBottom: 96 },
+  scrollContent: { paddingBottom: 8 },
 
   // Dev injector button
   // Legal footer
   legalFooter: {
-    marginHorizontal: 16, marginTop: 24, marginBottom: 8,
+    marginHorizontal: 16, marginTop: 4, marginBottom: 0,
     backgroundColor: '#f8fafc', borderRadius: 8,
-    paddingHorizontal: 14, paddingVertical: 12,
+    paddingHorizontal: 14, paddingVertical: 8,
   },
   legalLine: {
     fontSize: 11, color: '#94a3b8', lineHeight: 17, marginBottom: 4,
@@ -1168,9 +1279,9 @@ const styles = StyleSheet.create({
 
   // Social Proof section — Ranking entry only
   socialProofSection: {
-    paddingHorizontal: 16, paddingTop: 0, paddingBottom: 8, marginTop: 0, marginBottom: 8,
+    paddingHorizontal: 16, paddingTop: 8, paddingBottom: 8, marginTop: 0, marginBottom: 0,
   },
-  socialProofTitle: { fontSize: 18, fontWeight: '700', color: '#0f172a', marginBottom: 8, marginTop: 0, paddingTop: 0 },
+  socialProofTitle: { fontSize: 16, fontWeight: '700', color: '#0f172a', marginTop: 0, paddingTop: 0 },
   socialProofCard: {
     backgroundColor: '#f8fafc', borderRadius: 12, padding: 16,
   },
@@ -1179,15 +1290,15 @@ const styles = StyleSheet.create({
   // Product header — two-column layout
   header: {
     flexDirection: 'row', alignItems: 'flex-start',
-    paddingHorizontal: 16, paddingTop: 10, paddingBottom: 10,
+    paddingHorizontal: 16, paddingTop: 10, paddingBottom: 4,
   },
   heroImage: {
-    width: 120, height: 120, borderRadius: 8, marginRight: 14, flexShrink: 0,
+    width: 120, height: 120, borderRadius: 8, marginRight: 14, flexShrink: 0, marginTop: 20,
   },
   heroImageFallback: {
     backgroundColor: '#f1f5f9', alignItems: 'center', justifyContent: 'center',
   },
-  headerRight:     { flex: 1, gap: 5 },
+  headerRight:     { flex: 1, gap: 3 },
   headerDelivery:  { fontSize: 11, fontWeight: '700', color: '#3b82f6' },
   productName:     { fontSize: 13, fontWeight: '700', color: '#0f172a', lineHeight: 19 },
   unitBadge: {
@@ -1210,25 +1321,26 @@ const styles = StyleSheet.create({
   // CTA card
   ctaCard: {
     marginHorizontal: 16, marginBottom: 8,
-    backgroundColor: '#0f172a', borderRadius: 16, padding: 14, gap: 10,
+    backgroundColor: '#F9FAFB', borderRadius: 16, padding: 14, gap: 4,
+    borderWidth: 1, borderColor: '#E5E7EB',
     ...Platform.select({
       ios:     { shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.22, shadowRadius: 10 },
       android: { elevation: 6 },
     }),
   },
-  ctaTitle:      { fontSize: 15, fontWeight: '800', color: '#f1f5f9', lineHeight: 23 },
+  ctaTitle:      { fontSize: 15, fontWeight: '800', color: '#111827', lineHeight: 23 },
   ctaPriceRow:   { flexDirection: 'row', alignItems: 'baseline', gap: 8 },
   ctaPriceLabel: { fontSize: 13, color: '#64748b', fontWeight: '600' },
-  ctaPrice:      { fontSize: 26, fontWeight: '900', color: '#22c55e' },
+  ctaPrice:      { fontSize: 26, fontWeight: '900', color: '#111827' },
 
   // Gauge bar
   gaugeWrap:  { gap: 8 },
-  gaugeOuter: { position: 'relative', height: 20, justifyContent: 'center' },
+  gaugeOuter: { position: 'relative', height: 16, justifyContent: 'center' },
   gaugeTrack: {
-    height: 8, borderRadius: 4, overflow: 'hidden',
-    backgroundColor: '#1e293b',
+    height: 6, borderRadius: 4, overflow: 'hidden',
+    backgroundColor: '#E5E7EB',
   },
-  gaugeFill:  { height: '100%', borderRadius: 4, backgroundColor: '#22c55e' },
+  gaugeFill:  { height: '100%', borderRadius: 4, backgroundColor: '#2E6FF2' },
   gaugeAvgTick: {
     position: 'absolute', top: '50%',
     width: 2, height: 12, borderRadius: 1,
@@ -1238,7 +1350,7 @@ const styles = StyleSheet.create({
   gaugeThumb: {
     position: 'absolute', top: '50%',
     width: 14, height: 14, borderRadius: 7,
-    backgroundColor: '#fff', borderWidth: 2, borderColor: '#22c55e',
+    backgroundColor: '#fff', borderWidth: 2, borderColor: '#2E6FF2',
     transform: [{ translateX: -7 }, { translateY: -7 }],
     ...Platform.select({
       ios:     { shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.3, shadowRadius: 2 },
@@ -1338,9 +1450,9 @@ const styles = StyleSheet.create({
   legendText: { fontSize: 11, color: '#64748b' },
 
   // ── Section wrapper ────────────────────────────────────────────────────────────
-  sectionWrap:  { paddingHorizontal: 16, marginBottom: 10 },
+  sectionWrap:  { paddingHorizontal: 16, marginBottom: 8 },
   sectionTitle:   { fontSize: 18, fontWeight: '700', color: '#0f172a', marginBottom: 12 },
-  sectionDivider: { height: 8, backgroundColor: '#f1f5f9', width: '100%', marginVertical: 20 },
+  sectionDivider: { height: 8, backgroundColor: '#f1f5f9', width: '100%', marginVertical: 8 },
 
   // ── Accordion options ──────────────────────────────────────────────────────────
   optionList: {
