@@ -23,6 +23,7 @@ import CommunityFeedScreen from './src/screens/CommunityFeedScreen';
 import MyPageScreen from './src/screens/MyPageScreen';
 import BenefitsScreen from './src/screens/BenefitsScreen';
 import CommunityListScreen from './src/screens/CommunityListScreen';
+import CommunitySearchScreen from './src/screens/CommunitySearchScreen';
 import PostDetailScreen from './src/screens/PostDetailScreen';
 import WritePostScreen from './src/screens/WritePostScreen';
 import UserProfileScreen from './src/screens/UserProfileScreen';
@@ -188,6 +189,26 @@ function ProductStack() {
         component={ReviewWriteScreen}
         options={{ title: '리뷰 작성' }}
       />
+      <Stack.Screen
+        name="Search"
+        component={SearchScreen}
+        options={{ headerShown: false }}
+      />
+      <Stack.Screen
+        name="SearchResult"
+        component={SearchResultScreen}
+        options={{ headerShown: false }}
+      />
+      <Stack.Screen
+        name="Notifications"
+        component={NotificationScreen}
+        options={{ title: '알림' }}
+      />
+      <Stack.Screen
+        name="CurationDetail"
+        component={CurationDetailScreen}
+        options={({ route }) => ({ title: route.params?.title || '모아보기' })}
+      />
     </Stack.Navigator>
   );
 }
@@ -198,6 +219,11 @@ function CommunityStack() {
       <Stack.Screen
         name="CommunityList"
         component={CommunityListScreen}
+        options={{ headerShown: false }}
+      />
+      <Stack.Screen
+        name="CommunitySearch"
+        component={CommunitySearchScreen}
         options={{ headerShown: false }}
       />
       <Stack.Screen
@@ -229,6 +255,21 @@ function CommunityStack() {
         name="ReviewWrite"
         component={ReviewWriteScreen}
         options={{ title: '리뷰 작성' }}
+      />
+      <Stack.Screen
+        name="Search"
+        component={SearchScreen}
+        options={{ headerShown: false }}
+      />
+      <Stack.Screen
+        name="SearchResult"
+        component={SearchResultScreen}
+        options={{ headerShown: false }}
+      />
+      <Stack.Screen
+        name="Notifications"
+        component={NotificationScreen}
+        options={{ title: '알림' }}
       />
     </Stack.Navigator>
   );

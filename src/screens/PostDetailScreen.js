@@ -1,11 +1,13 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   BackHandler,
-  FlatList,
   Image,
+  Keyboard,
   KeyboardAvoidingView,
+  Modal,
   Platform,
+  Pressable,
   ScrollView,
   StyleSheet,
   Text,
@@ -13,12 +15,13 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
-import { collection, getDocs, limit, query, where } from 'firebase/firestore';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { User, ShoppingBag, MoreVertical, Heart } from 'lucide-react-native';
+import { collection, deleteDoc, doc, getDocs, limit, query, where } from 'firebase/firestore';
 import { auth, db } from '../firebase/config';
 import { addComment, getComments, toggleLikePost } from '../services/communityService';
 import { recordProductAction } from '../services/productActionService';
 import { getOrCreateNickname, incrementCommentCount } from '../services/firestore/userRepository';
-import { getMockGamification } from '../utils/gamification';
 import { searchCoupangProducts } from '../services/coupangApiService';
 import { generateProductTags } from '../services/productTagService';
 
@@ -55,6 +58,17 @@ function parseDate(value) {
   return isNaN(d.getTime()) ? null : d;
 }
 
+// Full timestamp for post detail header: YYYY.MM.DD. HH:mm
+function formatDetailTime(date) {
+  if (!date) return '';
+  const yy = String(date.getFullYear());
+  const mo = String(date.getMonth() + 1).padStart(2, '0');
+  const dd = String(date.getDate()).padStart(2, '0');
+  const hh = String(date.getHours()).padStart(2, '0');
+  const mi = String(date.getMinutes()).padStart(2, '0');
+  return `${yy}.${mo}.${dd}. ${hh}:${mi}`;
+}
+
 // ─── Category tag colours ─────────────────────────────────────────────────────
 
 const TAG_COLORS = {
@@ -67,14 +81,21 @@ const TAG_COLORS = {
 };
 const TAG_LABEL = { free: '자유', question: '질문', review: '후기', deal: '핫딜', tip: '꿀팁', region: '지역' };
 
-// ─── Gamification UI helper ───────────────────────────────────────────────────
-// GamPill renders any { label, bg, text } from TIER_LIST or BADGE_LIST.
+// ─── Compact Tier Badge (mirrors CommunityListScreen) ────────────────────────
 
-function GamPill({ item: pill }) {
-  if (!pill) return null;
+const TIER_BG = { 1: '#94A3B8', 2: '#10B981', 3: '#F59E0B', 4: '#2E6FF2' };
+
+function getMockTierLevel(seed) {
+  if (!seed) return 1;
+  const n = String(seed).split('').reduce((a, c) => a + c.charCodeAt(0), 0);
+  return (n % 4) + 1;
+}
+
+function TierBadge({ seed }) {
+  const level = getMockTierLevel(seed);
   return (
-    <View style={[styles.badgePill, { backgroundColor: pill.bg }]}>
-      <Text style={[styles.badgePillText, { color: pill.text }]}>{pill.label}</Text>
+    <View style={[styles.tierBadge, { backgroundColor: TIER_BG[level] }]}>
+      <Text style={styles.tierBadgeText}>{level}</Text>
     </View>
   );
 }
@@ -198,22 +219,18 @@ async function fetchContextualProducts(postText, childStage, peerCounts) {
 function CommentItem({ item }) {
   const date    = parseDate(item.createdAt);
   const timeStr = date ? formatPostTime(date) : '';
-  const initial = (item.nickname || '익')[0];
-  // Use userId when present (live comments); fall back to nickname (legacy/mock)
-  const gam     = getMockGamification(item.userId || item.nickname);
 
   return (
     <View style={styles.comment}>
       {/* Author row */}
       <View style={styles.commentHeader}>
-        <View style={styles.commentAvatar}>
-          <Text style={styles.commentAvatarChar}>{initial}</Text>
+        <View style={styles.commentAvatarCircle}>
+          <User size={20} color="#94A3B8" />
         </View>
         <View style={styles.commentAuthorInfo}>
           <View style={styles.commentAuthorRow}>
-            <GamPill item={gam.tier} />
-            <GamPill item={gam.badge} />
             <Text style={styles.commentAuthor}>{item.nickname || '익명'}</Text>
+            <TierBadge seed={item.userId || item.nickname} />
           </View>
           {timeStr ? <Text style={styles.commentDate}>{timeStr}</Text> : null}
         </View>
@@ -228,9 +245,6 @@ function CommentItem({ item }) {
 
 export default function PostDetailScreen({ route, navigation }) {
   const { postId, title, category } = route.params;
-  const showProminent = category === 'review' || category === 'question';
-  // Use userId for live posts; fall back to nickname — same key as CommunityListScreen uses
-  const postGam = getMockGamification(route.params.userId || route.params.nickname);
 
   const uid = auth.currentUser?.uid;
   const initialLikedBy = route.params.likedBy ?? [];
@@ -246,7 +260,40 @@ export default function PostDetailScreen({ route, navigation }) {
   const [peerBased,       setPeerBased]        = useState(false);
   const [productsLoading, setProductsLoading]  = useState(true);
   const [userNickname,    setUserNickname]      = useState('');
+  const [showOwnerMenu,   setShowOwnerMenu]     = useState(false);
+  const [isMockAuthor,    setIsMockAuthor]      = useState(true);
   const inputRef = useRef(null);
+
+  const isOwner = (uid && route.params.userId === uid) || isMockAuthor;
+
+  const handleDelete = async () => {
+    try {
+      await deleteDoc(doc(db, 'posts', postId));
+      setShowOwnerMenu(false);
+      navigation.goBack();
+    } catch (err) {
+      console.log('PostDetailScreen handleDelete error:', err);
+    }
+  };
+
+  useLayoutEffect(() => {
+    navigation.setOptions({ title: '' });
+    navigation.getParent()?.setOptions({ tabBarStyle: { display: 'none' } });
+    return () => navigation.getParent()?.setOptions({ tabBarStyle: undefined });
+  }, [navigation]);
+
+  const [androidKbOffset, setAndroidKbOffset] = useState(0);
+
+  useEffect(() => {
+    if (Platform.OS !== 'android') return;
+    const show = Keyboard.addListener('keyboardDidShow', (e) => {
+      setAndroidKbOffset(e.endCoordinates.height);
+    });
+    const hide = Keyboard.addListener('keyboardDidHide', () => {
+      setAndroidKbOffset(0);
+    });
+    return () => { show.remove(); hide.remove(); };
+  }, []);
 
   const imageUrls = route.params.imageUrls ?? [];
 
@@ -341,135 +388,104 @@ export default function PostDetailScreen({ route, navigation }) {
     }
   };
 
-  const trustCopy = peerBased
-    ? '성장이 비슷한 또래 부모들이 80% 이상 선택했어요'
-    : '비슷한 개월 수 부모님들이 많이 찾은 제품이에요';
+  const postDate    = parseDate(route.params.createdAt);
+  const postDateStr = postDate ? formatDetailTime(postDate) : '';
 
   return (
-    <KeyboardAvoidingView
-      style={styles.flex}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-      keyboardVerticalOffset={88}
-    >
-      <FlatList
-        data={comments}
-        keyExtractor={(item) => item.commentId}
-        renderItem={({ item }) => <CommentItem item={item} />}
-        contentContainerStyle={styles.listContent}
-        ListHeaderComponent={
+    <SafeAreaView edges={['bottom']} style={[styles.safeArea, Platform.OS === 'android' && androidKbOffset > 0 && { paddingBottom: androidKbOffset }]}>
+      <KeyboardAvoidingView
+        style={{ flex: 1 }}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
+      >
+        <ScrollView
+          contentContainerStyle={styles.scrollContent}
+          keyboardShouldPersistTaps="handled"
+        >
+          {/* ── Post block ── */}
           <View style={styles.postBlock}>
-            {/* ── Category pill ── */}
-            {/* ── Title ── */}
-            <Text style={styles.postTitle}>{title}</Text>
-
-            {/* ── Author row: avatar + name + [category pill · time · views] ── */}
-            <TouchableOpacity
-              style={styles.postAuthorRow}
-              onPress={() =>
-                route.params.userId &&
-                navigation.navigate('UserProfile', { userId: route.params.userId })
-              }
-              activeOpacity={0.7}
-            >
-              {/* Avatar circle with first initial */}
-              <View style={styles.postAvatar}>
-                <Text style={styles.postAvatarChar}>
-                  {(route.params.nickname || '익')[0]}
-                </Text>
-              </View>
-
-              <View style={styles.postAuthorInfo}>
-                {/* Name row: [tier] [badge] nickname */}
-                <View style={styles.postAuthorNameRow}>
-                  <GamPill item={postGam.tier} />
-                  <GamPill item={postGam.badge} />
-                  <Text style={styles.postAuthor}>{route.params.nickname || '익명'}</Text>
-                  {route.params.isVerified ? (
-                    <View style={styles.verifiedBadge}>
-                      <Text style={styles.verifiedText}>구매 인증</Text>
+            {/* Header zone: Breadcrumb → Title → Author */}
+            <View style={styles.postHeader}>
+              <Text style={styles.postBreadcrumb}>
+                {TAG_LABEL[category] || category} {'>'}
+              </Text>
+              <Text style={styles.postTitle}>{title}</Text>
+              <View style={styles.postAuthorContainer}>
+                <TouchableOpacity
+                  style={[styles.postAuthorRow, { flex: 1 }]}
+                  onPress={() =>
+                    route.params.userId &&
+                    navigation.navigate('UserProfile', { userId: route.params.userId })
+                  }
+                  activeOpacity={0.7}
+                >
+                  <View style={styles.postAvatarCircle}>
+                    <User size={22} color="#94A3B8" />
+                  </View>
+                  <View style={styles.postAuthorInfo}>
+                    <View style={styles.postAuthorNameRow}>
+                      <Text style={styles.postAuthor}>{route.params.nickname || '익명'}</Text>
+                      <TierBadge seed={route.params.userId || route.params.nickname} />
+                      {route.params.isVerified ? (
+                        <View style={styles.verifiedBadge}>
+                          <Text style={styles.verifiedText}>구매 인증</Text>
+                        </View>
+                      ) : null}
                     </View>
-                  ) : null}
-                </View>
-
-                {/* Meta row: category pill + time + views */}
-                <View style={styles.postMetaRow}>
-                  {category ? (() => {
-                    const tc = TAG_COLORS[category] ?? { bg: '#f1f5f9', text: '#475569' };
-                    return (
-                      <View style={[styles.inlineCategoryBadge, { backgroundColor: tc.bg }]}>
-                        <Text style={[styles.inlineCategoryText, { color: tc.text }]}>
-                          {TAG_LABEL[category] || category}
-                        </Text>
-                      </View>
-                    );
-                  })() : null}
-                  {category ? <Text style={styles.postMetaDot}>·</Text> : null}
-                  {route.params.createdAt ? (
                     <Text style={styles.postMetaText}>
-                      {formatPostTime(parseDate(route.params.createdAt))}
+                      {postDateStr}{postDateStr ? '  ·  ' : ''}조회 {route.params.viewCount ?? 0}
                     </Text>
-                  ) : null}
-                  {typeof route.params.viewCount === 'number' ? (
-                    <>
-                      <Text style={styles.postMetaDot}>·</Text>
-                      <Text style={styles.postMetaText}>조회 {route.params.viewCount}</Text>
-                    </>
-                  ) : null}
-                </View>
+                  </View>
+                </TouchableOpacity>
+                {isOwner && (
+                  <TouchableOpacity
+                    onPress={() => setShowOwnerMenu(true)}
+                    hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                  >
+                    <MoreVertical size={20} color="#64748B" />
+                  </TouchableOpacity>
+                )}
               </View>
-            </TouchableOpacity>
+            </View>
 
-            {/* ── Full-width divider below author area ── */}
             <View style={styles.sectionDivider} />
-
-            {/* ── Content ── */}
             <Text style={styles.postContent}>{route.params.content || ''}</Text>
 
-            {/* ── Attached images ── */}
             {imageUrls.length > 0 && (
               <View style={styles.imageList}>
                 {imageUrls.map((uri, i) => (
-                  <Image
-                    key={uri + i}
-                    source={{ uri }}
-                    style={styles.postImage}
-                    resizeMode="cover"
-                  />
+                  <Image key={uri + i} source={{ uri }} style={styles.postImage} resizeMode="cover" />
                 ))}
               </View>
             )}
 
-            {/* ── Like button — below content ── */}
             <TouchableOpacity
               style={[styles.likeButton, isLiked && styles.likeButtonActive]}
               onPress={handleLike}
               activeOpacity={0.8}
               disabled={likeSubmitting}
             >
+              {isLiked
+                ? <Heart size={18} color="#EF4444" fill="#EF4444" />
+                : <Heart size={18} color="#64748B" />}
               <Text style={[styles.likeButtonText, isLiked && styles.likeButtonTextActive]}>
-                {isLiked ? '♥' : '♡'} {likeCount} 좋아요
+                {likeCount} 좋아요
               </Text>
             </TouchableOpacity>
 
-            {/* ── Thick separator before recommendations ── */}
             <View style={styles.thickDivider} />
 
-            {/* ── Related products: Context-to-Commerce carousel ── */}
             {(productsLoading || relatedProducts.length > 0) ? (
-              <View style={showProminent ? styles.relatedBlockProminent : styles.relatedBlock}>
-                <Text style={showProminent ? styles.relatedLabelProminent : styles.relatedLabel}>
-                  🛒 이 글과 연관된 또래 추천 아이템
-                </Text>
+              <View style={styles.relatedBlock}>
+                <View style={styles.relatedLabelRow}>
+                  <ShoppingBag size={18} color="#2E6FF2" />
+                  <Text style={styles.relatedLabel}>이 글과 연관된 맞춤 추천</Text>
+                </View>
                 {!productsLoading ? (
-                  <Text style={styles.relatedNudge}>{trustCopy}</Text>
+                  <Text style={styles.relatedNudge}>비슷한 개월 수 부모님들이 많이 찾은 제품이에요</Text>
                 ) : null}
                 {productsLoading ? (
-                  <ScrollView
-                    horizontal
-                    showsHorizontalScrollIndicator={false}
-                    contentContainerStyle={styles.relatedRow}
-                    scrollEnabled={false}
-                  >
+                  <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.relatedRow} scrollEnabled={false}>
                     {[0, 1, 2].map((i) => (
                       <View key={i} style={[styles.relatedCard, styles.relatedCardSkeleton]}>
                         <View style={[styles.relatedImage, styles.skeletonBlock]} />
@@ -479,11 +495,7 @@ export default function PostDetailScreen({ route, navigation }) {
                     ))}
                   </ScrollView>
                 ) : (
-                  <ScrollView
-                    horizontal
-                    showsHorizontalScrollIndicator={false}
-                    contentContainerStyle={styles.relatedRow}
-                  >
+                  <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.relatedRow}>
                     {relatedProducts.map((item) => {
                       const pid = item.productId || item.productGroupId;
                       return (
@@ -498,36 +510,21 @@ export default function PostDetailScreen({ route, navigation }) {
                               productGroupId: pid,
                               actionType: 'post_product_click',
                             });
-                            navigation.navigate('ProductDetail', {
-                              productId: pid,
-                              productName: item.name || '상품',
-                            });
+                            navigation.navigate('ProductDetail', { productId: pid, productName: item.name || '상품' });
                           }}
                         >
                           {item.image ? (
-                            <Image
-                              source={{ uri: item.image }}
-                              style={styles.relatedImage}
-                              resizeMode="cover"
-                            />
+                            <Image source={{ uri: item.image }} style={styles.relatedImage} resizeMode="cover" />
                           ) : (
                             <View style={[styles.relatedImage, styles.relatedImageFallback]} />
                           )}
-                          <Text style={styles.relatedName} numberOfLines={2}>
-                            {item.name || ''}
-                          </Text>
+                          <Text style={styles.relatedName} numberOfLines={2}>{item.name || ''}</Text>
                           {typeof item.currentPrice === 'number' && item.currentPrice > 0 ? (
-                            <Text style={styles.relatedPrice}>
-                              ₩{item.currentPrice.toLocaleString('ko-KR')}
-                            </Text>
+                            <Text style={styles.relatedPrice}>₩{item.currentPrice.toLocaleString('ko-KR')}</Text>
                           ) : null}
-                          {category === 'review' &&
-                          typeof item.lastPriceDrop === 'number' &&
-                          item.lastPriceDrop > 0 ? (
+                          {category === 'review' && typeof item.lastPriceDrop === 'number' && item.lastPriceDrop > 0 ? (
                             <View style={styles.relatedBestDealBadge}>
-                              <Text style={styles.relatedBestDealText}>
-                                💸 핫딜 ₩{item.lastPriceDrop.toLocaleString('ko-KR')} 하락
-                              </Text>
+                              <Text style={styles.relatedBestDealText}>핫딜 ₩{item.lastPriceDrop.toLocaleString('ko-KR')} 하락</Text>
                             </View>
                           ) : null}
                         </TouchableOpacity>
@@ -538,93 +535,133 @@ export default function PostDetailScreen({ route, navigation }) {
               </View>
             ) : null}
 
-            {/* ── Comments header ── */}
             <View style={styles.sectionDivider} />
-            <Text style={styles.commentsLabel}>💬 댓글 {comments.length}</Text>
-            {loading ? <ActivityIndicator size="small" style={{ marginTop: 12 }} /> : null}
+            <Text style={styles.commentsLabel}>댓글 {comments.length}</Text>
           </View>
-        }
-        ListEmptyComponent={
-          !loading ? <Text style={styles.emptyComments}>첫 댓글을 남겨 보세요</Text> : null
-        }
-      />
 
-      {/* Comment input */}
-      <View style={styles.inputRow}>
-        <TextInput
-          ref={inputRef}
-          style={styles.input}
-          placeholder="댓글을 입력하세요"
-          placeholderTextColor="#94a3b8"
-          value={commentText}
-          onChangeText={setCommentText}
-          maxLength={300}
-          returnKeyType="send"
-          onSubmitEditing={handleAddComment}
-        />
-        <TouchableOpacity
-          style={[styles.sendButton, !commentText.trim() && styles.sendButtonDisabled]}
-          onPress={handleAddComment}
-          disabled={submitting || !commentText.trim()}
-          activeOpacity={0.85}
-        >
-          {submitting ? (
-            <ActivityIndicator size="small" color="#fff" />
-          ) : (
-            <Text style={styles.sendButtonText}>등록</Text>
-          )}
-        </TouchableOpacity>
-      </View>
-    </KeyboardAvoidingView>
+          {/* ── Comment items ── */}
+          {loading ? <ActivityIndicator size="small" style={{ marginTop: 12 }} /> : null}
+          {comments.map((item) => <CommentItem key={item.commentId} item={item} />)}
+          {!loading && comments.length === 0 ? (
+            <Text style={styles.emptyComments}>첫 댓글을 남겨 보세요</Text>
+          ) : null}
+
+          <TouchableOpacity
+            onPress={() => setIsMockAuthor(!isMockAuthor)}
+            style={{ padding: 8, backgroundColor: '#333', alignSelf: 'center', marginBottom: 20, borderRadius: 8 }}
+          >
+            <Text style={{ color: '#FFF', fontSize: 12 }}>[QA Test] Toggle Ownership: {isMockAuthor ? 'ON' : 'OFF'}</Text>
+          </TouchableOpacity>
+        </ScrollView>
+
+        {/* Comment input — outside ScrollView, inside KAV */}
+        <View style={{ flexDirection: 'row', padding: 12, gap: 8, borderTopWidth: 1, borderColor: '#E2E8F0', backgroundColor: '#FFF' }}>
+          <TextInput
+            ref={inputRef}
+            style={styles.input}
+            placeholder="댓글을 입력하세요"
+            placeholderTextColor="#94a3b8"
+            value={commentText}
+            onChangeText={setCommentText}
+            maxLength={300}
+            returnKeyType="send"
+            onSubmitEditing={handleAddComment}
+          />
+          <TouchableOpacity
+            style={[styles.sendButton, !commentText.trim() && styles.sendButtonDisabled]}
+            onPress={handleAddComment}
+            disabled={submitting || !commentText.trim()}
+            activeOpacity={0.85}
+          >
+            {submitting ? (
+              <ActivityIndicator size="small" color="#fff" />
+            ) : (
+              <Text style={styles.sendButtonText}>등록</Text>
+            )}
+          </TouchableOpacity>
+        </View>
+      </KeyboardAvoidingView>
+
+      {/* Owner action sheet */}
+      <Modal visible={showOwnerMenu} transparent animationType="slide" onRequestClose={() => setShowOwnerMenu(false)}>
+        <View style={styles.menuOverlay}>
+          <Pressable style={{ flex: 1 }} onPress={() => setShowOwnerMenu(false)} />
+          <View style={styles.menuSheet}>
+            <View style={styles.menuHandle} />
+            <TouchableOpacity
+              style={styles.menuItem}
+              activeOpacity={0.7}
+              onPress={() => {
+                setShowOwnerMenu(false);
+                navigation.navigate('WritePost', {
+                  editMode: true,
+                  postData: {
+                    postId,
+                    title,
+                    content: route.params.content,
+                    category,
+                    imageUrls: route.params.imageUrls ?? [],
+                  },
+                });
+              }}
+            >
+              <Text style={styles.menuItemText}>수정하기</Text>
+            </TouchableOpacity>
+            <View style={styles.menuDivider} />
+            <TouchableOpacity style={styles.menuItem} activeOpacity={0.7} onPress={handleDelete}>
+              <Text style={[styles.menuItemText, { color: '#EF4444' }]}>삭제하기</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  flex: { flex: 1, backgroundColor: '#f5f7fb' },
-  listContent: { paddingBottom: 16 },
+  safeArea:     { flex: 1, backgroundColor: '#fff' },
+  flex:         { flex: 1, backgroundColor: '#f5f7fb' },
+  scrollContent: { flexGrow: 1, paddingTop: 0, paddingBottom: 16 },
   postBlock: {
     backgroundColor: '#fff',
     borderBottomWidth: 6,
     borderBottomColor: '#f1f5f9',
-    padding: 16,
+    paddingTop: 0, paddingHorizontal: 16, paddingBottom: 16,
     gap: 12,
   },
-  postTitle: { fontSize: 22, fontWeight: '900', color: '#0f172a', lineHeight: 30 },
+  postHeader:   { gap: 0, marginTop: 0, paddingTop: 12 },
+  postBreadcrumb: { fontSize: 13, fontWeight: '600', color: '#10B981', marginTop: 0, marginBottom: 8 },
+  postTitle:    { fontSize: 20, fontWeight: '700', color: '#0F172A', lineHeight: 28, marginBottom: 4 },
+  postAuthorContainer: { flexDirection: 'row', alignItems: 'center' },
   postAuthorRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  postAvatar: {
-    width: 38, height: 38, borderRadius: 19,
-    backgroundColor: '#dbeafe', alignItems: 'center', justifyContent: 'center',
+  postAvatarCircle: {
+    width: 40, height: 40, borderRadius: 20,
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1, borderColor: '#F1F5F9',
+    justifyContent: 'center', alignItems: 'center',
     flexShrink: 0,
   },
-  postAvatarChar: { fontSize: 16, fontWeight: '800', color: '#1d4ed8' },
   postAuthorInfo: { flex: 1, gap: 2 },
   postAuthorNameRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  postAuthor: { fontSize: 14, fontWeight: '800', color: '#0f172a' },
+  postAuthor: { fontSize: 14, fontWeight: '700', color: '#0f172a' },
+  tierBadge:     { width: 15, height: 15, borderRadius: 4, justifyContent: 'center', alignItems: 'center' },
+  tierBadgeText: { fontSize: 9, fontWeight: 'bold', color: '#FFFFFF', lineHeight: 13 },
   verifiedBadge: {
     backgroundColor: '#dcfce7', borderRadius: 4, paddingHorizontal: 6, paddingVertical: 2,
   },
   verifiedText: { fontSize: 10, fontWeight: '700', color: '#16a34a' },
-  postMetaRow:  { flexDirection: 'row', alignItems: 'center', gap: 4, flexWrap: 'wrap' },
-  postMetaDot:  { fontSize: 10, color: '#cbd5e1' },
-  postMetaText: { fontSize: 12, color: '#94a3b8' },
-  inlineCategoryBadge: {
-    borderRadius: 4, paddingHorizontal: 6, paddingVertical: 2,
-  },
-  inlineCategoryText: { fontSize: 10, fontWeight: '800' },
+  postMetaText: { fontSize: 12, color: '#94a3b8', marginTop: 4 },
   postContent: { fontSize: 16, color: '#334155', lineHeight: 26, paddingVertical: 4 },
 
   // ─── Related products ─────────────────────────────────────────────────────
-  relatedBlock: { gap: 8 },
-  relatedBlockProminent: {
+  relatedBlock: {
     gap: 8,
-    backgroundColor: '#eff6ff',
-    borderRadius: 10,
-    borderWidth: 1.5,
-    borderColor: '#bfdbfe',
+    backgroundColor: '#F8FAFC',
+    borderRadius: 12,
     padding: 12,
   },
+  relatedLabelRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   relatedLabel: { fontSize: 14, fontWeight: '800', color: '#0f172a' },
-  relatedLabelProminent: { fontSize: 14, fontWeight: '800', color: '#1d4ed8' },
   relatedNudge: { fontSize: 12, color: '#64748b', marginBottom: 4 },
   relatedRow: { gap: 10, paddingVertical: 4 },
   relatedCard: {
@@ -661,19 +698,21 @@ const styles = StyleSheet.create({
 
   // ─── Interactions ──────────────────────────────────────────────────────────
   likeButton: {
-    alignSelf: 'flex-start',
+    alignSelf: 'center',
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 18,
-    paddingVertical: 9,
-    borderRadius: 24,
-    borderWidth: 1.5,
-    borderColor: '#cbd5e1',
-    gap: 4,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    backgroundColor: '#FFF',
+    gap: 6,
+    marginVertical: 24,
   },
-  likeButtonActive:     { borderColor: '#f43f5e', backgroundColor: '#fff1f2' },
-  likeButtonText:       { fontSize: 15, fontWeight: '800', color: '#94a3b8' },
-  likeButtonTextActive: { color: '#f43f5e' },
+  likeButtonActive:     { backgroundColor: '#FEF2F2', borderColor: '#FECACA' },
+  likeButtonText:       { fontSize: 14, fontWeight: '600', color: '#64748B' },
+  likeButtonTextActive: { color: '#EF4444' },
   sectionDivider: { height: 1, backgroundColor: '#f1f5f9', marginHorizontal: -16 },
   thickDivider: { height: 6, backgroundColor: '#f1f5f9', marginHorizontal: -16 },
   sectionLabel: { fontSize: 13, fontWeight: '700', color: '#64748b' },
@@ -688,30 +727,29 @@ const styles = StyleSheet.create({
     borderBottomColor: '#f1f5f9',
     gap: 8,
   },
-  commentHeader:     { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  commentAvatar: {
-    width: 32, height: 32, borderRadius: 16,
-    backgroundColor: '#e0e7ff', alignItems: 'center', justifyContent: 'center',
+  commentHeader:    { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  commentAvatarCircle: {
+    width: 36, height: 36, borderRadius: 18,
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1, borderColor: '#F1F5F9',
+    justifyContent: 'center', alignItems: 'center',
     flexShrink: 0,
   },
-  commentAvatarChar: { fontSize: 13, fontWeight: '800', color: '#4f46e5' },
   commentAuthorInfo: { flex: 1, gap: 1 },
   commentAuthorRow:  { flexDirection: 'row', alignItems: 'center', gap: 5, flexWrap: 'wrap' },
   commentAuthor:     { fontSize: 13, fontWeight: '700', color: '#0f172a' },
   commentDate:       { fontSize: 11, color: '#94a3b8' },
-  badgePill:         { borderRadius: 5, paddingHorizontal: 5, paddingVertical: 2 },
-  badgePillText:     { fontSize: 10, fontWeight: '800' },
-  commentContent:    { fontSize: 14, color: '#334155', lineHeight: 20, paddingLeft: 42 },
+  commentContent:    { fontSize: 14, color: '#334155', lineHeight: 20, paddingLeft: 46 },
   emptyComments: { textAlign: 'center', color: '#94a3b8', marginTop: 16, fontSize: 13 },
 
   // ─── Input row ─────────────────────────────────────────────────────────────
   inputRow: {
     flexDirection: 'row',
-    padding: 10,
+    padding: 12,
     gap: 8,
     backgroundColor: '#fff',
     borderTopWidth: 1,
-    borderTopColor: '#e4e7ed',
+    borderTopColor: '#E2E8F0',
   },
   input: {
     flex: 1,
@@ -732,4 +770,23 @@ const styles = StyleSheet.create({
   },
   sendButtonDisabled: { backgroundColor: '#cbd5e1' },
   sendButtonText: { color: '#fff', fontWeight: '700', fontSize: 14 },
+
+  // ─── Owner action sheet ────────────────────────────────────────────────────
+  menuOverlay: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.4)' },
+  menuSheet: {
+    backgroundColor: '#fff',
+    borderTopLeftRadius: 20, borderTopRightRadius: 20,
+    paddingHorizontal: 20, paddingBottom: 40, paddingTop: 12,
+    ...Platform.select({
+      ios:     { shadowColor: '#000', shadowOffset: { width: 0, height: -2 }, shadowOpacity: 0.1, shadowRadius: 8 },
+      android: { elevation: 10 },
+    }),
+  },
+  menuHandle: {
+    width: 40, height: 4, borderRadius: 2,
+    backgroundColor: '#e2e8f0', alignSelf: 'center', marginBottom: 16,
+  },
+  menuItem: { paddingVertical: 16 },
+  menuItemText: { fontSize: 16, fontWeight: '600', color: '#0f172a' },
+  menuDivider: { height: StyleSheet.hairlineWidth, backgroundColor: '#f1f5f9' },
 });

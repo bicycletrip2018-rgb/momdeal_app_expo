@@ -18,11 +18,12 @@ import { Ionicons } from '@expo/vector-icons';
  *   tabName      {string}  'Home' | 'Ranking' | 'Community' | 'Benefits'
  *   navigation   {object}  React Navigation prop (required for Home tab actions).
  */
-export default function GlobalHeader({ placeholder, tabName = 'Home', navigation, unreadCount = 0 }) {
+export default function GlobalHeader({ placeholder, tabName = 'Home', navigation, unreadCount = 0, onSearchPress }) {
   const { top } = useSafeAreaInsets();
 
   const handleSearchPress = () => {
-    if (tabName === 'Home' && navigation) {
+    if (onSearchPress) { onSearchPress(); return; }
+    if ((tabName === 'Home' || tabName === 'Ranking') && navigation) {
       navigation.navigate('Search');
     } else {
       Alert.alert('', '검색 기능 준비 중이에요! 🔍');
@@ -45,8 +46,8 @@ export default function GlobalHeader({ placeholder, tabName = 'Home', navigation
         <Text style={styles.searchPlaceholder} numberOfLines={1}>{placeholder}</Text>
       </TouchableOpacity>
 
-      {/* ── Right: bell (Home only) ── */}
-      {tabName === 'Home' && navigation && (
+      {/* ── Right: bell (Home + Ranking + Community) ── */}
+      {(tabName === 'Home' || tabName === 'Ranking' || tabName === 'Community') && navigation && (
         <View style={styles.rightIcons}>
           <TouchableOpacity
             onPress={() => navigation.navigate('Notifications')}

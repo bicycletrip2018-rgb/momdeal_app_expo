@@ -3,10 +3,14 @@ import {
   ActivityIndicator,
   Alert,
   FlatList,
+  Image,
+  Modal,
   Platform,
+  Pressable,
   RefreshControl,
   ScrollView,
   StyleSheet,
+  Switch,
   Text,
   TouchableOpacity,
   View,
@@ -14,74 +18,87 @@ import {
 import GlobalHeader from '../components/GlobalHeader';
 import { useFocusEffect } from '@react-navigation/native';
 import { getPosts } from '../services/communityService';
-import { getMockGamification } from '../utils/gamification';
+import { Edit3, Info, Link } from 'lucide-react-native';
 
 // ─── Filter chips ─────────────────────────────────────────────────────────────
 
 const FILTERS = [
-  { key: null,       label: '전체' },
-  { key: 'question', label: '🙋‍♀️ 질문' },
-  { key: 'tip',      label: '🍯 꿀팁' },
-  { key: 'deal',     label: '🔥 핫딜' },
-  { key: 'review',   label: '📝 후기' },
-  { key: 'free',     label: '💬 자유' },
+  { key: null,     label: '전체' },
+  { key: 'chat',   label: '육아수다' },
+  { key: 'qna',    label: '질문/고민' },
+  { key: 'tip',    label: '육아꿀템' },
+  { key: 'deal',   label: '특가제보' },
 ];
 
-// ─── Tag styling ──────────────────────────────────────────────────────────────
+// ─── Tag styling (includes legacy Firestore keys for backwards compat) ────────
 
 const TAG_META = {
-  question: { label: '질문',   bg: '#eff6ff', text: '#2563eb' },
-  tip:       { label: '꿀팁',   bg: '#f0fdf4', text: '#16a34a' },
-  deal:      { label: '핫딜',   bg: '#fef3c7', text: '#b45309' },
-  review:    { label: '후기',   bg: '#fce7f3', text: '#9d174d' },
-  free:      { label: '자유',   bg: '#f1f5f9', text: '#475569' },
-  region:    { label: '지역',   bg: '#f5f3ff', text: '#7c3aed' },
+  chat:     { label: '육아수다', bg: '#f1f5f9', text: '#475569' },
+  qna:      { label: '질문/고민', bg: '#eff6ff', text: '#2563eb' },
+  tip:      { label: '육아꿀템',  bg: '#f0fdf4', text: '#16a34a' },
+  deal:     { label: '특가제보',  bg: '#fef3c7', text: '#b45309' },
+  // legacy keys
+  question: { label: '질문/고민', bg: '#eff6ff', text: '#2563eb' },
+  free:     { label: '육아수다',  bg: '#f1f5f9', text: '#475569' },
+  review:   { label: '육아꿀템',  bg: '#f0fdf4', text: '#16a34a' },
+  region:   { label: '지역',      bg: '#f5f3ff', text: '#7c3aed' },
 };
 
-// ─── Gamification UI helpers ──────────────────────────────────────────────────
-// GamPill renders any { label, bg, text } object (tier or badge) as a compact pill.
+// ─── 4-Tier system ────────────────────────────────────────────────────────────
 
-function GamPill({ item: pill }) {
-  if (!pill) return null;
+const TIER_META = [
+  { level: 1, label: '일반맘', color: '#6B7280', bg: '#F3F4F6' },
+  { level: 2, label: '성실맘', color: '#10B981', bg: '#D1FAE5' },
+  { level: 3, label: '열심맘', color: '#F59E0B', bg: '#FEF3C7' },
+  { level: 4, label: '우수맘', color: '#2E6FF2', bg: '#DBEAFE' },
+];
+
+function getMockTier(seed) {
+  if (!seed) return TIER_META[0];
+  const n = String(seed).split('').reduce((a, c) => a + c.charCodeAt(0), 0);
+  return TIER_META[n % TIER_META.length];
+}
+
+const TIER_BG = { 1: '#94A3B8', 2: '#10B981', 3: '#F59E0B', 4: '#2E6FF2' };
+
+function TierBadge({ tier }) {
   return (
-    <View style={[styles.badgePill, { backgroundColor: pill.bg }]}>
-      <Text style={[styles.badgePillText, { color: pill.text }]}>{pill.label}</Text>
+    <View style={[styles.tierBadge, { backgroundColor: TIER_BG[tier.level] ?? '#94A3B8' }]}>
+      <Text style={styles.tierBadgeText}>{tier.level}</Text>
     </View>
   );
 }
+
+
+// ARCHITECTURE CONSTRAINT: Peer matching MUST use a "Dynamic Snapshot" logic. The DB must store 'authorBabyMonthAtCreation'. Filtering ranges must be dynamic (e.g., 0-12m: ±1m, 13-36m: ±3m, 37m+: ±12m) based on the currentUser's current baby month.
 
 // ─── Mock posts (shown when Firestore returns nothing) ────────────────────────
 
 const MOCK_POSTS = [
   {
-    postId: 'mock1', category: 'question',
-    title: '67개월 아이 영양제 뭐 먹이세요?',
-    content: '비타민D랑 오메가3 먹이려고 하는데 다들 어떤 브랜드 쓰시나요? 맛이 없으면 안 먹으려 해서요 😭',
-    nickname: '67개월 노을맘', viewCount: 1243, commentCount: 18, timeAgo: '23분 전',
+    postId: 'mock1', category: 'chat', _tier: 1,
+    title: '요즘 육아하면서 제일 힘든 게 뭐예요 다들',
+    nickname: '7개월 노을맘', viewCount: 1243, likeCount: 31, commentCount: 18, timeAgo: '26.05.13.',
   },
   {
-    postId: 'mock2', category: 'tip',
-    title: '기저귀 발진 잡는 법 총정리 (경험담)',
-    content: '밤새 울어서 정말 힘들었는데 이 방법으로 3일 만에 완치! 좌욕 + 징크 크림 조합이 신의 한 수였어요.',
-    nickname: '15개월 별이맘', viewCount: 3401, commentCount: 42, timeAgo: '1시간 전',
+    postId: 'mock2', category: 'tip', _tier: 2,
+    title: '기저귀 발진 잡는 꿀템 총정리 (경험담)',
+    nickname: '15개월 별이맘', viewCount: 3401, likeCount: 128, commentCount: 42, timeAgo: '26.05.12.',
   },
   {
-    postId: 'mock3', category: 'deal',
-    title: '하기스 기저귀 역대급 할인 중 🔥 오늘만!',
-    content: '쿠팡 로켓배송 하기스 네이처메이드 M 144매 19,900원. 파트너스 활동 통해 적립 가능해요~',
-    nickname: '8개월 콩이맘', viewCount: 892, commentCount: 7, timeAgo: '2시간 전',
+    postId: 'mock3', category: 'deal', _tier: 3,
+    title: '하기스 매직팬티 역대급 특가 오늘만!',
+    nickname: '8개월 콩이맘', viewCount: 892, likeCount: 14, commentCount: 7, timeAgo: '26.05.11.',
   },
   {
-    postId: 'mock4', category: 'review',
-    title: '노리플레이 블록 한 달 써본 솔직 후기',
-    content: '돌 지난 아이한테 샀는데 생각보다 훨씬 오래 갖고 놀아요. 삼킴 위험 없는 큰 사이즈라 안심하고 줄 수 있어요.',
-    nickname: '13개월 하나맘', viewCount: 564, commentCount: 12, timeAgo: '5시간 전',
+    postId: 'mock4', category: 'qna', _tier: 4,
+    title: '아이 낮잠 거부 어떻게 극복하셨어요?',
+    nickname: '13개월 하나맘', viewCount: 564, likeCount: 57, commentCount: 12, timeAgo: '26.05.10.',
   },
   {
-    postId: 'mock5', category: 'free',
-    title: '아이 낮잠 안 자는 거 어떻게 극복하셨어요 ㅠ',
-    content: '24개월 지나고부터 낮잠을 완전히 거부하는데 밤에도 늦게 자서 저도 너무 힘드네요. 비슷한 분 있으신가요?',
-    nickname: '24개월 솔이맘', viewCount: 2107, commentCount: 29, timeAgo: '어제',
+    postId: 'mock5', category: 'qna', _tier: 2,
+    title: '12개월인데 아직 걸음마 안 하면 이상한 건가요?',
+    nickname: '24개월 솔이맘', viewCount: 2107, likeCount: 83, commentCount: 29, timeAgo: '26.05.09.',
   },
 ];
 
@@ -113,47 +130,65 @@ function formatPostTime(date) {
 
 // ─── Post Card ────────────────────────────────────────────────────────────────
 
-function PostCard({ item, onPress }) {
-  const tag  = item.category ? (TAG_META[item.category] ?? { label: item.category, bg: '#f1f5f9', text: '#475569' }) : null;
-  // Use userId for live Firestore posts; nickname for mocks — ensures every post gets gamification
-  const gam  = getMockGamification(item.userId || item.nickname || item.postId);
-  const date = item.createdAt?.toDate ? item.createdAt.toDate() : null;
-  const time = item.timeAgo ?? (date ? formatPostTime(date) : '');
-  const views = item.viewCount    ?? 0;
-  const cmts  = item.commentCount ?? 0;
-  const preview = item.content ?? item.contentPreview ?? '';
+function PostCard({ item, onPress, activeFilter }) {
+  const tag      = item.category ? (TAG_META[item.category] ?? { label: item.category }) : null;
+  const tier     = item._tier ? TIER_META[item._tier - 1] : getMockTier(item.userId || item.nickname || item.postId);
+  const date     = item.createdAt?.toDate ? item.createdAt.toDate() : null;
+  const time     = item.timeAgo ?? (date ? formatPostTime(date) : '');
+  const cmts     = item.commentCount ?? 0;
+  const likes    = item.likeCount ?? 0;
+  const views    = item.viewCount ?? 0;
+  const thumbUri = item.imageUrls?.[0] ?? null;
+  const extraImgs = Math.max(0, (item.imageUrls?.length ?? 0) - 1);
 
   return (
     <TouchableOpacity style={styles.card} onPress={onPress} activeOpacity={0.85}>
-      {/* Tag + Title row */}
-      <View style={styles.cardTop}>
-        {tag && (
-          <View style={[styles.tagPill, { backgroundColor: tag.bg }]}>
-            <Text style={[styles.tagText, { color: tag.text }]}>{tag.label}</Text>
+      <View style={{ flexDirection: 'row' }}>
+
+        {/* Left column — content first */}
+        <View style={{ flex: 1, justifyContent: 'flex-start', marginRight: thumbUri ? 12 : 0 }}>
+          {/* 1. Title + comment count */}
+          <Text style={styles.cardTitle} numberOfLines={2} ellipsizeMode="tail">
+            {activeFilter === null && tag?.label
+              ? <Text style={styles.cardCategoryPrefix}>[{tag.label}] </Text>
+              : null}
+            {item.title || '(제목 없음)'}
+            {cmts > 0 && <Text style={styles.cardCmtCount}> ({cmts})</Text>}
+          </Text>
+
+          {/* 2. Tagged product pill */}
+          {item.taggedProduct && (
+            <View style={styles.productPill}>
+              <Link size={12} color="#64748B" />
+              <Text style={styles.productPillText} numberOfLines={1}>
+                {item.taggedProduct.brand ? `[${item.taggedProduct.brand}] ` : ''}{item.taggedProduct.name}
+              </Text>
+            </View>
+          )}
+
+          {/* 3. Meta row — nickname · tier · date · views · likes */}
+          <View style={styles.cardFooter}>
+            <Text style={styles.cardAuthor}>{item.nickname || '익명'}</Text>
+            <TierBadge tier={tier} />
+            <Text style={styles.cardDot}> · </Text>
+            <Text style={styles.cardMeta}>
+              {time}{'  '}조회 {views}{likes > 0 ? ` · 좋아요 ${likes}` : ''}
+            </Text>
+          </View>
+        </View>
+
+        {/* Right: 64×64 thumbnail with +N overlay */}
+        {thumbUri && (
+          <View style={{ alignSelf: 'flex-start' }}>
+            <Image source={{ uri: thumbUri }} style={styles.cardThumb} />
+            {extraImgs > 0 && (
+              <View style={styles.cardThumbOverlay}>
+                <Text style={styles.cardThumbOverlayText}>+{extraImgs}</Text>
+              </View>
+            )}
           </View>
         )}
-        <Text style={styles.cardTitle} numberOfLines={1}>{item.title || '(제목 없음)'}</Text>
-      </View>
 
-      {/* Content preview */}
-      {preview.length > 0 && (
-        <Text style={styles.cardPreview} numberOfLines={2}>{preview}</Text>
-      )}
-
-      {/* Footer: [tier] [badge] nickname · time   views comments */}
-      <View style={styles.cardFooter}>
-        <GamPill item={gam.tier} />
-        <GamPill item={gam.badge} />
-        <Text style={styles.cardAuthor}>{item.nickname || '익명'}</Text>
-        {time.length > 0 && <Text style={styles.cardDot}>·</Text>}
-        {time.length > 0 && <Text style={styles.cardMeta}>{time}</Text>}
-        <View style={{ flex: 1 }} />
-        {views > 0 && (
-          <Text style={styles.cardStat}>👁 {views.toLocaleString('ko-KR')}</Text>
-        )}
-        {cmts > 0 && (
-          <Text style={styles.cardStat}>💬 {cmts}</Text>
-        )}
       </View>
     </TouchableOpacity>
   );
@@ -166,6 +201,8 @@ export default function CommunityListScreen({ navigation }) {
   const [loading, setLoading]           = useState(true);
   const [refreshing, setRefreshing]     = useState(false);
   const [activeFilter, setActiveFilter] = useState(null);
+  const [isPeerMode,     setIsPeerMode]     = useState(false);
+  const [isTooltipVisible, setIsTooltipVisible] = useState(false);
 
   const loadPosts = useCallback(async () => {
     try {
@@ -215,7 +252,12 @@ export default function CommunityListScreen({ navigation }) {
 
   return (
     <View style={styles.container}>
-      <GlobalHeader tabName="Community" placeholder="궁금한 육아 고민이나 꿀팁 검색" navigation={navigation} />
+      <GlobalHeader
+        tabName="Community"
+        placeholder="커뮤니티 글 검색"
+        navigation={navigation}
+        onSearchPress={() => navigation.navigate('CommunitySearch')}
+      />
 
       {/* Filter chips */}
       <View style={styles.chipBar}>
@@ -240,6 +282,42 @@ export default function CommunityListScreen({ navigation }) {
         </ScrollView>
       </View>
 
+      {/* Peer match toggle */}
+      <View style={styles.peerToggleRow}>
+        <View style={{ flex: 1 }} />
+        <Text style={[styles.peerToggleText, isPeerMode && styles.peerToggleTextActive]}>내 아이 맞춤 정보</Text>
+        <TouchableOpacity
+          onPress={() => setIsTooltipVisible(true)}
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          style={{ marginLeft: 4 }}
+        >
+          <Info size={16} color="#94A3B8" />
+        </TouchableOpacity>
+        <Switch
+          value={isPeerMode}
+          onValueChange={setIsPeerMode}
+          trackColor={{ false: '#E2E8F0', true: '#BFDBFE' }}
+          thumbColor={isPeerMode ? '#2E6FF2' : '#94A3B8'}
+          ios_backgroundColor="#E2E8F0"
+          style={{ marginLeft: 8 }}
+        />
+      </View>
+
+      {/* Peer match tooltip modal */}
+      <Modal visible={isTooltipVisible} transparent animationType="fade" onRequestClose={() => setIsTooltipVisible(false)}>
+        <Pressable style={styles.tooltipOverlay} onPress={() => setIsTooltipVisible(false)}>
+          <Pressable style={styles.tooltipCard} onPress={() => {}}>
+            <Text style={styles.tooltipTitle}>내 아이 맞춤 정보란?</Text>
+            <Text style={styles.tooltipBody}>
+              회원님 아이의 발달 단계(월령)를 분석하여, 지금 시기에 가장 핏이 맞는 부모님들의 글만 스마트하게 모아보여드려요.
+            </Text>
+            <TouchableOpacity style={styles.tooltipBtn} onPress={() => setIsTooltipVisible(false)} activeOpacity={0.85}>
+              <Text style={styles.tooltipBtnText}>확인</Text>
+            </TouchableOpacity>
+          </Pressable>
+        </Pressable>
+      </Modal>
+
       {/* Post feed */}
       {loading ? (
         <View style={styles.center}>
@@ -249,9 +327,8 @@ export default function CommunityListScreen({ navigation }) {
         <FlatList
           data={displayPosts}
           keyExtractor={(item) => item.postId}
-          renderItem={({ item }) => <PostCard item={item} onPress={() => handlePress(item)} />}
+          renderItem={({ item }) => <PostCard item={item} onPress={() => handlePress(item)} activeFilter={activeFilter} />}
           contentContainerStyle={styles.listContent}
-          ItemSeparatorComponent={() => <View style={styles.separator} />}
           refreshControl={
             <RefreshControl
               refreshing={refreshing}
@@ -272,8 +349,7 @@ export default function CommunityListScreen({ navigation }) {
         onPress={() => navigation.navigate('WritePost')}
         activeOpacity={0.85}
       >
-        <Text style={styles.fabIcon}>✏️</Text>
-        <Text style={styles.fabText}>글쓰기</Text>
+        <Edit3 size={22} color="#FFFFFF" />
       </TouchableOpacity>
     </View>
   );
@@ -293,36 +369,73 @@ const styles = StyleSheet.create({
   },
   chipContent: { paddingHorizontal: 12, paddingVertical: 10, gap: 8 },
   chip: {
-    borderRadius: 20, borderWidth: 1, borderColor: '#e2e8f0',
-    paddingHorizontal: 14, paddingVertical: 6, backgroundColor: '#fff',
+    borderRadius: 20,
+    paddingHorizontal: 14, paddingVertical: 6,
+    backgroundColor: '#F1F5F9',
   },
-  chipActive: { backgroundColor: '#1d4ed8', borderColor: '#1d4ed8' },
-  chipText: { fontSize: 13, fontWeight: '600', color: '#64748b' },
-  chipTextActive: { color: '#fff' },
+  chipActive:     { backgroundColor: '#2E6FF2' },
+  chipText:       { fontSize: 13, fontWeight: '600', color: '#64748B' },
+  chipTextActive: { color: '#FFFFFF', fontWeight: '700' },
+
+  // Peer match toggle
+  peerToggleRow: {
+    flexDirection: 'row', alignItems: 'center',
+    justifyContent: 'flex-end',
+    paddingRight: 16, paddingBottom: 8, paddingTop: 6,
+    backgroundColor: '#F8FAFC',
+    borderBottomWidth: 1, borderBottomColor: '#F1F5F9',
+  },
+  peerToggleText:       { fontSize: 13, fontWeight: '500', color: '#64748B' },
+  peerToggleTextActive: { color: '#2E6FF2', fontWeight: '600' },
+
+  // Tooltip modal
+  tooltipOverlay: {
+    flex: 1, backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'center', alignItems: 'center', padding: 32,
+  },
+  tooltipCard: {
+    backgroundColor: '#fff', borderRadius: 16,
+    padding: 24, width: '100%', gap: 12,
+    ...Platform.select({
+      ios:     { shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.15, shadowRadius: 12 },
+      android: { elevation: 10 },
+    }),
+  },
+  tooltipTitle:   { fontSize: 16, fontWeight: '800', color: '#0f172a' },
+  tooltipBody:    { fontSize: 14, color: '#334155', lineHeight: 22 },
+  tooltipBtn:     { backgroundColor: '#2E6FF2', borderRadius: 10, paddingVertical: 12, alignItems: 'center', marginTop: 4 },
+  tooltipBtnText: { color: '#fff', fontSize: 15, fontWeight: '700' },
 
   // Post card
   listContent: { paddingBottom: 100, paddingTop: 4 },
-  separator:   { height: 6 },
   card: {
-    backgroundColor: '#fff', marginHorizontal: 0,
+    backgroundColor: '#FFFFFF',
     paddingHorizontal: 16, paddingVertical: 14,
-    borderBottomWidth: 1, borderBottomColor: '#f1f5f9',
-    gap: 7,
+    borderBottomWidth: 1, borderBottomColor: '#F3F4F6',
   },
-  cardTop: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  tagPill: {
-    borderRadius: 6, paddingHorizontal: 7, paddingVertical: 3, flexShrink: 0,
+  cardTitle:    { fontSize: 15, fontWeight: '400', lineHeight: 22, color: '#334155', marginBottom: 6 },
+  cardCmtCount: { fontSize: 13, fontWeight: '400', color: '#2E6FF2' },
+  cardFooter:   { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', marginTop: 6 },
+  cardCategoryPrefix: { color: '#64748B', fontWeight: '500' },
+  productPill: {
+    flexDirection: 'row', alignItems: 'center',
+    backgroundColor: '#F8FAFC', borderWidth: 1, borderColor: '#E2E8F0',
+    borderRadius: 6, paddingHorizontal: 8, paddingVertical: 4,
+    marginTop: 8, alignSelf: 'flex-start', maxWidth: '90%',
   },
-  tagText: { fontSize: 11, fontWeight: '800' },
-  cardTitle: { fontSize: 15, fontWeight: '700', color: '#0f172a', flex: 1 },
-  cardPreview: { fontSize: 13, color: '#64748b', lineHeight: 19 },
-  cardFooter: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 2 },
-  cardAuthor: { fontSize: 12, fontWeight: '600', color: '#475569' },
-  cardDot:    { fontSize: 11, color: '#cbd5e1' },
-  cardMeta:   { fontSize: 12, color: '#94a3b8' },
-  cardStat:   { fontSize: 12, color: '#94a3b8', marginLeft: 6 },
-  badgePill:  { borderRadius: 5, paddingHorizontal: 5, paddingVertical: 2 },
-  badgePillText: { fontSize: 10, fontWeight: '800' },
+  productPillText: { fontSize: 12, color: '#475569', marginLeft: 6 },
+  tierBadge:     { width: 15, height: 15, borderRadius: 4, justifyContent: 'center', alignItems: 'center', marginLeft: 4 },
+  tierBadgeText: { fontSize: 9, fontWeight: 'bold', color: '#FFFFFF', lineHeight: 13 },
+  cardAuthor:    { fontSize: 13, color: '#94A3B8' },
+  cardDot:       { fontSize: 13, color: '#D1D5DB' },
+  cardMeta:      { fontSize: 13, color: '#94A3B8' },
+  cardThumb:    { width: 64, height: 64, borderRadius: 8, backgroundColor: '#F3F4F6' },
+  cardThumbOverlay: {
+    position: 'absolute', bottom: 4, right: 4,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    paddingHorizontal: 4, paddingVertical: 2, borderRadius: 4,
+  },
+  cardThumbOverlayText: { color: '#FFFFFF', fontSize: 10, fontWeight: '700' },
 
   emptyText: {
     textAlign: 'center', color: '#94a3b8', marginTop: 60,
@@ -331,15 +444,13 @@ const styles = StyleSheet.create({
 
   // Circular FAB
   fab: {
-    position: 'absolute', right: 20, bottom: 24,
-    flexDirection: 'row', alignItems: 'center', gap: 6,
-    backgroundColor: '#1d4ed8',
-    borderRadius: 28, paddingHorizontal: 18, paddingVertical: 12,
+    position: 'absolute', right: 24, bottom: 24,
+    width: 56, height: 56, borderRadius: 28,
+    backgroundColor: '#2E6FF2',
+    alignItems: 'center', justifyContent: 'center',
     ...Platform.select({
-      ios:     { shadowColor: '#1d4ed8', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.45, shadowRadius: 8 },
-      android: { elevation: 6 },
+      ios:     { shadowColor: '#2E6FF2', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.45, shadowRadius: 10 },
+      android: { elevation: 8 },
     }),
   },
-  fabIcon: { fontSize: 16 },
-  fabText: { fontSize: 14, fontWeight: '800', color: '#fff' },
 });

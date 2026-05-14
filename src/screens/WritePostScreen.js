@@ -2,37 +2,44 @@ import React, { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  FlatList,
   Image,
   KeyboardAvoidingView,
   Modal,
   Platform,
+  Pressable,
   ScrollView,
-  StatusBar,
   StyleSheet,
   Text,
   TextInput,
   TouchableOpacity,
-  TouchableWithoutFeedback,
   View,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as ImagePicker from 'expo-image-picker';
 import { ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { auth, storage } from '../firebase/config';
 import { createPost } from '../services/communityService';
 import { getOrCreateNickname, incrementPostCount } from '../services/firestore/userRepository';
+import { Image as ImageIcon, Link, X, Search, Camera } from 'lucide-react-native';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 const CATEGORIES = [
-  { key: 'question', label: '🙋‍♀️ 질문' },
-  { key: 'tip',      label: '🍯 꿀팁' },
-  { key: 'deal',     label: '🔥 핫딜' },
-  { key: 'review',   label: '📝 후기' },
-  { key: 'free',     label: '💬 자유' },
+  { key: 'question', label: '이유식/식단' },
+  { key: 'tip',      label: '육아꿀템' },
+  { key: 'deal',     label: '특가제보' },
+  { key: 'free',     label: '자유/고민' },
 ];
 
 const PRODUCT_CATEGORIES = new Set(['review', 'deal']);
+
+const MOCK_PRODUCTS = [
+  { id: 'p1', brand: '하기스', name: '하기스 매직팬티 5단계 (남아) 40매', price: 28900 },
+  { id: 'p2', brand: '마미포코', name: '마미포코 팬티형 기저귀 XL 60매', price: 32500 },
+  { id: 'p3', brand: '노리플레이', name: '노리플레이 소프트 블록 세트 48P', price: 45000 },
+  { id: 'p4', brand: '매일유업', name: '앱솔루트 명작 분유 2단계 800g', price: 39800 },
+];
 
 // ─── Star Selector ────────────────────────────────────────────────────────────
 
@@ -54,93 +61,148 @@ function StarSelector({ rating, onChange }) {
   );
 }
 
-// ─── Category Bottom Sheet ────────────────────────────────────────────────────
+// ─── Category Pill Row ────────────────────────────────────────────────────────
 
-function CategorySheet({ visible, current, onSelect, onClose }) {
+function CategoryPillRow({ current, onSelect }) {
   return (
-    <Modal
-      visible={visible}
-      transparent
-      animationType="slide"
-      onRequestClose={onClose}
-      statusBarTranslucent
+    <ScrollView
+      horizontal
+      showsHorizontalScrollIndicator={false}
+      contentContainerStyle={styles.pillRowContent}
+      style={styles.pillRow}
     >
-      {/* Dim overlay — tap to dismiss */}
-      <TouchableWithoutFeedback onPress={onClose}>
-        <View style={styles.sheetOverlay} />
-      </TouchableWithoutFeedback>
+      {CATEGORIES.map(({ key, label }) => {
+        const active = key === current;
+        return (
+          <TouchableOpacity
+            key={key}
+            style={[styles.pill, active && styles.pillActive]}
+            onPress={() => onSelect(key)}
+            activeOpacity={0.75}
+          >
+            <Text style={[styles.pillText, active && styles.pillTextActive]}>{label}</Text>
+          </TouchableOpacity>
+        );
+      })}
+    </ScrollView>
+  );
+}
 
-      {/* Sheet container */}
-      <View style={styles.sheetContainer}>
-        {/* Drag handle */}
-        <View style={styles.sheetHandle} />
+// ─── Product Search Modal ─────────────────────────────────────────────────────
 
+function ProductSearchModal({ visible, onClose, onSelect }) {
+  const { top: topInset } = useSafeAreaInsets();
+  const [query, setQuery] = useState('');
+
+  const filtered = MOCK_PRODUCTS.filter(
+    (p) =>
+      query.trim() === '' ||
+      p.name.includes(query.trim()) ||
+      p.brand.includes(query.trim())
+  );
+
+  return (
+    <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
+      <SafeAreaView edges={['bottom']} style={modalStyles.container}>
         {/* Header */}
-        <View style={styles.sheetHeader}>
-          <Text style={styles.sheetTitle}>게시판 선택</Text>
+        <View style={[modalStyles.header, { paddingTop: topInset + 12 }]}>
           <TouchableOpacity
             onPress={onClose}
-            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-            activeOpacity={0.7}
+            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+            style={modalStyles.headerBtn}
           >
-            <Text style={styles.sheetClose}>✕</Text>
+            <X size={24} color="#334155" />
           </TouchableOpacity>
+          <Text style={modalStyles.headerTitle}>상품 검색</Text>
+          <View style={modalStyles.headerBtn} />
         </View>
 
-        {/* Category rows */}
-        {CATEGORIES.map(({ key, label }) => {
-          const active = key === current;
-          return (
-            <TouchableOpacity
-              key={key}
-              style={[styles.sheetItem, active && styles.sheetItemActive]}
-              onPress={() => onSelect(key)}
-              activeOpacity={0.7}
-            >
-              <Text style={[styles.sheetItemText, active && styles.sheetItemTextActive]}>
-                {label}
-              </Text>
-              {active && <Text style={styles.sheetItemCheck}>✓</Text>}
+        {/* Search bar */}
+        <View style={modalStyles.searchBarWrap}>
+          <Search size={18} color="#94A3B8" style={{ marginRight: 8 }} />
+          <TextInput
+            style={modalStyles.searchInput}
+            placeholder="쿠팡 상품을 검색해보세요"
+            placeholderTextColor="#B0B8C8"
+            value={query}
+            onChangeText={setQuery}
+            returnKeyType="search"
+            autoFocus
+          />
+          {query.length > 0 && (
+            <TouchableOpacity onPress={() => setQuery('')} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+              <X size={16} color="#94A3B8" />
             </TouchableOpacity>
-          );
-        })}
+          )}
+        </View>
 
-        {/* Safe-area bottom pad */}
-        <View style={styles.sheetBottom} />
-      </View>
+        {/* Results */}
+        <FlatList
+          data={filtered}
+          keyExtractor={(item) => item.id}
+          contentContainerStyle={{ paddingBottom: 40 }}
+          keyboardShouldPersistTaps="handled"
+          ListEmptyComponent={
+            <Text style={modalStyles.emptyText}>검색 결과가 없어요</Text>
+          }
+          renderItem={({ item }) => (
+            <View style={modalStyles.resultRow}>
+              {/* Thumbnail placeholder */}
+              <View style={modalStyles.thumb} />
+              <View style={{ flex: 1, gap: 2 }}>
+                <Text style={modalStyles.brand}>{item.brand}</Text>
+                <Text style={modalStyles.name} numberOfLines={2}>{item.name}</Text>
+                <Text style={modalStyles.price}>₩{item.price.toLocaleString('ko-KR')}</Text>
+              </View>
+              <TouchableOpacity
+                style={modalStyles.selectBtn}
+                onPress={() => { onSelect(item); onClose(); }}
+                activeOpacity={0.85}
+              >
+                <Text style={modalStyles.selectBtnText}>선택</Text>
+              </TouchableOpacity>
+            </View>
+          )}
+        />
+      </SafeAreaView>
     </Modal>
   );
 }
 
 // ─── Screen ───────────────────────────────────────────────────────────────────
 
-export default function WritePostScreen({ navigation }) {
-  const [category,          setCategory]          = useState('question');
-  const [title,             setTitle]             = useState('');
-  const [content,           setContent]           = useState('');
-  const [rating,            setRating]            = useState(0);
-  const [taggedItem,        setTaggedItem]        = useState(null);
-  const [submitting,        setSubmitting]        = useState(false);
-  const [error,             setError]             = useState('');
-  const [selectedImages,    setSelectedImages]    = useState([]);
-  const [showCategorySheet, setShowCategorySheet] = useState(false);
+export default function WritePostScreen({ navigation, route }) {
+  const { editMode, postData } = route?.params || {};
+  const { top: topInset } = useSafeAreaInsets();
+
+  const [category,             setCategory]             = useState('question');
+  const [title,                setTitle]                = useState('');
+  const [content,              setContent]              = useState('');
+  const [rating,               setRating]               = useState(0);
+  const [submitting,           setSubmitting]           = useState(false);
+  const [error,                setError]                = useState('');
+  const [selectedImages,       setSelectedImages]       = useState([]);
+  const [isSearchModalVisible, setIsSearchModalVisible] = useState(false);
+  const [taggedProduct,        setTaggedProduct]        = useState(null);
 
   useEffect(() => {
     navigation.setOptions({ headerShown: false });
   }, [navigation]);
 
+  useEffect(() => {
+    if (editMode && postData) {
+      if (postData.category)          setCategory(postData.category);
+      if (postData.title)             setTitle(postData.title);
+      if (postData.content)           setContent(postData.content);
+      if (postData.imageUrls?.length) setSelectedImages(postData.imageUrls);
+    }
+  }, []);
+
   const showProductArea = PRODUCT_CATEGORIES.has(category);
-  const activeCategory  = CATEGORIES.find((c) => c.key === category) ?? CATEGORIES[0];
 
   const handleCategorySelect = (key) => {
     setCategory(key);
     setRating(0);
-    setTaggedItem(null);
-    setShowCategorySheet(false);
-  };
-
-  const handleTagProduct = () => {
-    Alert.alert('상품 태그', '상품 검색 기능을 준비 중입니다. 제목에 상품명을 적어주세요!');
   };
 
   // ── Image picker ──
@@ -187,18 +249,12 @@ export default function WritePostScreen({ navigation }) {
                 const url = await getDownloadURL(fileRef);
                 resolve(url);
               } catch (err) {
-                console.error(
-                  '[Storage] upload failed\n',
-                  '  code    :', err?.code,
-                  '\n  message :', err?.message,
-                  '\n  serverResponse:', err?.serverResponse,
-                  '\n  full    :', JSON.stringify(err)
-                );
+                console.error('[Storage] upload failed', err?.code, err?.message);
                 reject(err);
               }
             };
             xhr.onerror = (e) => {
-              console.error('[Storage] XHR blob fetch failed. URI:', uri, '\nEvent:', JSON.stringify(e));
+              console.error('[Storage] XHR blob fetch failed. URI:', uri);
               reject(new Error('XHR_BLOB_FETCH_FAILED'));
             };
             xhr.open('GET', uri);
@@ -226,19 +282,14 @@ export default function WritePostScreen({ navigation }) {
 
       await createPost({
         userId: uid, category, title, content, nickname, isVerified, imageUrls,
-        ...(showProductArea && { rating, taggedProductId: taggedItem?.productId ?? null }),
+        taggedProductId: taggedProduct?.id ?? null,
+        ...(showProductArea && { rating }),
       });
       incrementPostCount(uid).catch(() => {});
       navigation.goBack();
     } catch (err) {
       setError('등록에 실패했습니다. 다시 시도해 주세요.');
-      console.error(
-        '[WritePost] submit error\n',
-        '  code    :', err?.code,
-        '\n  message :', err?.message,
-        '\n  serverResponse:', err?.serverResponse,
-        '\n  full    :', JSON.stringify(err)
-      );
+      console.error('[WritePost] submit error', err?.code, err?.message);
     } finally {
       setSubmitting(false);
     }
@@ -247,14 +298,14 @@ export default function WritePostScreen({ navigation }) {
   // ─── Render ───────────────────────────────────────────────────────────────
 
   return (
-    <SafeAreaView style={styles.safeArea}>
+    <SafeAreaView edges={['bottom']} style={styles.safeArea}>
       <KeyboardAvoidingView
         style={styles.flex}
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         keyboardVerticalOffset={0}
       >
         {/* ── Header ── */}
-        <View style={styles.header}>
+        <View style={[styles.header, { paddingTop: topInset + 12 }]}>
           <TouchableOpacity
             style={styles.headerBtn}
             onPress={() => navigation.goBack()}
@@ -262,7 +313,7 @@ export default function WritePostScreen({ navigation }) {
           >
             <Text style={styles.headerClose}>✕</Text>
           </TouchableOpacity>
-          <Text style={styles.headerTitle}>글쓰기</Text>
+          <Text style={styles.headerTitle}>{editMode ? '글 수정' : '글쓰기'}</Text>
           <TouchableOpacity
             style={[styles.submitPill, submitting && styles.submitPillDisabled]}
             onPress={handleSubmit}
@@ -271,20 +322,13 @@ export default function WritePostScreen({ navigation }) {
           >
             {submitting
               ? <ActivityIndicator color="#fff" size="small" />
-              : <Text style={styles.submitPillText}>등록</Text>
+              : <Text style={styles.submitPillText}>{editMode ? '수정완료' : '등록'}</Text>
             }
           </TouchableOpacity>
         </View>
 
-        {/* ── Category selector row ── */}
-        <TouchableOpacity
-          style={styles.categoryRow}
-          onPress={() => setShowCategorySheet(true)}
-          activeOpacity={0.7}
-        >
-          <Text style={styles.categoryRowText}>{activeCategory.label}</Text>
-          <Text style={styles.categoryRowChevron}>⌄</Text>
-        </TouchableOpacity>
+        {/* ── Category pill row ── */}
+        <CategoryPillRow current={category} onSelect={handleCategorySelect} />
 
         <ScrollView
           style={styles.scroll}
@@ -294,13 +338,6 @@ export default function WritePostScreen({ navigation }) {
           {/* ── Product tag + rating (후기 / 핫딜 only) ── */}
           {showProductArea && (
             <View style={styles.productArea}>
-              <TouchableOpacity style={styles.tagBtn} onPress={handleTagProduct} activeOpacity={0.8}>
-                {taggedItem ? (
-                  <Text style={styles.tagBtnTextActive} numberOfLines={1}>📦 {taggedItem.name}</Text>
-                ) : (
-                  <Text style={styles.tagBtnText}>📦 상품 태그하기</Text>
-                )}
-              </TouchableOpacity>
               <View style={styles.ratingBox}>
                 <Text style={styles.ratingLabel}>별점</Text>
                 <StarSelector rating={rating} onChange={setRating} />
@@ -315,9 +352,10 @@ export default function WritePostScreen({ navigation }) {
             placeholderTextColor="#c0ccd8"
             value={title}
             onChangeText={setTitle}
-            maxLength={100}
+            maxLength={40}
             returnKeyType="next"
           />
+          <Text style={styles.titleCharCount}>{title.length}/40</Text>
 
           {/* ── Content input ── */}
           <TextInput
@@ -333,35 +371,58 @@ export default function WritePostScreen({ navigation }) {
 
           <Text style={styles.charCount}>{content.length} / 2000</Text>
 
-          {/* ── Image preview strip ── */}
-          {selectedImages.length > 0 && (
-            <ScrollView
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              contentContainerStyle={styles.imagePreviewRow}
-              style={styles.imagePreviewScroll}
+          {/* ── Image preview strip (always shown; first slot is Add button) ── */}
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.imagePreviewRow}
+            style={styles.imagePreviewScroll}
+          >
+            {/* Add-image skeleton — always first */}
+            <TouchableOpacity
+              style={styles.addImageBox}
+              onPress={handleImagePick}
+              activeOpacity={0.7}
             >
-              {selectedImages.map((uri) => (
-                // Wrapper sized to thumb + badge; no overflow needed since badge is inset
-                <View key={uri} style={styles.imageThumbWrap}>
-                  <Image source={{ uri }} style={styles.imageThumb} />
-                  {/* Remove badge: positioned INSIDE the thumb bounds to avoid Android clip */}
-                  <TouchableOpacity
-                    style={styles.imageRemoveBtn}
-                    onPress={() => handleRemoveImage(uri)}
-                    hitSlop={{ top: 4, bottom: 4, left: 4, right: 4 }}
-                  >
-                    <Text style={styles.imageRemoveText}>✕</Text>
-                  </TouchableOpacity>
-                </View>
-              ))}
-            </ScrollView>
-          )}
+              <Camera size={24} color="#94A3B8" />
+              <Text style={styles.addImageCount}>{selectedImages.length}/5</Text>
+            </TouchableOpacity>
+
+            {selectedImages.map((uri) => (
+              <View key={uri} style={styles.imageThumbWrap}>
+                <Image source={{ uri }} style={styles.imageThumb} />
+                <TouchableOpacity
+                  style={styles.imageRemoveBtn}
+                  onPress={() => handleRemoveImage(uri)}
+                  hitSlop={{ top: 4, bottom: 4, left: 4, right: 4 }}
+                >
+                  <Text style={styles.imageRemoveText}>✕</Text>
+                </TouchableOpacity>
+              </View>
+            ))}
+          </ScrollView>
 
           {error ? <Text style={styles.errorText}>{error}</Text> : null}
         </ScrollView>
 
-        {/* ── Bottom rich toolbar ── */}
+        {/* ── Tagged product mini-card ── */}
+        {taggedProduct && (
+          <View style={styles.taggedCard}>
+            <View style={styles.taggedThumb} />
+            <View style={{ flex: 1, gap: 2 }}>
+              <Text style={styles.taggedName} numberOfLines={1}>{taggedProduct.name}</Text>
+              <Text style={styles.taggedPrice}>₩{taggedProduct.price.toLocaleString('ko-KR')}</Text>
+            </View>
+            <TouchableOpacity
+              onPress={() => setTaggedProduct(null)}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            >
+              <X size={18} color="#94A3B8" />
+            </TouchableOpacity>
+          </View>
+        )}
+
+        {/* ── Bottom toolbar ── */}
         <View style={styles.toolbar}>
           <TouchableOpacity
             style={styles.toolbarIconBtn}
@@ -369,44 +430,27 @@ export default function WritePostScreen({ navigation }) {
             hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
             activeOpacity={0.7}
           >
-            <Text style={styles.toolbarIconEmoji}>📷</Text>
+            <ImageIcon size={24} color="#64748B" />
           </TouchableOpacity>
 
-          <TouchableOpacity
-            style={styles.toolbarIconBtn}
-            onPress={() => Alert.alert('태그', '태그 기능을 준비 중입니다.')}
-            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-            activeOpacity={0.7}
-          >
-            <Text style={styles.toolbarIconGlyph}>#</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={styles.toolbarIconBtn}
-            onPress={() => Alert.alert('멘션', '멘션 기능을 준비 중입니다.')}
-            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-            activeOpacity={0.7}
-          >
-            <Text style={styles.toolbarIconGlyph}>@</Text>
-          </TouchableOpacity>
-
-          {/* Spacer pushes badge to far right */}
           <View style={styles.toolbarSpacer} />
 
-          {selectedImages.length > 0 && (
-            <View style={styles.imgCountBadge}>
-              <Text style={styles.imgCountText}>{selectedImages.length}/5</Text>
-            </View>
-          )}
+          <TouchableOpacity
+            style={styles.toolbarTagBtn}
+            onPress={() => setIsSearchModalVisible(true)}
+            activeOpacity={0.85}
+          >
+            <Link size={20} color="#FFF" />
+            <Text style={styles.toolbarTagText}>상품 검색/태그</Text>
+          </TouchableOpacity>
         </View>
       </KeyboardAvoidingView>
 
-      {/* ── Category bottom sheet (rendered outside KAV so it covers full screen) ── */}
-      <CategorySheet
-        visible={showCategorySheet}
-        current={category}
-        onSelect={handleCategorySelect}
-        onClose={() => setShowCategorySheet(false)}
+      {/* ── Product search modal ── */}
+      <ProductSearchModal
+        visible={isSearchModalVisible}
+        onClose={() => setIsSearchModalVisible(false)}
+        onSelect={(product) => setTaggedProduct(product)}
       />
     </SafeAreaView>
   );
@@ -421,8 +465,7 @@ const styles = StyleSheet.create({
   // ── Header ──
   header: {
     flexDirection: 'row', alignItems: 'center',
-    paddingHorizontal: 16, paddingVertical: 12,
-    paddingTop: Platform.OS === 'android' ? (StatusBar.currentHeight ?? 24) + 12 : 12,
+    paddingHorizontal: 16, paddingBottom: 12,
     borderBottomWidth: 1, borderBottomColor: '#f1f5f9',
     backgroundColor: '#fff',
   },
@@ -433,39 +476,33 @@ const styles = StyleSheet.create({
   submitPillDisabled: { backgroundColor: '#93c5fd' },
   submitPillText:     { color: '#fff', fontSize: 14, fontWeight: '800' },
 
-  // ── Category selector row ──
-  categoryRow: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    paddingHorizontal: 16, paddingVertical: 13,
-    borderBottomWidth: 1, borderBottomColor: '#e2e8f0',
-    backgroundColor: '#f8fafc',
+  // ── Category pill row ──
+  pillRow:        { flexGrow: 0, borderBottomWidth: 1, borderBottomColor: '#F1F5F9', backgroundColor: '#fff' },
+  pillRowContent: { paddingHorizontal: 16, paddingVertical: 10, gap: 8 },
+  pill: {
+    borderRadius: 20, paddingHorizontal: 14, paddingVertical: 6,
+    borderWidth: 1, borderColor: '#E2E8F0', backgroundColor: '#FFF',
   },
-  categoryRowText:    { fontSize: 14, fontWeight: '700', color: '#1d4ed8' },
-  categoryRowChevron: { fontSize: 18, color: '#64748b', lineHeight: 22 },
+  pillActive:     { borderColor: '#2E6FF2', backgroundColor: '#EFF6FF' },
+  pillText:       { fontSize: 13, fontWeight: '600', color: '#64748B' },
+  pillTextActive: { color: '#2E6FF2', fontWeight: '700' },
 
   // ── Scroll ──
   scroll:        { flex: 1 },
-  scrollContent: { paddingBottom: 80 },
+  scrollContent: { paddingTop: 0, paddingBottom: 40 },
 
   // ── Product tag + rating ──
   productArea: {
     marginHorizontal: 14, marginTop: 14,
     backgroundColor: '#f8faff', borderRadius: 12,
-    borderWidth: 1, borderColor: '#dbeafe', padding: 14, gap: 12,
+    borderWidth: 1, borderColor: '#dbeafe', padding: 14,
   },
-  tagBtn: {
-    backgroundColor: '#fff', borderRadius: 8,
-    borderWidth: 1.5, borderColor: '#1d4ed8', borderStyle: 'dashed',
-    paddingHorizontal: 14, paddingVertical: 10, alignItems: 'center',
-  },
-  tagBtnText:       { fontSize: 14, fontWeight: '700', color: '#1d4ed8' },
-  tagBtnTextActive: { fontSize: 14, fontWeight: '700', color: '#1d4ed8' },
-  ratingBox:        { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  ratingLabel:      { fontSize: 13, fontWeight: '700', color: '#334155' },
-  starRow:          { flexDirection: 'row', alignItems: 'center', gap: 2 },
-  star:             { fontSize: 30, color: '#e2e8f0' },
-  starActive:       { color: '#fbbf24' },
-  starLabel:        { fontSize: 13, fontWeight: '700', color: '#fbbf24', marginLeft: 8 },
+  ratingBox:   { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  ratingLabel: { fontSize: 13, fontWeight: '700', color: '#334155' },
+  starRow:     { flexDirection: 'row', alignItems: 'center', gap: 2 },
+  star:        { fontSize: 30, color: '#e2e8f0' },
+  starActive:  { color: '#fbbf24' },
+  starLabel:   { fontSize: 13, fontWeight: '700', color: '#fbbf24', marginLeft: 8 },
 
   // ── Inputs ──
   titleInput: {
@@ -478,82 +515,98 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16, paddingTop: 14, paddingBottom: 12,
     minHeight: 220,
   },
-  charCount: { fontSize: 12, color: '#94a3b8', textAlign: 'right', paddingRight: 16, marginTop: 8, marginBottom: 16, alignSelf: 'stretch' },
-  errorText: { fontSize: 13, color: '#ef4444', paddingHorizontal: 16, marginTop: 6 },
+  titleCharCount: { fontSize: 12, color: '#94A3B8', textAlign: 'right', paddingRight: 16, paddingBottom: 8, marginTop: -6 },
+  charCount:      { fontSize: 12, color: '#94a3b8', textAlign: 'right', paddingRight: 16, marginTop: 8, marginBottom: 16 },
+  errorText:      { fontSize: 13, color: '#ef4444', paddingHorizontal: 16, marginTop: 6 },
 
   // ── Image preview strip ──
-  // Remove badge is positioned INSIDE the thumb (top:4, right:4) so Android never clips it.
   imagePreviewScroll: { flexGrow: 0, marginTop: 12 },
   imagePreviewRow:    { paddingHorizontal: 16, gap: 10, paddingBottom: 8 },
-  imageThumbWrap:     { width: 80, height: 80 },
-  imageThumb:         { width: 80, height: 80, borderRadius: 10, borderWidth: 1, borderColor: '#e2e8f0' },
+  addImageBox: {
+    width: 72, height: 72, borderRadius: 8,
+    borderWidth: 1, borderColor: '#CBD5E1', borderStyle: 'dashed',
+    justifyContent: 'center', alignItems: 'center',
+    backgroundColor: '#F8FAFC',
+  },
+  addImageCount: { fontSize: 12, color: '#94A3B8', marginTop: 4 },
+  imageThumbWrap: { width: 72, height: 72 },
+  imageThumb:     { width: 72, height: 72, borderRadius: 8, borderWidth: 1, borderColor: '#e2e8f0' },
   imageRemoveBtn: {
-    position: 'absolute',
-    top: 4, right: 4,          // inside bounds — Android-safe
+    position: 'absolute', top: 4, right: 4,
     width: 20, height: 20, borderRadius: 10,
     backgroundColor: 'rgba(15, 23, 42, 0.75)',
     alignItems: 'center', justifyContent: 'center',
   },
   imageRemoveText: { fontSize: 9, color: '#fff', fontWeight: '900', lineHeight: 11 },
 
-  // ── Bottom rich toolbar ──
+  // ── Tagged product mini-card ──
+  taggedCard: {
+    flexDirection: 'row', alignItems: 'center',
+    marginHorizontal: 16, marginBottom: 8,
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1, borderColor: '#CBD5E1',
+    borderRadius: 10, padding: 10, gap: 10,
+    ...Platform.select({
+      ios:     { shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.07, shadowRadius: 4 },
+      android: { elevation: 2 },
+    }),
+  },
+  taggedThumb:  { width: 48, height: 48, borderRadius: 8, backgroundColor: '#E2E8F0', flexShrink: 0 },
+  taggedName:   { fontSize: 14, fontWeight: '700', color: '#0f172a' },
+  taggedPrice:  { fontSize: 13, fontWeight: '700', color: '#2E6FF2' },
+
+  // ── Bottom toolbar ──
   toolbar: {
     flexDirection: 'row', alignItems: 'center',
-    paddingHorizontal: 12, paddingVertical: 8,
-    borderTopWidth: 1, borderTopColor: '#e2e8f0',
-    backgroundColor: '#f8fafc',
-    gap: 2,
+    paddingHorizontal: 16, paddingVertical: 16,
+    borderTopWidth: 1, borderTopColor: '#F1F5F9',
+    backgroundColor: '#fff',
     ...Platform.select({
       ios:     { paddingBottom: 24 },
-      android: { paddingBottom: 8 },
+      android: { paddingBottom: 12 },
     }),
   },
-  toolbarIconBtn:   { width: 40, height: 40, borderRadius: 8, alignItems: 'center', justifyContent: 'center' },
-  toolbarIconEmoji: { fontSize: 22 },
-  toolbarIconGlyph: { fontSize: 18, fontWeight: '800', color: '#475569' },
-  toolbarSpacer:    { flex: 1 },
-  imgCountBadge:    { backgroundColor: '#e2e8f0', borderRadius: 10, paddingHorizontal: 8, paddingVertical: 3 },
-  imgCountText:     { fontSize: 11, fontWeight: '700', color: '#475569' },
+  toolbarIconBtn: { width: 40, height: 40, borderRadius: 8, alignItems: 'center', justifyContent: 'center' },
+  toolbarTagBtn:  { flexDirection: 'row', alignItems: 'center', backgroundColor: '#2E6FF2', borderRadius: 8, paddingVertical: 10, paddingHorizontal: 16, gap: 6 },
+  toolbarTagText: { color: '#FFF', fontWeight: '700', fontSize: 14 },
+  toolbarSpacer:  { flex: 1 },
+});
 
-  // ── Category bottom sheet ──
-  sheetOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.5)',
+// ─── Modal Styles ─────────────────────────────────────────────────────────────
+
+const modalStyles = StyleSheet.create({
+  container:   { flex: 1, backgroundColor: '#fff' },
+
+  header: {
+    flexDirection: 'row', alignItems: 'center',
+    paddingHorizontal: 16, paddingBottom: 12,
+    borderBottomWidth: 1, borderBottomColor: '#F1F5F9',
   },
-  sheetContainer: {
-    position: 'absolute',
-    bottom: 0, left: 0, right: 0,
-    backgroundColor: '#fff',
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    paddingTop: 8,
-    ...Platform.select({
-      ios:     { shadowColor: '#000', shadowOffset: { width: 0, height: -3 }, shadowOpacity: 0.12, shadowRadius: 12 },
-      android: { elevation: 16 },
-    }),
+  headerBtn:   { width: 36, alignItems: 'flex-start' },
+  headerTitle: { flex: 1, textAlign: 'center', fontSize: 16, fontWeight: '800', color: '#0f172a' },
+
+  searchBarWrap: {
+    flexDirection: 'row', alignItems: 'center',
+    margin: 16,
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1, borderColor: '#E2E8F0',
+    borderRadius: 12, paddingHorizontal: 14, paddingVertical: 10,
   },
-  sheetHandle: {
-    alignSelf: 'center',
-    width: 36, height: 4,
-    borderRadius: 2,
-    backgroundColor: '#cbd5e1',
-    marginBottom: 12,
+  searchInput: { flex: 1, fontSize: 15, color: '#0f172a', padding: 0 },
+
+  resultRow: {
+    flexDirection: 'row', alignItems: 'center',
+    paddingHorizontal: 16, paddingVertical: 14,
+    borderBottomWidth: 1, borderBottomColor: '#F8FAFC',
+    gap: 12,
   },
-  sheetHeader: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    paddingHorizontal: 20, paddingBottom: 12,
-    borderBottomWidth: 1, borderBottomColor: '#f1f5f9',
-  },
-  sheetTitle:         { fontSize: 16, fontWeight: '800', color: '#0f172a' },
-  sheetClose:         { fontSize: 18, color: '#94a3b8', fontWeight: '600', padding: 4 },
-  sheetItem: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    paddingHorizontal: 20, paddingVertical: 16,
-    borderBottomWidth: 1, borderBottomColor: '#f8fafc',
-  },
-  sheetItemActive:     { backgroundColor: '#eff6ff' },
-  sheetItemText:       { fontSize: 15, fontWeight: '600', color: '#334155' },
-  sheetItemTextActive: { color: '#1d4ed8', fontWeight: '800' },
-  sheetItemCheck:      { fontSize: 16, color: '#1d4ed8', fontWeight: '800' },
-  sheetBottom:         { height: Platform.OS === 'ios' ? 32 : 16 },
+  thumb:    { width: 56, height: 56, borderRadius: 8, backgroundColor: '#E2E8F0', flexShrink: 0 },
+  brand:    { fontSize: 11, color: '#94A3B8', fontWeight: '600' },
+  name:     { fontSize: 14, fontWeight: '600', color: '#0f172a', lineHeight: 20 },
+  price:    { fontSize: 13, fontWeight: '700', color: '#2E6FF2', marginTop: 2 },
+
+  selectBtn:     { backgroundColor: '#2E6FF2', borderRadius: 8, paddingHorizontal: 14, paddingVertical: 8 },
+  selectBtnText: { color: '#FFF', fontSize: 13, fontWeight: '700' },
+
+  emptyText: { textAlign: 'center', color: '#94A3B8', marginTop: 48, fontSize: 14 },
 });
