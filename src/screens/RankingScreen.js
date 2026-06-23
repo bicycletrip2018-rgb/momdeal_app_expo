@@ -268,7 +268,14 @@ export default function RankingScreen({ navigation, route }) {
   useFocusEffect(
     useCallback(() => {
       if (deepLinkIntent) {
-        if (deepLinkIntent.targetTab) setActiveCategory(deepLinkIntent.targetTab);
+        if (deepLinkIntent.targetTab) {
+          const VALID_CATEGORY_KEYS = ['living', 'food', 'baby'];
+          setActiveCategory(
+            VALID_CATEGORY_KEYS.includes(deepLinkIntent.targetTab)
+              ? deepLinkIntent.targetTab
+              : 'living'
+          );
+        }
         if (deepLinkIntent.enableCustom !== undefined) setIsCustomRanking(deepLinkIntent.enableCustom);
         setDeepLinkIntent(null);
       }
@@ -361,7 +368,7 @@ export default function RankingScreen({ navigation, route }) {
       {isCustomRanking && !hasEnoughPeerData && (
         <View style={styles.peerDataWarning}>
           <View style={{ marginRight: 8 }}>
-            <Info size={16} color="#D97706" />
+            <Info size={16} color="#94a3b8" />
           </View>
           <Text style={styles.peerDataWarningText}>
             아직 또래 맘들의 데이터가 모이고 있어요! 우선 쿠팡 전체 랭킹을 보여드릴게요.
@@ -526,13 +533,13 @@ const styles = StyleSheet.create({
   // ── Peer data warning ─────────────────────────────────────────────────────
   peerDataWarning: {
     flexDirection: 'row', alignItems: 'center',
-    backgroundColor: '#FEF3C7',
+    backgroundColor: '#f8fafc',
     paddingHorizontal: 12, paddingVertical: 10,
     marginHorizontal: 16, marginTop: 12,
     borderRadius: 8,
   },
   peerDataWarningText: {
-    flex: 1, fontSize: 13, fontWeight: '600', color: '#D97706', lineHeight: 18,
+    flex: 1, fontSize: 13, fontWeight: '500', color: '#64748b', lineHeight: 18,
   },
 
   // ── Ticker banner ──────────────────────────────────────────────────────────

@@ -17,6 +17,30 @@ import { ArrowLeft, ChevronDown, Search, Link } from 'lucide-react-native';
 const CATEGORY_OPTIONS = ['전체', '육아수다', '질문/고민', '육아꿀템', '특가제보'];
 const SORT_OPTIONS     = ['최신순', '댓글순', '조회순', '좋아요순'];
 
+// ─── Tier badge ───────────────────────────────────────────────────────────────
+
+const TIER_LIST = [
+  { number: 1, color: '#475569' },
+  { number: 2, color: '#047857' },
+  { number: 3, color: '#B45309' },
+  { number: 4, color: '#1E40AF' },
+];
+
+function getMockTier(seed) {
+  if (!seed) return TIER_LIST[0];
+  const n = String(seed).split('').reduce((a, c) => a + c.charCodeAt(0), 0);
+  return TIER_LIST[n % TIER_LIST.length];
+}
+
+function TierBadge({ seed }) {
+  const tier = getMockTier(seed);
+  return (
+    <View style={{ backgroundColor: tier.color, borderRadius: 4, paddingHorizontal: 6, paddingVertical: 2, marginLeft: 4, justifyContent: 'center', alignItems: 'center' }}>
+      <Text style={{ color: '#FFF', fontSize: 10, fontWeight: 'bold' }}>{tier.number}</Text>
+    </View>
+  );
+}
+
 // ─── Mock search results ──────────────────────────────────────────────────────
 
 // Full unfiltered dataset — peer match is intentionally bypassed in search
@@ -61,6 +85,7 @@ function ResultCard({ item }) {
           )}
           <View style={styles.cardMeta}>
             <Text style={styles.cardMetaText}>{item.nickname}</Text>
+            <TierBadge seed={item.nickname} />
             <Text style={styles.cardMetaDot}> · </Text>
             <Text style={styles.cardMetaText}>{item.timeAgo}</Text>
             <Text style={styles.cardMetaDot}> · </Text>

@@ -1,14 +1,15 @@
-import React, { useCallback, useContext, useEffect, useRef, useState } from 'react';
-import { useNavigation } from '@react-navigation/native';
+import React, { useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { DeepLinkContext } from '../contexts/DeepLinkContext';
 import { useNotification } from '../context/NotificationContext';
+import { useTutorial } from '../context/TutorialContext';
 import { FontAwesome5 } from '@expo/vector-icons';
-import { Package, Eye, Tag, Flame, Trophy, MessageCircle, Sparkles, LayoutGrid } from 'lucide-react-native';
+import { Package, Eye, Tag, Flame, Trophy, MessageCircle, Sparkles, LayoutGrid, Clock, Heart, ShoppingCart, Smartphone, Activity, Home, TrendingDown, ChevronRight, Wallet, Users } from 'lucide-react-native';
 import {
   Animated,
   ActivityIndicator,
   Alert,
-  AppState,
   Dimensions,
   FlatList,
   Image,
@@ -21,13 +22,13 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
-import * as Clipboard from 'expo-clipboard';
 import GlobalHeader from '../components/GlobalHeader';
 import { collection, getDocs, query, where } from 'firebase/firestore';
-import { httpsCallable } from 'firebase/functions';
 import { onAuthStateChanged } from 'firebase/auth';
 import { auth, db, functions } from '../firebase/config';
 import { recordProductAction } from '../services/productActionService';
+import { scrapeRealCoupangImage } from '../utils/scrapeProductImage';
+import { fetchGoldboxDeals, fetchBestCategoryProducts, fetchPersonalizedDeals, fetchBabyBestDeals } from '../services/coupangApiService';
 import { COLORS } from '../constants/theme';
 import { useTracking } from '../context/TrackingContext';
 
@@ -75,7 +76,7 @@ const DEFAULT_MENUS = [
   { icon: 'baby',       color: '#6366f1', bg: '#ede9fe', label: '기저귀·분유', nav: (n) => n.navigate('Category') },
   { icon: 'comments',   color: '#3b82f6', bg: '#dbeafe', label: '실시간 맘톡', nav: (n) => n.navigate('커뮤니티') },
   { icon: 'gift',       color: '#8b5cf6', bg: '#f3e8ff', label: '무료 체험단', nav: (n) => n.navigate('TrialGuide') },
-  { icon: 'trophy',     color: '#d97706', bg: '#fef3c7', label: '또래 랭킹',  nav: (n) => n.navigate('랭킹') },
+  { icon: 'trophy',     color: '#d97706', bg: '#fef3c7', label: '맞춤 랭킹',  nav: (n) => n.navigate('랭킹') },
 ];
 
 const MOCK_TRACKED = []; /* temporarily cleared for PM empty-state review */
@@ -109,19 +110,6 @@ const MOCK_TIME_SALE = [
   { id: 'ts4', emoji: '🫧', bg: '#e0f2fe', brand: '프리미엄베베', name: '순한 아기 로션\n400ml 무향',                 discount: 35, price: 13900, originalPrice: 21400, stock: 5,  isRocket: true  },
 ];
 
-const MOCK_GOLDBOX = [
-  { id: 'gb1', emoji: '🧷', bg: '#fef9c3', brand: '하기스',    name: '네이처메이드 기저귀\n신생아 100매', discount: 45, price: 28900, originalPrice: 52900 },
-  { id: 'gb2', emoji: '🥛', bg: '#f0fdf4', brand: '매일유업',  name: '앱솔루트 분유\n스텝2 800g',       discount: 36, price: 39800, originalPrice: 62000 },
-  { id: 'gb3', emoji: '🧴', bg: '#fce7f3', brand: '피죤',      name: '베이비 세탁세제\n3L 대용량',       discount: 30, price: 8900,  originalPrice: 12800 },
-  { id: 'gb4', emoji: '🫧', bg: '#e0f2fe', brand: '프리미엄베베', name: '순한 아기 로션\n400ml 무향',    discount: 35, price: 13900, originalPrice: 21400 },
-];
-
-const MOCK_REPLENISHMENT = [
-  { id: 'r1', emoji: '🧷', bg: '#fef9c3', brand: '탐사',     name: '순한 기저귀\n신생아 100매',  price: 15900, originalPrice: 22000, discount: 28 },
-  { id: 'r2', emoji: '🧻', bg: '#ede9fe', brand: '탐사',     name: '베이비 물티슈\n순한 100매×6팩', price: 9900,  originalPrice: 14500, discount: 32 },
-  { id: 'r3', emoji: '🧴', bg: '#f0fdf4', brand: '비즈앤젤', name: '아기 로션\n무향 400ml',      price: 7900,  originalPrice: 11800, discount: 33 },
-  { id: 'r4', emoji: '🫧', bg: '#fce7f3', brand: '비즈앤젤', name: '아기 세제\n1.8L 대용량',     price: 6900,  originalPrice: 9800,  discount: 30 },
-];
 
 const WISH_GRID = [
   { id: 'w1', image: 'https://via.placeholder.com/150', brand: '브이텍',    name: '걸음마 학습기 한영버전',      price: 45000,  discount: 20 },
@@ -134,9 +122,9 @@ const TAG_COLOR = { 질문: '#eff6ff', 꿀팁: '#f0fdf4', 후기: '#fef9c3' };
 const TAG_TEXT  = { 질문: '#2563eb', 꿀팁: '#16a34a', 후기: '#b45309' };
 
 const MOCK_COMMUNITY = [
-  { id: 'c1', tag: '꿀팁', title: '기저귀 발진 잡는 법 총정리 (저도 됐어요)',   snippet: '우리 아이 수면 교육 이렇게 성공했어요 진짜 효과 있었던 방법만 공유드려요...', author: '절약맘_서울',   level: 'Lv.3', levelColor: '#F59E0B', likes: 42, commentCount: 18, imageUrl: 'https://picsum.photos/seed/comm1/200', imageCount: 3, createdAt: new Date(Date.now() - 60 * 60 * 1000)         },
-  { id: 'c2', tag: '질문', title: '6개월 아이 이유식 그릇 뭐 쓰세요?',          snippet: '이유식 시작했는데 그릇이 너무 다양해서 뭘 써야 할지 모르겠어요 추천 부탁드려요',  author: '초보맘_강남',   level: 'Lv.1', levelColor: '#6B7280', likes: 12, commentCount: 35, imageUrl: null,                                imageCount: 0, createdAt: new Date(Date.now() - 15 * 60 * 1000)         },
-  { id: 'c3', tag: '후기', title: '하기스 vs 팸퍼스 직접 비교해봤어요',         snippet: '두 달 동안 둘 다 써봤는데 솔직히 말씀드릴게요 결론부터 말하면 허벅지 핏이 달라요', author: '두아이맘_경기', level: 'Lv.2', levelColor: '#10B981', likes: 89, commentCount: 45, imageUrl: 'https://picsum.photos/seed/comm3/200', imageCount: 4, createdAt: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000) },
+  { id: 'c1', tag: '꿀팁', title: '기저귀 발진 잡는 법 총정리 (저도 됐어요)',   snippet: '우리 아이 수면 교육 이렇게 성공했어요 진짜 효과 있었던 방법만 공유드려요...', author: '절약맘_서울',   levelNum: 3, levelColor: '#B45309', likes: 42, commentCount: 18, imageUrl: 'https://picsum.photos/seed/comm1/200', imageCount: 3, createdAt: new Date(Date.now() - 60 * 60 * 1000)         },
+  { id: 'c2', tag: '질문', title: '6개월 아이 이유식 그릇 뭐 쓰세요?',          snippet: '이유식 시작했는데 그릇이 너무 다양해서 뭘 써야 할지 모르겠어요 추천 부탁드려요',  author: '초보맘_강남',   levelNum: 1, levelColor: '#475569', likes: 12, commentCount: 35, imageUrl: null,                                imageCount: 0, createdAt: new Date(Date.now() - 15 * 60 * 1000)         },
+  { id: 'c3', tag: '후기', title: '하기스 vs 팸퍼스 직접 비교해봤어요',         snippet: '두 달 동안 둘 다 써봤는데 솔직히 말씀드릴게요 결론부터 말하면 허벅지 핏이 달라요', author: '두아이맘_경기', levelNum: 2, levelColor: '#047857', likes: 89, commentCount: 45, imageUrl: 'https://picsum.photos/seed/comm3/200', imageCount: 4, createdAt: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000) },
 ];
 
 function formatRelativeTime(date) {
@@ -161,12 +149,31 @@ const COACH_MARKS = [
   { tabIndex: 3, tabName: '관심상품', text: '가장 중요해요! 원하는 상품을 추가하면 가격이 떨어질 때 알려드려요.', isFinal: true },
 ];
 
-// ─── Timer hook ───────────────────────────────────────────────────────────────
+// ─── Timer hooks ─────────────────────────────────────────────────────────────
 
 function useTimer(initialSeconds) {
   const [secs, setSecs] = useState(initialSeconds);
   useEffect(() => {
     const id = setInterval(() => setSecs((s) => (s > 0 ? s - 1 : 0)), 1000);
+    return () => clearInterval(id);
+  }, []);
+  const h = String(Math.floor(secs / 3600)).padStart(2, '0');
+  const m = String(Math.floor((secs % 3600) / 60)).padStart(2, '0');
+  const s = String(secs % 60).padStart(2, '0');
+  return `${h}:${m}:${s}`;
+}
+
+function useCountdownTo7AM() {
+  const getSecsTo7AM = () => {
+    const now = new Date();
+    const next7am = new Date(now);
+    next7am.setHours(7, 0, 0, 0);
+    if (now >= next7am) next7am.setDate(next7am.getDate() + 1);
+    return Math.max(0, Math.floor((next7am - now) / 1000));
+  };
+  const [secs, setSecs] = useState(getSecsTo7AM);
+  useEffect(() => {
+    const id = setInterval(() => setSecs(getSecsTo7AM()), 1000);
     return () => clearInterval(id);
   }, []);
   const h = String(Math.floor(secs / 3600)).padStart(2, '0');
@@ -190,46 +197,122 @@ function useBlinkAnim() {
   return opacity;
 }
 
-// ─── Section 1: Personalized Header & Mini-Dashboard ─────────────────────────
+// ─── Smart 3-Priority Action Banner ──────────────────────────────────────────
 
-function Section1Header({ child, childLoading, trackedCount, navigation }) {
-  const greeting = React.useMemo(() => {
-    const name = child?.taemyeong || child?.name;
-    if (name) return `${name} 맞춤 핫딜 도착!`;
-    if (child) return `우리 아기 맞춤 핫딜 도착!`;
-    return `맞춤 핫딜 도착!`;
-  }, [child]);
+function SmartActionBanner({ child, trackedItems = [], navigation }) {
+  const [debugState, setDebugState] = useState(null);
+
+  const qualifiedDrop = trackedItems.find((it) => {
+    const avg = it.averagePrice ?? it.originalPrice ?? null;
+    if (avg == null || it.currentPrice == null) return false;
+    const drop = avg - it.currentPrice;
+    const rate = avg > 0 ? drop / avg : 0;
+    return drop >= 2000 || rate >= 0.05;
+  });
+  const totalSaved = trackedItems.reduce((sum, it) => {
+    const s = (it.originalPrice ?? 0) - (it.currentPrice ?? 0);
+    return sum + (s > 0 ? s : 0);
+  }, 0);
+
+  let autoPriority = 'nudge';
+  if (qualifiedDrop)       autoPriority = 'price_drop';
+  else if (totalSaved > 0) autoPriority = 'savings';
+
+  const priority  = debugState ?? autoPriority;
+  const ageMonth  = child?.ageMonth ?? 7;
+  const rawEnv    = Array.isArray(child?.parentingEnv) ? child.parentingEnv[0] : (child?.parentingEnv ?? '');
+  const envLabel  = (rawEnv && rawEnv !== '기타') ? rawEnv : '';
+  const dropName  = qualifiedDrop?.name ?? '다이치 카시트';
+  const dropAmt   = qualifiedDrop
+    ? Math.round((qualifiedDrop.averagePrice ?? qualifiedDrop.originalPrice ?? 0) - (qualifiedDrop.currentPrice ?? 0))
+    : 45000;
+  const savedAmt  = totalSaved > 0 ? totalSaved : 12500;
+
+  const amtStr  = dropAmt.toLocaleString('ko-KR');
+  const savStr  = savedAmt.toLocaleString('ko-KR');
 
   return (
-    <TouchableOpacity
-      style={styles.dashWidget}
-      activeOpacity={0.9}
-      onPress={() => navigation.navigate('관심상품')}
-    >
-      {/* Right ~80×80 reserved for assets/images/banner_illu.png */}
-      {childLoading ? (
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-          <ActivityIndicator size="small" color="#2E6FF2" />
-          <Text style={{ fontSize: 13, color: '#3B82F6' }}>맞춤 정보 불러오는 중...</Text>
+    <View style={styles.smartBannerWrap}>
+      <TouchableOpacity
+        style={[styles.smartBannerCard, { borderLeftColor: priority === 'price_drop' ? '#EF4444' : '#2E6FF2' }]}
+        activeOpacity={0.9}
+        onPress={
+          priority === 'price_drop' || priority === 'savings'
+            ? () => navigation.navigate('관심상품')
+            : () => navigation.navigate('랭킹')
+        }
+      >
+        <View style={[styles.smartBannerIconWrap, { backgroundColor: priority === 'price_drop' ? '#FEF2F2' : '#EFF6FF' }]}>
+          {priority === 'price_drop'
+            ? <TrendingDown size={20} color="#EF4444" strokeWidth={2} />
+            : priority === 'savings'
+              ? <Wallet size={20} color="#2E6FF2" strokeWidth={2} />
+              : <Users size={20} color="#2E6FF2" strokeWidth={2} />
+          }
         </View>
-      ) : (
-        <Text style={styles.dashWidgetGreeting}>{greeting}</Text>
+        <View style={styles.smartBannerBody}>
+          {priority === 'price_drop' ? (
+            <>
+              <Text style={styles.smartBannerContext} numberOfLines={1} ellipsizeMode="tail">
+                {'내 관심상품 중 '}
+                <Text style={{ fontWeight: '800', color: '#0F172A' }}>'{dropName}'</Text>
+              </Text>
+              <Text style={styles.smartBannerAction} numberOfLines={1} ellipsizeMode="tail">
+                {'어제보다 '}
+                <Text style={{ color: '#EF4444' }}>{amtStr}원</Text>
+                {' 더 떨어졌어요!'}
+              </Text>
+            </>
+          ) : priority === 'savings' ? (
+            <>
+              <Text style={styles.smartBannerContext} numberOfLines={1} ellipsizeMode="tail">
+                세이브루 관심상품 가격 추적으로
+              </Text>
+              <Text style={styles.smartBannerAction} numberOfLines={1} ellipsizeMode="tail">
+                {'지금 당장 아낄 수 있는 돈 총 '}
+                <Text style={{ color: '#2E6FF2' }}>{savStr}원!</Text>
+              </Text>
+            </>
+          ) : (
+            <>
+              <Text style={styles.smartBannerContext} numberOfLines={1} ellipsizeMode="tail">
+                {envLabel ? `생후 ${ageMonth}개월 ${envLabel} 부모들이 저장해둔` : `생후 ${ageMonth}개월 부모들이 저장해둔`}
+              </Text>
+              <Text style={styles.smartBannerAction} numberOfLines={1} ellipsizeMode="tail">
+                필수 아이템 훔쳐보기
+              </Text>
+            </>
+          )}
+        </View>
+        <ChevronRight size={20} color="#CBD5E1" strokeWidth={2.5} style={{ marginRight: 2 }} />
+      </TouchableOpacity>
+      {__DEV__ && (
+        <View style={styles.debugRow}>
+          {[['1','nudge'],['2','price_drop'],['3','savings']].map(([num, key]) => (
+            <TouchableOpacity
+              key={key}
+              style={[styles.debugBtn, debugState === key && styles.debugBtnActive]}
+              onPress={() => setDebugState(debugState === key ? null : key)}
+            >
+              <Text style={[styles.debugBtnText, debugState === key && { color: '#2E6FF2', fontWeight: '700' }]}>
+                [{num}]
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </View>
       )}
-      <Text style={styles.dashWidgetTracking}>
-        가격 추적 중인 상품 확인하기 {'>'}
-      </Text>
-    </TouchableOpacity>
+    </View>
   );
 }
 
 // ─── Section 2: Fixed Quick Menus ────────────────────────────────────────────
 
 const FIXED_MENUS = [
-  { Icon: Flame,         color: '#EF4444', label: '오늘의 특가',   nav: (n)       => n.navigate('CurationDetail', { type: 'goldbox',       title: '오늘의 특가' }) },
-  { Icon: Trophy,        color: '#F59E0B', label: '또래 랭킹',    nav: (n)       => n.navigate('랭킹') },
-  { Icon: MessageCircle, color: '#10B981', label: '실시간 맘톡',  nav: (n)       => n.navigate('커뮤니티') },
-  { Icon: Sparkles,      color: '#8B5CF6', label: '맞춤 추천',    nav: (n)       => n.navigate('CurationDetail', { type: 'personalized',  title: '맞춤 추천' }) },
-  { Icon: LayoutGrid,    color: '#6B7280', label: '전체보기',     nav: (n, open) => open(true) },
+  { Icon: Flame,         label: '오늘의 특가',  nav: (n)       => n.navigate('CurationDetail', { type: 'goldbox', title: '오늘의 특가' }) },
+  { Icon: Trophy,        label: '맞춤 랭킹',   nav: (n)       => n.navigate('랭킹') },
+  { Icon: MessageCircle, label: '실시간 맘톡', nav: (n)       => n.navigate('커뮤니티') },
+  { Icon: Sparkles,      label: '맞춤 추천',   nav: (n)       => n.navigate('CurationDetail', { type: 'personalized', title: '맞춤 추천' }) },
+  { Icon: LayoutGrid,    label: '전체보기',    nav: (n, open) => open(true) },
 ];
 
 function Section2QuickMenus({ navigation, onOpenCategorySheet }) {
@@ -243,7 +326,7 @@ function Section2QuickMenus({ navigation, onOpenCategorySheet }) {
           onPress={() => { try { m.nav(navigation, onOpenCategorySheet); } catch (_) {} }}
         >
           <View style={styles.shortcutCircle}>
-            <m.Icon size={24} color={m.color} strokeWidth={1.8} />
+            <m.Icon size={22} color="#2E6FF2" strokeWidth={2} />
           </View>
           <Text style={styles.shortcutLabel} numberOfLines={1}>{m.label}</Text>
         </TouchableOpacity>
@@ -583,7 +666,7 @@ function Section5CommunityHighlights({ navigation }) {
         </TouchableOpacity>
       </View>
       <Text style={{ fontSize: 13, color: '#6B7280', marginTop: 0 }}>지금 또래 엄마들은 무슨 이야기를 하고 있을까요?</Text>
-      <View style={{ height: 1, backgroundColor: '#E5E7EB', marginTop: 12, marginBottom: 16 }} />
+      <View style={{ height: 1, backgroundColor: '#E5E7EB', marginTop: 8, marginBottom: 4 }} />
 
       {/* Rich Cards */}
       {MOCK_COMMUNITY.map((post) => (
@@ -603,7 +686,9 @@ function Section5CommunityHighlights({ navigation }) {
                 <View style={{ backgroundColor: '#F3F4F6', borderRadius: 4, paddingHorizontal: 4, paddingVertical: 1, marginRight: 6 }}>
                   <Text style={{ fontSize: 11, color: '#4B5563' }}>{post.tag}</Text>
                 </View>
-                <Text style={{ color: post.levelColor, fontSize: 11, fontWeight: '700' }}>{post.level}</Text>
+                <View style={{ backgroundColor: post.levelColor, borderRadius: 4, paddingHorizontal: 6, paddingVertical: 2, justifyContent: 'center', alignItems: 'center', marginRight: 4 }}>
+                  <Text style={{ color: '#FFF', fontSize: 10, fontWeight: 'bold' }}>{post.levelNum}</Text>
+                </View>
                 <Text style={{ color: '#9CA3AF', fontSize: 11 }}> {post.author}</Text>
                 <Text style={{ color: '#D1D5DB', marginHorizontal: 4 }}>·</Text>
                 <Text style={{ color: '#9CA3AF', fontSize: 11 }}>좋아요 {post.likes} · {formatRelativeTime(post.createdAt)}</Text>
@@ -657,35 +742,38 @@ function ProductCard({ item, index, navigation }) {
           ) : (
             <View style={[styles.cardImage, styles.cardImageFallback]} />
           )}
-          <View style={[styles.cardRankBadge, { backgroundColor: index === 0 ? '#fbbf24' : index === 1 ? '#9ca3af' : '#f1f5f9' }]}>
+          <View style={{ position: 'absolute', top: 8, left: 8, zIndex: 10, width: 24, height: 24, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: index === 0 ? '#fbbf24' : index === 1 ? '#9ca3af' : '#f1f5f9' }}>
             <Text style={[styles.cardRankText, { color: index <= 1 ? '#fff' : '#94a3b8' }]}>
               {index + 1}
             </Text>
           </View>
-          {index < 2 && (
-            <View style={styles.lowestPriceBadge}>
-              <Text style={styles.lowestPriceText}>🔥 역대 최저가</Text>
+          {(item.trackedDays ?? 0) >= 7 && item.currentPrice != null && item.currentPrice <= (item.minPriceIn60Days ?? item.lowestPrice ?? item.currentPrice) && (
+            <View style={{ position: 'absolute', top: 8, right: 8, zIndex: 999, backgroundColor: '#EF4444', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 }}>
+              <Text style={{ color: 'white', fontSize: 10, fontWeight: 'bold' }}>최저가</Text>
             </View>
           )}
         </View>
         <View style={styles.cardInfo}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 4 }}>
-            <Text style={styles.cardBrand} numberOfLines={1}>{item.brand || '브랜드'}</Text>
-            {item.isRocket && (
-              <View style={[styles.rocketBadge, { marginLeft: 6, marginTop: 0 }]}>
-                <Text style={styles.rocketBadgeText}>🚀 로켓배송</Text>
-              </View>
-            )}
-          </View>
+          <Text style={styles.cardBrand} numberOfLines={1}>{item.brand || '브랜드'}</Text>
           <Text style={styles.cardName} numberOfLines={2}>{item.name || '이름 없음'}</Text>
+          {(() => {
+            const specText = item.spec || (() => {
+              const m = item.name?.match(/\d+\.?\d*\s*(g|ml|kg|L|리터|개|롤|매|팩|정|캡슐|포|박스)/ig);
+              return m ? m.join(' / ') : '';
+            })();
+            return specText ? <Text style={{ fontSize: 11, color: '#64748B', marginTop: 2 }}>{specText}</Text> : null;
+          })()}
           <View style={{ marginTop: 4 }}>
-            <View style={{ flexDirection: 'row', alignItems: 'baseline' }}>
+            <View style={{ flexDirection: 'row', alignItems: 'baseline', flexWrap: 'wrap' }}>
               <Text style={{ fontSize: 14, fontWeight: 'bold', color: '#ef4444', marginRight: 4 }}>
                 {item.discount || 15}%
               </Text>
               <Text style={{ fontSize: 14, fontWeight: 'bold', color: '#0f172a' }}>
                 ₩{(item.price ?? item.currentPrice ?? 0).toLocaleString('ko-KR')}
               </Text>
+              {item.isRocket && (
+                <Text style={{ fontSize: 11, color: '#2E6FF2', fontWeight: '700', marginLeft: 6 }}>🚀 로켓</Text>
+              )}
             </View>
             <Text style={{ fontSize: 11, color: '#94a3b8', textDecorationLine: 'line-through', marginTop: 2 }}>
               ₩{(item.originalPrice ?? Math.round((item.price ?? item.currentPrice ?? 0) * 1.15)).toLocaleString('ko-KR')}
@@ -788,37 +876,70 @@ function MediumCard({ item, index, navigation }) {
 
 const RANK_COLORS = ['#FFB800', '#94A3B8', '#CD7F32', '#0F172A', '#0F172A'];
 
+const normalizeImg = (img) => {
+  if (!img) return null;
+  let s = String(img).trim();
+  if (s.startsWith('//')) s = 'https:' + s;
+  return s.replace('http://', 'https://');
+};
+
 function HorizontalCard({ item, index, navigation, showRank = false, showTrustCopy = false, onPress }) {
+  const [imgErr, setImgErr] = useState(false);
+  const [scrapedImg, setScrapedImg] = useState(null);
+
   const handlePress = onPress ?? (() => {
     if (item.productId) {
       recordProductAction({ userId: auth.currentUser?.uid, productId: item.productId, productGroupId: item.productId, actionType: 'click' });
     }
     navigation.navigate('Detail', { item });
   });
-  const discount  = showRank ? (item.discount ?? 15) : item.discount;
-  const origPrice = item.originalPrice ?? (showRank ? Math.round((item.price ?? item.currentPrice ?? 0) * 1.15) : null);
+  const origPrice    = item.originalPrice ?? null;
+  const currentPrice = item.price ?? item.currentPrice ?? 0;
+  const apiDiscount  = item.discountRate ?? item.discount ?? null;
+  const calcDiscount = (origPrice != null && origPrice > currentPrice)
+    ? Math.round(((origPrice - currentPrice) / origPrice) * 100) : null;
+  const discount         = apiDiscount ?? calcDiscount;
+  const hasFullPriceInfo = discount != null && origPrice != null;
+  const rawImgUri = normalizeImg(
+    item.productImage || item.image || item.imageUrl ||
+    item.thumbnail || item.thumbnailUrl ||
+    item.productDetails?.imageUrl || item.vendorItem?.imageUrl || null
+  );
+  const imgUri = rawImgUri || scrapedImg;
+
+  useEffect(() => {
+    if (rawImgUri) return;
+    const url = item.productUrl || item.coupangUrl || item.url || null;
+    if (!url) return;
+    scrapeRealCoupangImage(url).then((img) => { if (img) setScrapedImg(img); });
+  }, [rawImgUri, item.productUrl, item.coupangUrl, item.url]);
 
   return (
     <TouchableOpacity style={styles.hCard} activeOpacity={0.88} onPress={handlePress}>
       <View style={styles.hCardImageWrap}>
-        {item.image ? (
-          <Image source={{ uri: item.image }} style={styles.hCardImage} resizeMode="cover" />
+        {imgUri && !imgErr ? (
+          <Image
+              source={{ uri: imgUri }}
+              style={styles.hCardImage}
+              resizeMode="cover"
+              onError={() => setImgErr(true)}
+            />
         ) : (
-          <View style={[styles.hCardImage, { backgroundColor: item.bg ?? '#e2e8f0', alignItems: 'center', justifyContent: 'center' }]}>
-            <Package size={40} color="rgba(100,116,139,0.45)" strokeWidth={1.5} />
+          <View style={[styles.hCardImage, { backgroundColor: '#F1F5F9', borderRadius: 8, justifyContent: 'center', alignItems: 'center' }]}>
+            <Package size={28} color="#94A3B8" strokeWidth={1.5} />
           </View>
         )}
-        {showRank && (
+        {index != null && (
           <View style={[styles.hCardRankBadge, { backgroundColor: RANK_COLORS[Math.min(index, 4)] }]}>
             <Text style={styles.hCardRankBadgeText}>{index + 1}</Text>
           </View>
         )}
         {showRank && index === 0 && (
-          <View style={styles.hCardLowestOverlay}>
-            <Text style={styles.hCardLowestPillText}>최저가</Text>
+          <View style={{ position: 'absolute', top: 8, right: 8, zIndex: 999, backgroundColor: '#EF4444', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 }}>
+            <Text style={{ fontSize: 10, fontWeight: '700', color: '#fff' }}>최저가</Text>
           </View>
         )}
-        {!showRank && discount != null && (
+        {!showRank && hasFullPriceInfo && (
           <View style={styles.hCardDiscountPill}>
             <Text style={styles.hCardDiscountPillText}>-{discount}%</Text>
           </View>
@@ -828,58 +949,30 @@ function HorizontalCard({ item, index, navigation, showRank = false, showTrustCo
         {showTrustCopy && (
           <Text style={styles.hCardTrustCopy} numberOfLines={1}>또래 워킹맘 84% 선택</Text>
         )}
-        <Text numberOfLines={2} style={styles.hCardMergedName}>
-          {item.brand ? <Text style={styles.hCardBrandInline}>{item.brand} </Text> : null}
+        <Text numberOfLines={2} ellipsizeMode="tail" style={{ fontSize: 13, color: '#0F172A', lineHeight: 18, marginBottom: 5 }}>
+          {item.brand ? <Text style={{ color: '#94A3B8', fontWeight: 'bold' }}>[{item.brand}] </Text> : null}
           {item.name || '이름 없음'}
         </Text>
-        <View style={{ flexDirection: 'row', alignItems: 'baseline', marginTop: 4 }}>
+        <View style={{ flexDirection: 'row', alignItems: 'baseline', flexWrap: 'wrap' }}>
           {discount != null && (
-            <Text style={{ fontSize: 13, fontWeight: '800', color: '#EF4444', marginRight: 3 }}>{discount}%</Text>
+            <Text style={{ fontSize: 16, color: '#EF4444', fontWeight: '900', marginRight: 4 }}>{discount}%</Text>
           )}
-          <Text style={{ fontSize: 13, fontWeight: '800', color: '#0f172a' }} numberOfLines={1}>
-            ₩{(item.price ?? item.currentPrice ?? 0).toLocaleString('ko-KR')}
+          <Text style={{ fontSize: 16, color: '#0F172A', fontWeight: '800' }} numberOfLines={1}>
+            ₩{currentPrice.toLocaleString('ko-KR')}
           </Text>
+          {origPrice != null && (
+            <Text style={{ fontSize: 11, color: '#94A3B8', textDecorationLine: 'line-through', marginLeft: 4 }}>
+              ₩{origPrice.toLocaleString('ko-KR')}
+            </Text>
+          )}
         </View>
-        {origPrice != null && (
-          <Text style={{ fontSize: 11, color: '#9CA3AF', textDecorationLine: 'line-through', marginTop: 2 }}>
-            ₩{origPrice.toLocaleString('ko-KR')}
-          </Text>
+        {item.isRocket && (
+          <View style={{ marginTop: 4 }}>
+            <Text style={{ fontSize: 11, color: '#2E6FF2', fontWeight: '700' }}>🚀 로켓배송</Text>
+          </View>
         )}
       </View>
     </TouchableOpacity>
-  );
-}
-
-// ─── 10d. Replenishment Strip ─────────────────────────────────────────────────
-
-function ReplenishmentStrip({ child, navigation }) {
-  const childName = child?.taemyeong || child?.name || '아이';
-  return (
-    <View style={{ marginTop: 16 }}>
-      <Text style={[styles.sectionTitle, { marginBottom: 4 }]}>
-        🛒 {childName} 기저귀/분유 떨어질 때 안 됐나요?
-      </Text>
-      <Text style={[styles.sectionSub, { marginBottom: 10 }]}>소모품 쟁여두기 전에 최저가 체크!</Text>
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 10 }}>
-        {MOCK_REPLENISHMENT.map((item) => (
-          <TouchableOpacity
-            key={item.id}
-            style={styles.replenishCard}
-            activeOpacity={0.85}
-            onPress={() => navigation.navigate('관심상품')}
-          >
-            <View style={[styles.replenishThumb, { backgroundColor: item.bg }]}>
-              <Text style={{ fontSize: 30 }}>{item.emoji}</Text>
-            </View>
-            <View style={{ paddingHorizontal: 8, paddingBottom: 10 }}>
-              <Text style={{ fontSize: 11, color: '#64748b', fontWeight: '600' }}>{item.brand}</Text>
-              <Text style={{ fontSize: 12, fontWeight: '700', color: '#0f172a', lineHeight: 17, marginTop: 2 }} numberOfLines={2}>{item.name}</Text>
-              <Text style={{ fontSize: 13, fontWeight: '800', color: '#2E6FF2', marginTop: 4 }}>₩{item.price.toLocaleString('ko-KR')}</Text>
-            </View>
-          </TouchableOpacity>
-        ))}
-      </ScrollView>
-    </View>
   );
 }
 
@@ -972,59 +1065,42 @@ const cm = StyleSheet.create({
 // ─── Screen ───────────────────────────────────────────────────────────────────
 
 export default function HomeScreen({ navigation }) {
+  const insets = useSafeAreaInsets();
   const { unreadCount } = useNotification();
   const { setDeepLinkIntent } = useContext(DeepLinkContext);
   const { globalTrackedItems } = useTracking();
+  const { setTutorialActive } = useTutorial();
   const [child,            setChild]            = useState(null);
   const [childLoading,     setChildLoading]     = useState(true);
   const [curation,         setCuration]         = useState([]);
   const [curationLoading,  setCurationLoading]  = useState(true);
+  const [goldboxAllDeals,  setGoldboxAllDeals]  = useState([]);
+  const [peerDeals,        setPeerDeals]        = useState([]);
+  const [babyDeals,        setBabyDeals]        = useState([]);
+  const [dealsLoading,     setDealsLoading]     = useState(true);
   const [refreshing,       setRefreshing]       = useState(false);
-  const fetchingRef = useRef(false);
+  const goldboxCountdown  = useCountdownTo7AM();
+  const fetchingRef       = useRef(false);
+  const currentUserRef    = useRef(null);
 
   // Coach mark tour (0 = hidden)
   const [tutorialStep,  setTutorialStep]  = useState(0);
+  useEffect(() => { setTutorialActive(tutorialStep > 0); }, [tutorialStep, setTutorialActive]);
 
-  // Magic Nudge (clipboard Coupang link detection)
-  const [showClipNudge,         setShowClipNudge]         = useState(false);
-  const [clipNudgeUrl,          setClipNudgeUrl]          = useState('');
   const [isCategorySheetVisible, setCategorySheetVisible] = useState(false);
-  const nudgeAnim = useRef(new Animated.Value(80)).current;
 
   // Auto-start coach mark tour on first mount
   useEffect(() => {
     setTutorialStep(1);
   }, []);
 
-  // Slide nudge in/out
-  useEffect(() => {
-    Animated.timing(nudgeAnim, {
-      toValue: showClipNudge ? 0 : 80,
-      duration: 300,
-      useNativeDriver: true,
-    }).start();
-  }, [showClipNudge, nudgeAnim]);
+  // Clipboard detection handled globally by GlobalMagicNudge in App.js
 
-  // Detect Coupang link when app returns to foreground
-  useEffect(() => {
-    const sub = AppState.addEventListener('change', async (nextState) => {
-      if (nextState !== 'active') return;
-      try {
-        const text = await Clipboard.getStringAsync();
-        if (text && text.includes('coupang.com') && tutorialStep === 0) {
-          setClipNudgeUrl(text);
-          setShowClipNudge(true);
-          await Clipboard.setStringAsync('');
-        }
-      } catch {}
-    });
-    return () => sub.remove();
-  }, [tutorialStep]);
-
-  // Auth + child load
+  // Auth + initial child load
   useEffect(() => {
     setChildLoading(true);
     const unsub = onAuthStateChanged(auth, async (user) => {
+      currentUserRef.current = user ?? null;
       if (!user) { setChild(null); setChildLoading(false); return; }
       try {
         const snap = await getDocs(query(collection(db, 'children'), where('userId', '==', user.uid)));
@@ -1035,29 +1111,65 @@ export default function HomeScreen({ navigation }) {
     return () => unsub();
   }, []);
 
+  // Re-fetch child on focus so MyPage age/profile changes are reflected immediately
+  useFocusEffect(useCallback(() => {
+    const user = currentUserRef.current;
+    if (!user) return;
+    getDocs(query(collection(db, 'children'), where('userId', '==', user.uid)))
+      .then((snap) => { if (snap.docs[0]) setChild({ id: snap.docs[0].id, ...snap.docs[0].data() }); })
+      .catch(() => {});
+  }, []));
+
   const loadCuration = useCallback(async () => {
     if (fetchingRef.current) return;
     fetchingRef.current = true;
     setCurationLoading(true);
     try {
-      const fn = httpsCallable(functions, 'getBestCategoryProducts');
-      const result = await fn({ categoryId: 1011 });
-      setCuration((result?.data?.products ?? []).slice(0, 10));
+      const data = await fetchPersonalizedDeals(child);
+      if (data && data.length > 0) {
+        setCuration(data.slice(0, 10));
+      } else {
+        const fallback = await fetchBabyBestDeals(10).catch(() => []);
+        setCuration(fallback.slice(0, 10));
+      }
     } catch {
-      setCuration([]);
+      try {
+        const fallback = await fetchBabyBestDeals(10).catch(() => []);
+        setCuration(fallback.slice(0, 10));
+      } catch {
+        setCuration([]);
+      }
     } finally {
       setCurationLoading(false);
       fetchingRef.current = false;
     }
-  }, []);
+  }, [child]);
 
   useEffect(() => { loadCuration(); }, [loadCuration]);
 
+  const loadDeals = useCallback(async () => {
+    setDealsLoading(true);
+    try {
+      const [goldbox, peer, baby] = await Promise.all([
+        fetchGoldboxDeals().catch(() => []),
+        fetchBestCategoryProducts(1014, 10).catch(() => []),
+        fetchBabyBestDeals(10).catch(() => []),
+      ]);
+      setGoldboxAllDeals(goldbox);
+      setPeerDeals(peer);
+      setBabyDeals(baby);
+    } finally {
+      setDealsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { loadDeals(); }, [loadDeals]);
+
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
-    await loadCuration();
+    await Promise.all([loadCuration(), loadDeals()]);
     setRefreshing(false);
-  }, [loadCuration]);
+  }, [loadCuration, loadDeals]);
 
   return (
     <View style={styles.root}>
@@ -1083,11 +1195,10 @@ export default function HomeScreen({ navigation }) {
         }
         showsVerticalScrollIndicator={false}
       >
-        {/* ── Section 1: Personalized Header & Mini-Dashboard ── */}
-        <Section1Header
+        {/* ── Section 1: Smart Action Banner ── */}
+        <SmartActionBanner
           child={child}
-          childLoading={childLoading}
-          trackedCount={globalTrackedItems.length}
+          trackedItems={globalTrackedItems}
           navigation={navigation}
         />
 
@@ -1095,11 +1206,13 @@ export default function HomeScreen({ navigation }) {
         <Section2QuickMenus navigation={navigation} onOpenCategorySheet={setCategorySheetVisible} />
         <View style={styles.sectionDivider} />
 
-        {/* ── Section 3: 실시간 또래 베스트 특가 ── */}
+        {/* ── Section 3: 맞춤 특가 (동적 타이틀) ── */}
         <View style={styles.section}>
           <View style={styles.secHeader}>
             <View style={styles.secHeaderTop}>
-              <Text style={styles.secTitle}>실시간 또래 베스트 특가</Text>
+              <Text style={styles.secTitle}>
+                {child ? '내 아이 맞춤 특가 상품' : '출산 맞춤 특가 상품'}
+              </Text>
               <TouchableOpacity
                 onPress={() => {
                   setDeepLinkIntent({ targetTab: 'frequent', enableCustom: true, targetAge: child?.ageMonth ? `${child.ageMonth}개월` : '67개월' });
@@ -1110,7 +1223,11 @@ export default function HomeScreen({ navigation }) {
                 <Text style={styles.secViewAll}>전체 ›</Text>
               </TouchableOpacity>
             </View>
-            <Text style={styles.secSub}>지금 가격이 뚝 떨어진 인기 상품만 모았어요</Text>
+            <Text style={styles.secSub}>
+              {child
+                ? '내 아이와 유사 환경의 부모가 자주 찾는 특가 상품'
+                : '출산을 준비하는 부모가 자주 찾는 특가 상품'}
+            </Text>
           </View>
           {curationLoading ? (
             <View style={styles.curationLoading}>
@@ -1118,12 +1235,14 @@ export default function HomeScreen({ navigation }) {
               <Text style={styles.curationLoadingText}>불러오는 중...</Text>
             </View>
           ) : curation.length === 0 ? (
-            <Text style={styles.emptyText}>상품 정보를 불러올 수 없습니다</Text>
+            <View style={{ alignItems: 'center', paddingVertical: 24 }}>
+              <Text style={[styles.emptyText, { color: '#94A3B8' }]}>데이터 준비중</Text>
+            </View>
           ) : (
             <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 12 }}>
               {curation.slice(0, 5).map((item, index) => (
                 <HorizontalCard
-                  key={item.productId ? `${item.productId}-${index}` : String(index)}
+                  key={`${item.productId || item.productGroupId || 'item'}-${index}`}
                   item={item}
                   index={index}
                   navigation={navigation}
@@ -1136,59 +1255,120 @@ export default function HomeScreen({ navigation }) {
         </View>
         <View style={styles.sectionDivider} />
 
-        {/* ── Section 3b: 오늘의 육아 특가 ── */}
+        {/* ── Section 3b: 유아동 베스트 상품 ── */}
         <View style={styles.section}>
           <View style={styles.secHeader}>
             <View style={styles.secHeaderTop}>
-              <Text style={styles.secTitle}>오늘의 육아 특가</Text>
+              <Text style={styles.secTitle}>유아동 베스트 상품</Text>
               <TouchableOpacity
-                onPress={() => navigation.navigate('CurationDetail', { type: 'goldbox', title: '오늘의 육아 특가' })}
+                onPress={() => navigation.navigate('CurationDetail', { type: 'mamtem', title: '유아동 베스트 상품' })}
                 hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
               >
                 <Text style={styles.secViewAll}>전체 ›</Text>
               </TouchableOpacity>
             </View>
-            <Text style={styles.secSub}>하루 한정, 최대 45% 육아 필수템 특가</Text>
+            <Text style={styles.secSub}>우리아이 또래 부모들이 가장 많이 찾는 제품</Text>
           </View>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 10 }}>
-            {MOCK_GOLDBOX.map((item) => (
-              <HorizontalCard
-                key={item.id}
-                item={item}
-                index={0}
-                navigation={navigation}
-                onPress={() => navigation.navigate('Detail', { item })}
-              />
-            ))}
-          </ScrollView>
+          {dealsLoading ? (
+            <View style={styles.curationLoading}>
+              <ActivityIndicator size="small" color="#2E6FF2" />
+              <Text style={styles.curationLoadingText}>불러오는 중...</Text>
+            </View>
+          ) : babyDeals.length === 0 ? (
+            <Text style={styles.emptyText}>상품 정보를 불러올 수 없습니다</Text>
+          ) : (
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 10 }}>
+              {babyDeals.slice(0, 10).map((item, idx) => (
+                <HorizontalCard
+                  key={`${item.productId || item.productGroupId || 'item'}-${idx}`}
+                  item={{ ...item, price: item.price ?? item.currentPrice }}
+                  index={idx}
+                  navigation={navigation}
+                  onPress={() => navigation.navigate('Detail', { item })}
+                />
+              ))}
+            </ScrollView>
+          )}
         </View>
         <View style={styles.sectionDivider} />
 
-        {/* ── Section 4: 지금 쟁여야 할 생필품 핫딜 ── */}
+        {/* ── Section 3c: 오늘의 특가 (Goldbox + 7AM 카운트다운) ── */}
         <View style={styles.section}>
           <View style={styles.secHeader}>
             <View style={styles.secHeaderTop}>
-              <Text style={styles.secTitle}>지금 쟁여야 할 생필품 핫딜</Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexShrink: 1 }}>
+                <Text style={styles.secTitle} numberOfLines={1}>오늘의 특가</Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: '#FEF2F2', paddingHorizontal: 9, paddingVertical: 4, borderRadius: 12 }}>
+                  <Clock size={16} color="#EF4444" />
+                  <Text style={{ fontSize: 14, fontWeight: 'bold', color: '#EF4444', fontVariant: ['tabular-nums'] }}>{goldboxCountdown}</Text>
+                </View>
+              </View>
               <TouchableOpacity
-                onPress={() => navigation.navigate('CurationDetail', { type: 'coupangPL', title: '지금 쟁여야 할 생필품 핫딜' })}
+                onPress={() => navigation.navigate('CurationDetail', { type: 'goldbox', title: '오늘의 특가' })}
                 hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
               >
                 <Text style={styles.secViewAll}>전체 ›</Text>
               </TouchableOpacity>
             </View>
-            <Text style={styles.secSub}>기저귀·물티슈, 가격 내려갔을 때 미리 담아두세요</Text>
+            <Text style={styles.secSub}>매일 아침 업데이트되는 오늘 할인 상품</Text>
           </View>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 10, paddingVertical: 4 }}>
-            {MOCK_REPLENISHMENT.map((item) => (
-              <HorizontalCard
-                key={item.id}
-                item={item}
-                index={0}
-                navigation={navigation}
-                onPress={() => navigation.navigate('관심상품')}
-              />
-            ))}
-          </ScrollView>
+          {dealsLoading ? (
+            <View style={styles.curationLoading}>
+              <ActivityIndicator size="small" color="#2E6FF2" />
+              <Text style={styles.curationLoadingText}>불러오는 중...</Text>
+            </View>
+          ) : goldboxAllDeals.length === 0 ? (
+            <Text style={styles.emptyText}>상품 정보를 불러올 수 없습니다</Text>
+          ) : (
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 10 }}>
+              {goldboxAllDeals.map((item, idx) => (
+                <HorizontalCard
+                  key={`${item.id || item.productGroupId || 'item'}-${idx}`}
+                  item={item}
+                  index={idx}
+                  navigation={navigation}
+                  onPress={() => navigation.navigate('Detail', { item })}
+                />
+              ))}
+            </ScrollView>
+          )}
+        </View>
+        <View style={styles.sectionDivider} />
+
+        {/* ── Section 4: 할인 할 때 사야하는 생필품 ── */}
+        <View style={styles.section}>
+          <View style={styles.secHeader}>
+            <View style={styles.secHeaderTop}>
+              <Text style={styles.secTitle}>할인 할 때 사야하는 생필품</Text>
+              <TouchableOpacity
+                onPress={() => navigation.navigate('CurationDetail', { type: 'pl_deals', title: '할인 할 때 사야하는 생필품' })}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              >
+                <Text style={styles.secViewAll}>전체 ›</Text>
+              </TouchableOpacity>
+            </View>
+            <Text style={styles.secSub}>가격 내려갔을 때 미리 담아야하는 상품</Text>
+          </View>
+          {dealsLoading ? (
+            <View style={styles.curationLoading}>
+              <ActivityIndicator size="small" color="#2E6FF2" />
+              <Text style={styles.curationLoadingText}>불러오는 중...</Text>
+            </View>
+          ) : peerDeals.length === 0 ? (
+            <Text style={styles.emptyText}>상품 정보를 불러올 수 없습니다</Text>
+          ) : (
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 10, paddingVertical: 4 }}>
+              {peerDeals.map((item, idx) => (
+                <HorizontalCard
+                  key={`${item.id || item.productGroupId || 'item'}-${idx}`}
+                  item={item}
+                  index={idx}
+                  navigation={navigation}
+                  onPress={() => navigation.navigate('관심상품')}
+                />
+              ))}
+            </ScrollView>
+          )}
         </View>
         <View style={styles.sectionDivider} />
 
@@ -1200,26 +1380,6 @@ export default function HomeScreen({ navigation }) {
           이 포스팅은 쿠팡 파트너스 활동의 일환으로, 이에 따른 일정액의 수수료를 제공받습니다.
         </Text>
       </ScrollView>
-
-      {/* ── Magic Nudge: clipboard Coupang link detected ── */}
-      <Animated.View style={[styles.clipNudge, { transform: [{ translateY: nudgeAnim }] }]}>
-        <Text style={styles.clipNudgeText}>복사하신 쿠팡 상품의 최저가를 추적할까요?</Text>
-        <View style={styles.clipNudgeActions}>
-          <TouchableOpacity
-            style={styles.clipNudgeTrackBtn}
-            onPress={() => { setShowClipNudge(false); navigation.navigate('관심상품'); }}
-            activeOpacity={0.85}
-          >
-            <Text style={styles.clipNudgeTrackText}>추적하기</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            onPress={() => setShowClipNudge(false)}
-            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-          >
-            <Text style={styles.clipNudgeClose}>✕</Text>
-          </TouchableOpacity>
-        </View>
-      </Animated.View>
 
       {/* ── Coach Mark Tutorial Overlay ── */}
       <CoachMarkOverlay
@@ -1243,18 +1403,18 @@ export default function HomeScreen({ navigation }) {
           activeOpacity={1}
           onPress={() => setCategorySheetVisible(false)}
         />
-        <View style={styles.catSheet}>
+        <View style={[styles.catSheet, { paddingBottom: insets.bottom + 16 }]}>
           <View style={styles.catSheetHandle} />
           <Text style={styles.catSheetTitle}>카테고리</Text>
           {[
-            { label: '출산·유아동', icon: '🍼', id: '1011' },
-            { label: '식품',        icon: '🥗', id: '1012' },
-            { label: '생활용품',    icon: '🧴', id: '1014' },
-            { label: '패션의류',    icon: '👗', id: '1001' },
-            { label: '뷰티',        icon: '💄', id: '1005' },
-            { label: '가전디지털',  icon: '📱', id: '1002' },
-            { label: '스포츠·레저', icon: '🏃', id: '1009' },
-            { label: '홈·인테리어', icon: '🏠', id: '1010' },
+            { label: '출산·유아동', Icon: Heart,        id: '1011' },
+            { label: '식품',        Icon: ShoppingCart,  id: '1012' },
+            { label: '생활용품',    Icon: Package,       id: '1014' },
+            { label: '패션의류',    Icon: Tag,           id: '1001' },
+            { label: '뷰티',        Icon: Sparkles,      id: '1005' },
+            { label: '가전디지털',  Icon: Smartphone,    id: '1002' },
+            { label: '스포츠·레저', Icon: Activity,      id: '1009' },
+            { label: '홈·인테리어', Icon: Home,          id: '1010' },
           ].map((cat) => (
             <TouchableOpacity
               key={cat.label}
@@ -1265,7 +1425,9 @@ export default function HomeScreen({ navigation }) {
                 navigation.navigate('CategoryDetail', { categoryId: cat.id, categoryName: cat.label });
               }}
             >
-              <Text style={styles.catSheetRowIcon}>{cat.icon}</Text>
+              <View style={styles.catSheetRowIconWrap}>
+                <cat.Icon size={18} color="#6B7280" strokeWidth={1.8} />
+              </View>
               <Text style={styles.catSheetRowLabel}>{cat.label}</Text>
               <Text style={styles.catSheetRowArrow}>›</Text>
             </TouchableOpacity>
@@ -1282,6 +1444,26 @@ const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: '#f5f7fb' },
   container: { flex: 1 },
   scrollContent: { paddingBottom: 40 },
+
+  // ── Smart Action Banner (fintech card) ─────────────────────────────────────
+  smartBannerWrap: { marginHorizontal: 16, marginTop: 12, marginBottom: 4 },
+  smartBannerCard: {
+    flexDirection: 'row', alignItems: 'center',
+    backgroundColor: '#FFFFFF', borderRadius: 16,
+    minHeight: 84, paddingVertical: 16, paddingHorizontal: 16,
+    ...Platform.select({
+      ios:     { shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.10, shadowRadius: 12 },
+      android: { elevation: 4 },
+    }),
+  },
+  smartBannerIconWrap: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center' },
+  smartBannerBody:     { flex: 1, marginHorizontal: 12, justifyContent: 'center' },
+  smartBannerContext:  { fontSize: 13, fontWeight: '500', color: '#64748B', marginBottom: 2 },
+  smartBannerAction:   { fontSize: 17, fontWeight: '800', color: '#0F172A' },
+  debugRow:            { flexDirection: 'row', gap: 3, justifyContent: 'flex-end', marginTop: 3, marginRight: 2 },
+  debugBtn:            { paddingHorizontal: 6, paddingVertical: 2, borderRadius: 3, backgroundColor: '#F1F5F9' },
+  debugBtnActive:      { backgroundColor: '#EFF6FF', borderWidth: 1, borderColor: '#BFDBFE' },
+  debugBtnText:        { fontSize: 9, color: '#94A3B8', fontWeight: '600' },
 
 
   // ── Hero ────────────────────────────────────────────────────────────────────
@@ -1319,9 +1501,9 @@ const styles = StyleSheet.create({
   },
   shortcutItem: { alignItems: 'center', gap: 2 },
   shortcutCircle: {
-    width: 56, height: 56, borderRadius: 28,
-    backgroundColor: '#F3F4F6', alignItems: 'center', justifyContent: 'center',
-    marginBottom: 8,
+    width: 48, height: 48, borderRadius: 24,
+    backgroundColor: '#EFF6FF', alignItems: 'center', justifyContent: 'center',
+    marginBottom: 6,
   },
   shortcutLabel: { fontSize: 12, fontWeight: '600', color: '#374151', maxWidth: 62, textAlign: 'center', letterSpacing: -0.3 },
 
@@ -1529,12 +1711,12 @@ const styles = StyleSheet.create({
       android: { elevation: 2 },
     }),
   },
-  productCardInner: { borderRadius: 12, overflow: 'hidden' },
+  productCardInner: { borderRadius: 12 },
   cardImageContainer: { width: CARD_WIDTH, height: 140, position: 'relative' },
   cardImage: { width: CARD_WIDTH, height: 140 },
   cardImageFallback: { backgroundColor: '#e2e8f0' },
   cardRankBadge: {
-    position: 'absolute', top: 6, left: 6, zIndex: 2,
+    position: 'absolute', top: 8, left: 8, zIndex: 1,
     width: 24, height: 24, borderRadius: 12, alignItems: 'center', justifyContent: 'center',
   },
   cardRankText: { fontSize: 12, fontWeight: '800', lineHeight: 16 },
@@ -1694,6 +1876,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: 7, paddingVertical: 3,
   },
   hCardDiscountPillText: { fontSize: 12, fontWeight: '900', color: '#fff' },
+  hCardRocketBadge: { fontSize: 10, fontWeight: '700', color: '#2563EB', marginTop: 4 },
+  hCardFreeBadge:   { fontSize: 10, fontWeight: '700', color: '#64748b', marginTop: 4 },
   hCardLowestPill: {
     alignSelf: 'flex-start', backgroundColor: '#FEF2F2', borderRadius: 10,
     paddingHorizontal: 8, paddingVertical: 4, marginBottom: 4,
@@ -1731,7 +1915,7 @@ const styles = StyleSheet.create({
   },
   catSheet: {
     backgroundColor: '#fff', borderTopLeftRadius: 16, borderTopRightRadius: 16,
-    height: '65%', paddingHorizontal: 20, paddingBottom: 24,
+    paddingHorizontal: 20, paddingBottom: 24,
   },
   catSheetHandle: {
     width: 40, height: 4, borderRadius: 2, backgroundColor: '#E5E7EB',
@@ -1742,7 +1926,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row', alignItems: 'center',
     paddingVertical: 11, borderBottomWidth: 1, borderBottomColor: '#F3F4F6',
   },
-  catSheetRowIcon:  { fontSize: 20, marginRight: 12 },
+  catSheetRowIconWrap: { width: 28, alignItems: 'center', marginRight: 12 },
   catSheetRowLabel: { flex: 1, fontSize: 15, fontWeight: '500', color: '#1F2937' },
   catSheetRowArrow: { fontSize: 18, color: '#9CA3AF' },
 });

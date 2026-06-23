@@ -45,42 +45,50 @@ const LEVEL_LIST = [
     id: 'rookie',
     lvNum: 1,
     name: '일반맘',
-    bg: '#f0fdf4', text: '#15803d', dotBg: '#22c55e',
+    bg: '#f8fafc', text: '#475569', dotBg: '#475569',
     criteriaDetail: '앱 설치 및 아이 프로필 등록',
+    benefit: null,
     progressItems: [],
   },
   {
     id: 'explorer',
     lvNum: 2,
     name: '성실맘',
-    bg: '#eff6ff', text: COLORS.primary, dotBg: COLORS.primary,
-    criteriaDetail: '관심상품 등록 5개 이상 & 맘톡 게시글 1개 이상',
+    bg: '#ecfdf5', text: '#047857', dotBg: '#047857',
+    criteriaDetail: '관심상품 3개 & 커뮤니티 글 1개 & 댓글 3개',
+    benefit: '🎁 커뮤니티 글/댓글 작성 권한 개방',
     progressItems: [
-      { label: '관심상품', statKey: 'savedCount', target: 5 },
-      { label: '맘톡 글',  statKey: 'postCount',  target: 1 },
+      { label: '관심상품', statKey: 'savedCount',   target: 3 },
+      { label: '커뮤니티 글',  statKey: 'postCount',    target: 1 },
+      { label: '댓글',     statKey: 'commentCount', target: 3 },
     ],
   },
   {
     id: 'reviewer',
     lvNum: 3,
     name: '열심맘',
-    bg: '#fef3c7', text: '#b45309', dotBg: '#f59e0b',
-    criteriaDetail: '실구매 인증 리뷰 3회 이상 & 관심상품 등록 10개 이상',
+    bg: '#fffbeb', text: '#B45309', dotBg: '#B45309',
+    criteriaDetail: '관심상품 10개 & 커뮤니티 글 5개(상품태그 1회) & 댓글 15개 & [연속 접속 3일]',
+    benefit: '🎟️ 이벤트 쿠폰함 잠금 해제',
     progressItems: [
-      { label: '리뷰 인증', statKey: 'reviewCount', target: 3 },
-      { label: '관심상품',  statKey: 'savedCount',  target: 10 },
+      { label: '관심상품', statKey: 'savedCount',      target: 10 },
+      { label: '커뮤니티 글',  statKey: 'postCount',       target: 5  },
+      { label: '상품태그', statKey: 'taggedPostCount', target: 1  },
+      { label: '댓글',     statKey: 'commentCount',    target: 15 },
     ],
   },
   {
     id: 'pro',
     lvNum: 4,
     name: '우수맘',
-    bg: '#fdf4ff', text: '#7e22ce', dotBg: '#a855f7',
-    criteriaDetail: '실구매 인증 리뷰 10회 & 커뮤니티 게시글 10개 & 관심상품 등록 30개',
+    bg: '#eff6ff', text: '#1E40AF', dotBg: '#1E40AF',
+    criteriaDetail: '관심상품 30개 & 커뮤니티 글 20개(상품태그 5회) & 댓글 50개 & [연속 접속 7일]',
+    benefit: '👑 시크릿 특가 입장 & 우수맘 전용 배지',
     progressItems: [
-      { label: '리뷰 인증', statKey: 'reviewCount', target: 10 },
-      { label: '게시글',    statKey: 'postCount',   target: 10 },
-      { label: '관심상품',  statKey: 'savedCount',  target: 30 },
+      { label: '관심상품', statKey: 'savedCount',      target: 30 },
+      { label: '커뮤니티 글',  statKey: 'postCount',       target: 20 },
+      { label: '상품태그', statKey: 'taggedPostCount', target: 5  },
+      { label: '댓글',     statKey: 'commentCount',    target: 50 },
     ],
   },
 ];
@@ -138,14 +146,14 @@ export default function LevelInfoScreen({ route, navigation }) {
             <View style={[
               styles.card,
               !achieved && styles.cardLocked,
-              isCurrent && [styles.cardCurrent, { borderColor: level.dotBg }],
+              isCurrent && [styles.cardCurrent, { borderColor: level.dotBg, ...Platform.select({ ios: { shadowColor: level.dotBg } }) }],
             ]}>
 
               {/* Title row */}
               <View style={styles.titleRow}>
-                <View style={[styles.lvChip, { backgroundColor: achieved ? level.bg : '#f1f5f9' }]}>
-                  <Text style={[styles.lvChipText, { color: achieved ? level.text : '#94a3b8' }]}>
-                    {'Lv.' + level.lvNum}
+                <View style={[styles.lvChip, { backgroundColor: achieved ? level.dotBg : '#e2e8f0' }]}>
+                  <Text style={[styles.lvChipText, { color: '#fff' }]}>
+                    {level.lvNum}
                   </Text>
                 </View>
                 <Text style={[styles.levelName, !achieved && styles.levelNameLocked]}>
@@ -171,6 +179,16 @@ export default function LevelInfoScreen({ route, navigation }) {
                 </Text>
               </View>
 
+              {/* Benefit */}
+              {level.benefit && (
+                <View style={styles.criteriaRow}>
+                  <Text style={styles.criteriaLabel}>혜택</Text>
+                  <Text style={[styles.benefitValue, !achieved && styles.criteriaValueLocked]}>
+                    {level.benefit}
+                  </Text>
+                </View>
+              )}
+
               {/* Progress gauges — target level only */}
               {isTarget && level.progressItems.length > 0 && (
                 <View style={styles.gaugeSection}>
@@ -182,7 +200,7 @@ export default function LevelInfoScreen({ route, navigation }) {
                       <View key={item.label} style={styles.gaugeRow}>
                         <Text style={styles.gaugeLabel}>{item.label}</Text>
                         <View style={styles.gaugeTrack}>
-                          <View style={[styles.gaugeFill, { width: `${pct * 100}%` }, done && styles.gaugeFillDone]} />
+                          <View style={[styles.gaugeFill, { width: `${pct * 100}%`, backgroundColor: level.dotBg }, done && { backgroundColor: level.dotBg }]} />
                         </View>
                         <Text style={[styles.gaugeCount, done && styles.gaugeCountDone]}>
                           {cur}/{item.target}
@@ -199,6 +217,7 @@ export default function LevelInfoScreen({ route, navigation }) {
       })}
 
       <Text style={styles.footerNote}>레벨은 활동 데이터 기준으로 자동 갱신됩니다.</Text>
+      <Text style={styles.footerNote}>* 어뷰징 방지를 위해 등급은 하루에 1단계씩만 승급 가능합니다.</Text>
     </ScrollView>
     </View>
   );
@@ -254,7 +273,7 @@ const styles = StyleSheet.create({
   cardCurrent: {
     borderWidth: 2,
     ...Platform.select({
-      ios:     { shadowColor: COLORS.primary, shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.1, shadowRadius: 4 },
+      ios:     { shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.12, shadowRadius: 4 },
       android: { elevation: 2 },
     }),
   },
@@ -279,6 +298,7 @@ const styles = StyleSheet.create({
   },
   criteriaValue: { fontSize: 12, fontWeight: '600', color: '#0f172a', lineHeight: 17 },
   criteriaValueLocked: { color: '#94a3b8' },
+  benefitValue: { fontSize: 12, fontWeight: '700', color: '#1E40AF', lineHeight: 17 },
 
   gaugeSection: { gap: 5 },
   gaugeRow: { flexDirection: 'row', alignItems: 'center', gap: 7 },

@@ -504,7 +504,7 @@ export default function BenefitsScreen({ navigation }) {
           <Text style={styles.profileNickname}>{nickname || '세이브루 사용자'}</Text>
           <View style={styles.levelBadgeRow}>
             <View style={styles.levelBadge}>
-              <Text style={styles.levelBadgeText}>Lv.{level} {levelBadge}</Text>
+              <Text style={styles.levelBadgeText}>{level} {levelBadge}</Text>
             </View>
           </View>
         </View>

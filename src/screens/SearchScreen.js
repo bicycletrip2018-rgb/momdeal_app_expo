@@ -321,10 +321,10 @@ const PRODUCT_MOCK = [
 ];
 
 function tierMeta(tier) {
-  if (tier === '일반맘') return { color: '#6B7280', label: 'Lv.1 일반맘' };
-  if (tier === '성실맘') return { color: '#10B981', label: 'Lv.2 성실맘' };
-  if (tier === '열심맘') return { color: '#F59E0B', label: 'Lv.3 열심맘' };
-  return                        { color: '#2E6FF2', label: 'Lv.4 우수맘' };
+  if (tier === '일반맘') return { color: '#475569', number: 1 };
+  if (tier === '성실맘') return { color: '#047857', number: 2 };
+  if (tier === '열심맘') return { color: '#B45309', number: 3 };
+  return                        { color: '#1E40AF', number: 4 };
 }
 
 function calculatePostScore(post) {
@@ -831,12 +831,13 @@ export default function SearchScreen({ navigation }) {
                                 </View>
                               )}
                               <Text style={{ fontSize: 15, fontWeight: '600', color: '#1e293b', lineHeight: 22 }} numberOfLines={2}>{item.title}</Text>
-                              <Text style={{ fontSize: 12, color: '#94a3b8', marginTop: 4 }}>
-                                <Text style={{ fontWeight: '700', color: tierMeta(item.tier).color }}>{tierMeta(item.tier).label}</Text>
-                                {' '}
-                                <Text style={{ color: '#6B7280' }}>{item.author}</Text>
-                                {` · ${formatPostDate(item.createdAt)} · 조회 ${item.viewCount}`}
-                              </Text>
+                              <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4, gap: 5, flexWrap: 'wrap' }}>
+                                <View style={{ backgroundColor: tierMeta(item.tier).color, borderRadius: 4, paddingHorizontal: 6, paddingVertical: 2, justifyContent: 'center', alignItems: 'center' }}>
+                                  <Text style={{ color: '#FFF', fontSize: 10, fontWeight: 'bold' }}>{tierMeta(item.tier).number}</Text>
+                                </View>
+                                <Text style={{ fontSize: 12, color: '#6B7280' }}>{item.author}</Text>
+                                <Text style={{ fontSize: 12, color: '#94a3b8' }}>· {formatPostDate(item.createdAt)} · 조회 {item.viewCount}</Text>
+                              </View>
                             </View>
                             {/* Right column — engagement box */}
                             <View style={{ backgroundColor: '#f1f5f9', borderRadius: 8, padding: 8, alignItems: 'center', minWidth: 50 }}>

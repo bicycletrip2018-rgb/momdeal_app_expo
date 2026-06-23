@@ -11,6 +11,7 @@ import {
   RefreshControl,
   ScrollView,
   StyleSheet,
+
   Text,
   TextInput,
   TouchableOpacity,
@@ -35,8 +36,9 @@ import { recordProductAction } from '../services/productActionService';
 import { useTracking } from '../context/TrackingContext';
 import { COLORS } from '../constants/theme';
 import Svg, { Circle, Line, Path, Polyline, Rect } from 'react-native-svg';
-import { Lock, TrendingDown } from 'lucide-react-native';
+import { ChevronRight, Gift, Lock, MessageCircle, TrendingDown } from 'lucide-react-native';
 import * as ImagePicker from 'expo-image-picker';
+import KakaoConsentModal from '../components/KakaoConsentModal';
 
 // ─── SVG Icons ───────────────────────────────────────────────────────────────
 
@@ -438,10 +440,10 @@ const DUMMY_RECENTLY_VIEWED = [
 // ─── Level System ────────────────────────────────────────────────────────────
 
 const LEVEL_LIST = [
-  { id: 'rookie',   name: '일반맘', bg: '#f0fdf4', text: '#15803d', criteriaDetail: '앱 설치 및 아이 프로필 등록', check: () => true },
-  { id: 'explorer', name: '성실맘', bg: '#eff6ff', text: COLORS.primary, criteriaDetail: '관심상품 등록 5개 이상 & 맘톡 게시글 1개 이상', check: (s) => s.savedCount >= 5 && s.postCount >= 1 },
-  { id: 'reviewer', name: '열심맘', bg: '#fef3c7', text: '#b45309', criteriaDetail: '실구매 인증 리뷰 3회 이상 & 관심상품 등록 10개 이상', check: (s) => s.reviewCount >= 3 && s.savedCount >= 10 },
-  { id: 'pro',      name: '우수맘', bg: '#fdf4ff', text: '#7e22ce', criteriaDetail: '실구매 인증 리뷰 10회 & 커뮤니티 게시글 10개 & 관심상품 등록 30개', check: (s) => s.reviewCount >= 10 && s.postCount >= 10 && s.savedCount >= 30 },
+  { id: 'rookie',   number: 1, name: '일반맘', color: '#475569', bg: '#f8fafc', text: '#475569', criteriaDetail: '앱 설치 및 아이 프로필 등록', check: () => true },
+  { id: 'explorer', number: 2, name: '성실맘', color: '#047857', bg: '#ecfdf5', text: '#047857', criteriaDetail: '관심상품 3개 & 커뮤니티 글 1개 & 댓글 3개', check: (s) => s.savedCount >= 3 && s.postCount >= 1 && s.commentCount >= 3 },
+  { id: 'reviewer', number: 3, name: '열심맘', color: '#B45309', bg: '#fffbeb', text: '#B45309', criteriaDetail: '관심상품 10개 & 커뮤니티 글 5개 & 상품태그 1회 & 댓글 15개', check: (s) => s.savedCount >= 10 && s.postCount >= 5 && s.taggedPostCount >= 1 && s.commentCount >= 15 },
+  { id: 'pro',      number: 4, name: '우수맘', color: '#1E40AF', bg: '#eff6ff', text: '#1E40AF', criteriaDetail: '관심상품 30개 & 커뮤니티 글 20개 & 상품태그 5회 & 댓글 50개', check: (s) => s.savedCount >= 30 && s.postCount >= 20 && s.taggedPostCount >= 5 && s.commentCount >= 50 },
 ];
 
 function deriveLevel(stats) {
@@ -451,24 +453,28 @@ function deriveLevel(stats) {
 }
 
 function buildNudgeText(stats, nextLevel) {
-  if (!nextLevel) return '최고 등급 프로 핫딜러에 도달했어요!';
+  if (!nextLevel) return '최고 등급 우수맘에 도달했어요!';
   if (nextLevel.id === 'explorer') {
     const parts = [];
-    if (stats.savedCount < 5) parts.push(`관심상품 ${5 - stats.savedCount}개`);
-    if (stats.postCount  < 1) parts.push('맘톡 게시글 1개');
+    if (stats.savedCount   < 3)  parts.push(`관심상품 ${3 - stats.savedCount}개`);
+    if (stats.postCount    < 1)  parts.push('커뮤니티 글 1개');
+    if (stats.commentCount < 3)  parts.push(`댓글 ${3 - stats.commentCount}개`);
     return `${nextLevel.name}까지 ${parts.join(', ')} 남았어요!`;
   }
   if (nextLevel.id === 'reviewer') {
     const parts = [];
-    if (stats.reviewCount < 3)  parts.push(`리뷰 ${3  - stats.reviewCount}개`);
-    if (stats.savedCount  < 10) parts.push(`관심상품 ${10 - stats.savedCount}개`);
+    if (stats.savedCount      < 10) parts.push(`관심상품 ${10 - stats.savedCount}개`);
+    if (stats.postCount       < 5)  parts.push(`커뮤니티 글 ${5 - stats.postCount}개`);
+    if (stats.taggedPostCount < 1)  parts.push('상품태그 1회');
+    if (stats.commentCount    < 15) parts.push(`댓글 ${15 - stats.commentCount}개`);
     return `${nextLevel.name}까지 ${parts.join(', ')} 남았어요!`;
   }
   if (nextLevel.id === 'pro') {
     const parts = [];
-    if (stats.reviewCount < 10) parts.push(`리뷰 ${10 - stats.reviewCount}개`);
-    if (stats.postCount   < 10) parts.push(`게시글 ${10 - stats.postCount}개`);
-    if (stats.savedCount  < 30) parts.push(`관심상품 ${30 - stats.savedCount}개`);
+    if (stats.savedCount      < 30) parts.push(`관심상품 ${30 - stats.savedCount}개`);
+    if (stats.postCount       < 20) parts.push(`커뮤니티 글 ${20 - stats.postCount}개`);
+    if (stats.taggedPostCount < 5)  parts.push(`상품태그 ${5 - stats.taggedPostCount}회`);
+    if (stats.commentCount    < 50) parts.push(`댓글 ${50 - stats.commentCount}개`);
     return `${nextLevel.name}까지 ${parts.join(', ')} 남았어요!`;
   }
   return `${nextLevel.name}에 도전해보세요!`;
@@ -477,17 +483,21 @@ function buildNudgeText(stats, nextLevel) {
 function buildNudgeProgress(stats, nextLevel) {
   if (!nextLevel) return [];
   if (nextLevel.id === 'explorer') return [
-    { label: '관심상품', current: Math.min(stats.savedCount, 5),  target: 5 },
-    { label: '맘톡 글',  current: Math.min(stats.postCount,  1),  target: 1 },
+    { label: '관심상품', current: Math.min(stats.savedCount,   3),  target: 3 },
+    { label: '커뮤니티 글',  current: Math.min(stats.postCount,    1),  target: 1 },
+    { label: '댓글',     current: Math.min(stats.commentCount, 3),  target: 3 },
   ];
   if (nextLevel.id === 'reviewer') return [
-    { label: '리뷰 인증', current: Math.min(stats.reviewCount, 3),  target: 3 },
-    { label: '관심상품',  current: Math.min(stats.savedCount,  10), target: 10 },
+    { label: '관심상품', current: Math.min(stats.savedCount,      10), target: 10 },
+    { label: '커뮤니티 글',  current: Math.min(stats.postCount,        5), target: 5  },
+    { label: '상품태그', current: Math.min(stats.taggedPostCount,  1), target: 1  },
+    { label: '댓글',     current: Math.min(stats.commentCount,    15), target: 15 },
   ];
   if (nextLevel.id === 'pro') return [
-    { label: '리뷰 인증', current: Math.min(stats.reviewCount, 10), target: 10 },
-    { label: '게시글',    current: Math.min(stats.postCount,   10), target: 10 },
-    { label: '관심상품',  current: Math.min(stats.savedCount,  30), target: 30 },
+    { label: '관심상품', current: Math.min(stats.savedCount,      30), target: 30 },
+    { label: '커뮤니티 글',  current: Math.min(stats.postCount,       20), target: 20 },
+    { label: '상품태그', current: Math.min(stats.taggedPostCount,  5), target: 5  },
+    { label: '댓글',     current: Math.min(stats.commentCount,    50), target: 50 },
   ];
   return [];
 }
@@ -496,9 +506,9 @@ function buildNudgeProgress(stats, nextLevel) {
 
 export default function MyPageScreen({ navigation }) {
   const insets = useSafeAreaInsets();
-
   const { globalTrackedItems, addTrackedItem, removeTrackedItem, setTrackedItems } = useTracking();
 
+  // ARCHITECTURE CONSTRAINT: For production, user stats (postCount, commentCount, savedCount) MUST be bound to a Firebase onSnapshot listener to provide real-time progress bar updates.
   const [children,           setChildren]           = useState([]);
   const [activityStats,      setActivityStats]      = useState({ clickCount: 0, purchaseCount: 0 });
   const [recentProducts,     setRecentProducts]     = useState([]);
@@ -509,6 +519,7 @@ export default function MyPageScreen({ navigation }) {
   const [reviewCount,        setReviewCount]        = useState(0);
   const [postCount,          setPostCount]          = useState(0);
   const [commentCount,       setCommentCount]       = useState(0);
+  const [taggedPostCount,    setTaggedPostCount]    = useState(0);
   const [likesCount,         setLikesCount]         = useState(0);
   const [loading,            setLoading]            = useState(true);
   const [refreshing,         setRefreshing]         = useState(false);
@@ -528,6 +539,8 @@ export default function MyPageScreen({ navigation }) {
   const [imagePickerSheetOpen, setImagePickerSheetOpen] = useState(false);
   const [profileImageUri,      setProfileImageUri]      = useState(null);
   const [couponModalOpen,      setCouponModalOpen]  = useState(false);
+  const [godModeStep,          setGodModeStep]      = useState(0);
+  const [kakaoModalVisible,    setKakaoModalVisible] = useState(false);
   const [keyboardHeight,       setKeyboardHeight]   = useState(0);
   const [toastMsg,             setToastMsg]         = useState('');
 
@@ -825,7 +838,15 @@ export default function MyPageScreen({ navigation }) {
   const selectedChild     = children.find((c) => c.id === selectedChildId) ?? children[0] ?? null;
   const displayName       = nickname || auth.currentUser?.displayName || auth.currentUser?.email || '사용자';
   const childSummaryLine  = buildChildSummaryLine(selectedChild);
-  const levelStats = { reviewCount, postCount, savedCount: globalTrackedItems.length };
+  const GOD_MODE_STATS = [
+    { savedCount: 0,  postCount: 0,  commentCount: 0,  taggedPostCount: 0, reviewCount: 0 },
+    { savedCount: 3,  postCount: 1,  commentCount: 3,  taggedPostCount: 0, reviewCount: 0 },
+    { savedCount: 10, postCount: 5,  commentCount: 15, taggedPostCount: 1, reviewCount: 0 },
+    { savedCount: 30, postCount: 20, commentCount: 50, taggedPostCount: 5, reviewCount: 0 },
+  ];
+  const levelStats = godModeStep > 0
+    ? GOD_MODE_STATS[godModeStep]
+    : { reviewCount, postCount, commentCount, taggedPostCount, savedCount: globalTrackedItems.length };
   const { level: currentLevel, nextLevel } = deriveLevel(levelStats);
   const nudgeText     = buildNudgeText(levelStats, nextLevel);
   const nudgeProgress = buildNudgeProgress(levelStats, nextLevel);
@@ -873,6 +894,16 @@ export default function MyPageScreen({ navigation }) {
           />
         }
       >
+        {/* ── [DEV] God Mode Tier Cycler — remove before production ── */}
+        <TouchableOpacity
+          style={{ backgroundColor: '#000', padding: 8, borderRadius: 8, alignSelf: 'center', marginBottom: 10, marginTop: 8 }}
+          onPress={() => setGodModeStep((s) => (s + 1) % 4)}
+        >
+          <Text style={{ color: '#FFF', fontWeight: 'bold', fontSize: 12 }}>
+            {['🛠 테스트용 렙업 (God Mode)', '⬆ Lv.2 성실맘 (Emerald)', '⬆ Lv.3 열심맘 (Amber)', '⬆ Lv.4 우수맘 (Sapphire)'][godModeStep]}
+          </Text>
+        </TouchableOpacity>
+
         {/* ── Profile Card (Fintech-style) ── */}
         <View style={styles.profileCard}>
           <View style={styles.profileCardRow}>
@@ -903,9 +934,14 @@ export default function MyPageScreen({ navigation }) {
                 <TouchableOpacity
                   onPress={() => navigation.navigate('LevelInfo', { currentLevelId: currentLevel.id, stats: levelStats })}
                   activeOpacity={0.75}
-                  style={styles.levelBadgePillInline}
                 >
-                  <Text style={styles.levelBadgePillInlineText}>{currentLevel.name} {'>'}</Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#FFF', borderRadius: 16, paddingHorizontal: 10, paddingVertical: 6, borderWidth: 1, borderColor: currentLevel.color }}>
+                    <View style={{ backgroundColor: currentLevel.color, borderRadius: 4, width: 16, height: 16, justifyContent: 'center', alignItems: 'center', marginRight: 6 }}>
+                      <Text style={{ color: '#FFF', fontSize: 10, fontWeight: 'bold' }}>{currentLevel.number}</Text>
+                    </View>
+                    <Text style={{ color: currentLevel.color, fontSize: 13, fontWeight: 'bold' }}>{currentLevel.name}</Text>
+                    <ChevronRight size={14} color={currentLevel.color} style={{ marginLeft: 2 }} />
+                  </View>
                 </TouchableOpacity>
               </View>
 
@@ -933,6 +969,19 @@ export default function MyPageScreen({ navigation }) {
 
             </View>
           </View>
+
+          {/* ── Kakao CTA — seamless footer of Profile Card (Lv.1 only) ── */}
+          {currentLevel.id === 'rookie' && (
+            <TouchableOpacity
+              style={{ backgroundColor: '#FEE500', flexDirection: 'row', alignItems: 'center', paddingVertical: 14, paddingHorizontal: 20, borderTopWidth: 1, borderColor: '#FADA0A' }}
+              onPress={() => setKakaoModalVisible(true)}
+              activeOpacity={0.88}
+            >
+              <MessageCircle size={16} color="#191919" strokeWidth={0} fill="#191919" style={{ marginRight: 10 }} />
+              <Text style={{ flex: 1, fontSize: 13, fontWeight: 'bold', color: '#191919' }}>카카오 연동하고 체험단/쿠폰 혜택 받기</Text>
+              <ChevronRight size={16} color="#191919" style={{ opacity: 0.6 }} />
+            </TouchableOpacity>
+          )}
         </View>
 
         {/* ── Action Nudge Card ── */}
@@ -983,29 +1032,29 @@ export default function MyPageScreen({ navigation }) {
         <View style={styles.statsRow}>
           <TouchableOpacity
             style={styles.statCell}
-            onPress={() => navigation.navigate('MyActivity', { activeTab: 'posts', postCount, commentCount, likesCount, nickname })}
+            onPress={() => navigation.navigate('ActivityList', { initialTab: 'posts', nickname, postCount, commentCount, likesCount, tierNumber: currentLevel.number })}
             activeOpacity={0.7}
           >
             <Text style={styles.statNumber}>{postCount || 0}</Text>
-            <Text style={styles.statLabel}>내가 쓴 글</Text>
+            <Text style={styles.statLabel}>내가 쓴 게시글</Text>
           </TouchableOpacity>
 
           <View style={styles.statDivider} />
 
           <TouchableOpacity
             style={styles.statCell}
-            onPress={() => navigation.navigate('MyActivity', { activeTab: 'comments', postCount, commentCount, likesCount, nickname })}
+            onPress={() => navigation.navigate('ActivityList', { initialTab: 'comments', nickname, postCount, commentCount, likesCount, tierNumber: currentLevel.number })}
             activeOpacity={0.7}
           >
             <Text style={styles.statNumber}>{commentCount || 0}</Text>
-            <Text style={styles.statLabel}>내 댓글</Text>
+            <Text style={styles.statLabel}>내가 쓴 댓글</Text>
           </TouchableOpacity>
 
           <View style={styles.statDivider} />
 
           <TouchableOpacity
             style={styles.statCell}
-            onPress={() => navigation.navigate('MyActivity', { activeTab: 'likes', postCount, commentCount, likesCount, nickname })}
+            onPress={() => navigation.navigate('ActivityList', { initialTab: 'likes', nickname, postCount, commentCount, likesCount, tierNumber: currentLevel.number })}
             activeOpacity={0.7}
           >
             <Text style={styles.statNumber}>{likesCount}</Text>
@@ -1016,7 +1065,7 @@ export default function MyPageScreen({ navigation }) {
 
           <TouchableOpacity
             style={styles.statCell}
-            onPress={() => showToast('준비 중인 기능입니다')}
+            onPress={() => setCouponModalOpen(true)}
             activeOpacity={0.7}
           >
             <Text style={styles.statNumber}>0</Text>
@@ -1031,7 +1080,7 @@ export default function MyPageScreen({ navigation }) {
             <TouchableOpacity
               style={styles.recentViewAllBtn}
               hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-              onPress={() => navigation.navigate('RecentlyViewed', { products: recentProducts.length > 0 ? recentProducts : DUMMY_RECENTLY_VIEWED })}
+              onPress={() => navigation.navigate('RecentProductsScreen', { products: recentProducts.length > 0 ? recentProducts : DUMMY_RECENTLY_VIEWED })}
             >
               <Text style={styles.recentViewAllText}>전체보기</Text>
               <ChevronRightSmIcon size={14} color="#94a3b8" />
@@ -1040,7 +1089,7 @@ export default function MyPageScreen({ navigation }) {
           {(() => {
             const displayItems = recentProducts.length > 0 ? recentProducts : null;
             const dummyItems   = DUMMY_RECENTLY_VIEWED;
-            const source       = displayItems ?? dummyItems;
+            const source       = (displayItems ?? dummyItems).slice(0, 10);
             return (
               <ScrollView
                 horizontal
@@ -1091,24 +1140,38 @@ export default function MyPageScreen({ navigation }) {
         </View>
 
         {/* ── Savings Report Banner ── */}
-        <TouchableOpacity
-          style={styles.savingsBanner}
-          activeOpacity={0.84}
-          onPress={() => navigation.navigate('관심상품')}
-        >
-          <View style={styles.savingsBannerIconWrap}>
-            <TrendingDown size={26} color={COLORS.primary} strokeWidth={2} />
-          </View>
-          <View style={styles.savingsBannerBody}>
-            <Text style={styles.savingsBannerTitle}>내 관심상품 할인 리포트</Text>
-            <Text style={styles.savingsBannerText}>
-              {'추적 중인 상품들을 지금 구매하시면\n총 '}
-              <Text style={styles.savingsBannerAmount}>42,500원</Text>
-              {'을 절약할 수 있어요!'}
-            </Text>
-          </View>
-          <ChevronRightSmIcon size={16} color={COLORS.primary} />
-        </TouchableOpacity>
+        {(() => {
+          const totalSaved = globalTrackedItems.reduce(
+            (sum, item) => sum + Math.max(0, (item.avgPrice ?? item.origPrice ?? 0) - (item.currentPrice ?? 0)),
+            0,
+          );
+          return (
+            <TouchableOpacity
+              style={styles.savingsBanner}
+              activeOpacity={0.84}
+              onPress={() => navigation.navigate('관심상품')}
+            >
+              <View style={styles.savingsBannerIconWrap}>
+                <TrendingDown size={26} color={COLORS.primary} strokeWidth={2} />
+              </View>
+              <View style={styles.savingsBannerBody}>
+                <Text style={styles.savingsBannerTitle}>내 관심상품 할인 리포트</Text>
+                {totalSaved > 0 ? (
+                  <Text style={styles.savingsBannerText}>
+                    {'추적 중인 상품들을 지금 구매하시면\n총 '}
+                    <Text style={styles.savingsBannerAmount}>{totalSaved.toLocaleString()}원</Text>
+                    {'을 절약할 수 있어요!'}
+                  </Text>
+                ) : (
+                  <Text style={styles.savingsBannerText}>
+                    관심상품을 담고, 오늘 얼마를 아낄 수 있는지{'\n'}확인해 보세요!
+                  </Text>
+                )}
+              </View>
+              <ChevronRightSmIcon size={16} color={COLORS.primary} />
+            </TouchableOpacity>
+          );
+        })()}
 
         {/* ── Admin dashboard ── */}
         {isAdmin ? (
@@ -1386,10 +1449,10 @@ export default function MyPageScreen({ navigation }) {
         </TouchableWithoutFeedback>
         <View style={styles.couponModalWrap} pointerEvents="box-none">
           <View style={styles.couponModalBox}>
-            <GiftIcon size={36} color={COLORS.primary} />
-            <Text style={styles.couponModalTitle}>시크릿 혜택 오픈 준비 중!</Text>
+            <Gift size={48} color="#2E6FF2" strokeWidth={1.5} />
+            <Text style={styles.couponModalTitle}>특별한 혜택을 준비 중입니다</Text>
             <Text style={styles.couponModalBody}>
-              {'곧 엄청난 특가 쿠폰과 이벤트가 쏟아질 예정이에요.\n조금만 기다려주세요!'}
+              회원님의 활동 등급에 맞춘 전용 쿠폰과 혜택이 곧 공개됩니다. 조금만 더 기다려주세요!
             </Text>
             <TouchableOpacity
               style={styles.couponModalBtn}
@@ -1401,6 +1464,14 @@ export default function MyPageScreen({ navigation }) {
           </View>
         </View>
       </Modal>
+
+      {/* ── Kakao Consent Modal (triggered from MyPage banner) ── */}
+      <KakaoConsentModal
+        visible={kakaoModalVisible}
+        onClose={() => setKakaoModalVisible(false)}
+        onConfirm={() => setKakaoModalVisible(false)}
+        navigation={navigation}
+      />
 
       {/* ── Product Action Modal (long-press on tracked item) ── */}
       <Modal
@@ -1631,35 +1702,35 @@ const styles = StyleSheet.create({
   },
   couponModalBox: {
     backgroundColor: '#fff',
-    borderRadius: 20,
-    marginHorizontal: 32,
-    paddingHorizontal: 24,
-    paddingTop: 28,
-    paddingBottom: 24,
+    borderRadius: 24,
+    marginHorizontal: 28,
+    paddingHorizontal: 28,
+    paddingTop: 36,
+    paddingBottom: 28,
     alignItems: 'center',
-    gap: 10,
+    gap: 12,
     ...Platform.select({
-      ios:     { shadowColor: '#000', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.15, shadowRadius: 20 },
-      android: { elevation: 12 },
+      ios:     { shadowColor: '#2E6FF2', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.18, shadowRadius: 24 },
+      android: { elevation: 10 },
     }),
   },
   couponModalTitle: {
-    fontSize: 17, fontWeight: '900', color: '#0f172a', textAlign: 'center',
+    fontSize: 18, fontWeight: '800', color: '#0f172a', textAlign: 'center', lineHeight: 26,
   },
   couponModalBody: {
-    fontSize: 14, fontWeight: '500', color: '#64748b', textAlign: 'center', lineHeight: 21,
+    fontSize: 14, fontWeight: '400', color: '#64748b', textAlign: 'center', lineHeight: 22,
   },
   couponModalBtn: {
     marginTop: 8,
-    backgroundColor: COLORS.primary,
-    borderRadius: 12,
-    paddingHorizontal: 32,
-    paddingVertical: 13,
+    backgroundColor: '#EFF6FF',
+    borderRadius: 30,
+    paddingHorizontal: 40,
+    paddingVertical: 14,
     alignItems: 'center',
     alignSelf: 'stretch',
   },
   couponModalBtnText: {
-    fontSize: 15, fontWeight: '800', color: '#fff',
+    fontSize: 15, fontWeight: 'bold', color: '#2E6FF2',
   },
 
   // ── Profile Card (Fintech) ──
@@ -1667,7 +1738,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#fff',
     marginHorizontal: 16, marginTop: 12, marginBottom: 4,
     borderRadius: 16, borderWidth: 1, borderColor: '#e2e8f0',
-    padding: 16,
+    overflow: 'hidden',
     ...Platform.select({
       ios:     { shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.06, shadowRadius: 8 },
       android: { elevation: 2 },
@@ -1675,6 +1746,7 @@ const styles = StyleSheet.create({
   },
   profileCardRow: {
     flexDirection: 'row', alignItems: 'center', gap: 14,
+    padding: 16,
   },
   avatarCircle: {
     width: 64, height: 64, borderRadius: 32,
@@ -1712,8 +1784,10 @@ const styles = StyleSheet.create({
 
   // ── Level badge pill — clickable, inline in nickname row ──
   levelBadgePillInline: {
-    marginLeft: 8, backgroundColor: '#EFF6FF', borderRadius: 12,
-    paddingHorizontal: 8, paddingVertical: 4, flexShrink: 0,
+    flexDirection: 'row', alignItems: 'center',
+    marginLeft: 8, backgroundColor: '#EFF6FF',
+    borderRadius: 16, borderWidth: 1, borderColor: '#2E6FF2',
+    paddingHorizontal: 12, paddingVertical: 6, flexShrink: 0,
   },
   levelBadgePillInlineText: { fontSize: 12, fontWeight: 'bold', color: '#2E6FF2' },
 
@@ -1986,6 +2060,25 @@ const styles = StyleSheet.create({
   levelBadgePillText: { fontSize: 12, fontWeight: '800' },
 
   // ── Action Nudge Card ──
+  kakaoBanner: {
+    backgroundColor: '#FFFBEB',
+    borderWidth: 1,
+    borderColor: '#FDE68A',
+    borderRadius: 12,
+    padding: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginHorizontal: 16, marginTop: 10,
+  },
+  kakaoBannerText: {
+    flex: 1,
+    marginLeft: 8,
+    fontWeight: 'bold',
+    color: '#374151',
+    fontSize: 13,
+    lineHeight: 19,
+  },
+
   nudgeCard: {
     backgroundColor: '#F8FAFC',
     marginHorizontal: 16, marginTop: 10, marginBottom: 0,

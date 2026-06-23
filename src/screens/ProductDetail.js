@@ -1,4 +1,5 @@
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useUser } from '../context/UserContext';
 import {
   ActivityIndicator,
   Image,
@@ -51,29 +52,6 @@ function formatPriceTimestamp(timestamp) {
 
 // Simple bar chart — data is oldest-first array of prices.
 // Bars colored green (at/below average) or red (above average).
-function PriceGraph({ data, lowest, highest, average }) {
-  if (!data || data.length < 2) return null;
-  const range = highest - lowest;
-  const MAX_H = 48;
-  return (
-    <View style={styles.graphWrap}>
-      {data.map((price, i) => {
-        const ratio = range > 0 ? (price - lowest) / range : 0.5;
-        const barH = Math.max(3, Math.round(ratio * MAX_H));
-        return (
-          <View
-            key={i}
-            style={[
-              styles.graphBar,
-              { height: barH },
-              price <= average ? styles.graphBarGreen : styles.graphBarRed,
-            ]}
-          />
-        );
-      })}
-    </View>
-  );
-}
 
 // Line graph — replaces the text-based "최근 가격 변동" table.
 // snapshots: newest-first array of { price, checkedAt }.
@@ -186,6 +164,7 @@ function Stars({ rating }) {
 }
 
 export default function ProductDetail({ route, navigation }) {
+  const { isWowMember, setIsWowMember } = useUser();
   const productId = route?.params?.productId ? String(route.params.productId) : '';
   const fallbackName = route?.params?.productName || '상품';
   // Coupang-sourced product passed from RankingScreen (no Firestore doc exists for these)
@@ -772,29 +751,58 @@ export default function ProductDetail({ route, navigation }) {
         </View>
       ) : null}
 
-      {/* Price */}
-      <View style={styles.priceBlock}>
-        {offerPrice !== null ? (
-          <Text style={styles.price}>₩{offerPrice.toLocaleString('ko-KR')}</Text>
-        ) : currentPrice !== null && currentPrice > 0 ? (
-          <Text style={styles.price}>₩{currentPrice.toLocaleString('ko-KR')}</Text>
-        ) : displayPrice > 0 ? (
+      {/* Price — Fintech-grade block */}
+      {(() => {
+        const basePrice      = offerPrice ?? currentPrice ?? (displayPrice > 0 ? displayPrice : null);
+        const averagePrice   = product?.averagePrice ?? null;
+        const regularPrice   = basePrice;
+        const fallbackWowPrice = product?.wowPrice || (regularPrice != null ? Math.floor(regularPrice * 0.9) : null);
+        const displayedPrice = isWowMember && fallbackWowPrice != null ? fallbackWowPrice : regularPrice;
+        const discountRate   = (averagePrice != null && averagePrice > 0 && displayedPrice != null && averagePrice > displayedPrice)
+          ? Math.round(((averagePrice - displayedPrice) / averagePrice) * 100) : null;
+
+        return (
           <>
-            <Text style={styles.price}>₩{displayPrice.toLocaleString('ko-KR')}</Text>
-            {displayOriginalPrice > 0 && (
-              <Text style={styles.originalPrice}>₩{displayOriginalPrice.toLocaleString('ko-KR')}</Text>
+            <View style={{ paddingHorizontal: 20, paddingTop: 24, paddingBottom: 16 }}>
+              {averagePrice != null && (
+                <Text style={{ fontSize: 13, color: '#94A3B8', textDecorationLine: 'line-through', marginBottom: 6 }}>
+                  세이브루 30일 평균가 {averagePrice.toLocaleString('ko-KR')}원
+                </Text>
+              )}
+              {displayedPrice != null ? (
+                <View style={{ flexDirection: 'row', alignItems: 'baseline' }}>
+                  <Text style={{ fontSize: 28, fontWeight: '900', color: '#0F172A', letterSpacing: -0.5 }}>
+                    {displayedPrice.toLocaleString('ko-KR')}원
+                  </Text>
+                  {discountRate != null && discountRate > 0 && (
+                    <Text style={{ fontSize: 24, fontWeight: '800', color: '#EF4444', marginLeft: 8 }}>
+                      ▼ {discountRate}%
+                    </Text>
+                  )}
+                </View>
+              ) : (
+                <Text style={styles.priceUnknown}>가격 정보 없음</Text>
+              )}
+              {isOutOfStock ? <Text style={styles.outOfStock}>품절</Text> : null}
+              {(() => {
+                const label = formatPriceTimestamp(product?.priceLastUpdatedAt);
+                return label ? <Text style={styles.priceTimestamp}>{label}</Text> : null;
+              })()}
+            </View>
+
+            {!isWowMember && fallbackWowPrice != null && (
+              <View style={{ backgroundColor: '#EFF6FF', borderRadius: 12, padding: 18, marginHorizontal: 20, marginBottom: 24, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                <Text style={{ fontSize: 14, color: '#1E3A8A', fontWeight: '700', flex: 1 }}>
+                  쿠팡 와우 회원은 {fallbackWowPrice.toLocaleString('ko-KR')}원에 살 수 있어요!
+                </Text>
+                <TouchableOpacity onPress={() => setIsWowMember(true)} activeOpacity={0.8}>
+                  <Text style={{ fontSize: 13, color: '#2E6FF2', fontWeight: 'bold' }}>회원가입/변경 ➔</Text>
+                </TouchableOpacity>
+              </View>
             )}
           </>
-        ) : (
-          <Text style={styles.priceUnknown}>가격 정보 없음</Text>
-        )}
-        {isOutOfStock ? <Text style={styles.outOfStock}>품절</Text> : null}
-        {/* Smart freshness timestamp from priceLastUpdatedAt */}
-        {(() => {
-          const label = formatPriceTimestamp(product?.priceLastUpdatedAt);
-          return label ? <Text style={styles.priceTimestamp}>{label}</Text> : null;
-        })()}
-      </View>
+        );
+      })()}
 
       {/* "지금 사기 좋은 가격인가요?" insight badge */}
       {priceIntel !== null ? (() => {
@@ -889,78 +897,6 @@ export default function ProductDetail({ route, navigation }) {
         );
       })() : null}
 
-      {/* Price intelligence */}
-      {priceIntel !== null ? (() => {
-        const displayPrice = offerPrice ?? (currentPrice > 0 ? currentPrice : null);
-        const guidanceStyle =
-          priceIntel.guidance === '지금 구매 추천'
-            ? styles.piGuidanceGreen
-            : priceIntel.guidance === '최근 최고가 근처'
-              ? styles.piGuidanceRed
-              : styles.piGuidanceOrange;
-        return (
-          <View style={styles.piBlock}>
-            <View style={styles.piHeader}>
-              <Text style={styles.piTitle}>가격 분석</Text>
-              <Text style={styles.piMeta}>{priceIntel.recordCount}개 데이터 기준</Text>
-            </View>
-
-            {/* Bar chart */}
-            <PriceGraph
-              data={priceIntel.graphData}
-              lowest={priceIntel.lowest}
-              highest={priceIntel.highest}
-              average={priceIntel.average}
-            />
-
-            {/* Stats row */}
-            <View style={styles.piStatsRow}>
-              <View style={styles.piStatItem}>
-                <Text style={styles.piStatLabel}>최저가</Text>
-                <Text style={[styles.piStatValue, styles.piStatGreen]}>
-                  ₩{priceIntel.lowest.toLocaleString('ko-KR')}
-                </Text>
-              </View>
-              <View style={[styles.piStatItem, styles.piStatCenter]}>
-                <Text style={styles.piStatLabel}>평균가</Text>
-                <Text style={styles.piStatValue}>
-                  ₩{priceIntel.average.toLocaleString('ko-KR')}
-                </Text>
-              </View>
-              <View style={[styles.piStatItem, styles.piStatRight]}>
-                <Text style={styles.piStatLabel}>최고가</Text>
-                <Text style={[styles.piStatValue, styles.piStatRed]}>
-                  ₩{priceIntel.highest.toLocaleString('ko-KR')}
-                </Text>
-              </View>
-            </View>
-
-            {/* Percentile bar */}
-            {displayPrice !== null ? (
-              <View style={styles.piPercentileWrap}>
-                <View style={styles.piPercentileTrack}>
-                  <View
-                    style={[
-                      styles.piPercentileFill,
-                      { width: `${priceIntel.percentile}%` },
-                    ]}
-                  />
-                </View>
-                <Text style={styles.piPercentileLabel}>
-                  현재가 위치 {priceIntel.percentile}%
-                </Text>
-              </View>
-            ) : null}
-
-            {/* Guidance */}
-            {priceIntel.guidance ? (
-              <View style={styles.piGuidanceRow}>
-                <Text style={guidanceStyle}>{priceIntel.guidance}</Text>
-              </View>
-            ) : null}
-          </View>
-        );
-      })() : null}
 
       {/* "지금 사는 타이밍" dominant urgency banner */}
       {guidance === '지금 구매 추천' ? (
@@ -1220,13 +1156,7 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#16a34a',
   },
-  priceBlock: {
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-  },
+  priceBlock: {},
   price: {
     fontSize: 22,
     fontWeight: '800',
@@ -1365,131 +1295,6 @@ const styles = StyleSheet.create({
   priceHistoryUnchanged: {
     fontSize: 13,
     color: '#94a3b8',
-  },
-  // Price graph
-  graphWrap: {
-    flexDirection: 'row',
-    alignItems: 'flex-end',
-    height: 56,
-    gap: 2,
-    marginTop: 6,
-    marginBottom: 4,
-  },
-  graphBar: {
-    flex: 1,
-    borderRadius: 2,
-    minWidth: 3,
-  },
-  graphBarGreen: {
-    backgroundColor: '#86efac',
-  },
-  graphBarRed: {
-    backgroundColor: '#fca5a5',
-  },
-  // Price intelligence block
-  piBlock: {
-    marginHorizontal: 16,
-    marginTop: 8,
-    marginBottom: 2,
-    padding: 14,
-    backgroundColor: '#fff',
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: '#e4e7ed',
-    gap: 10,
-  },
-  piHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  piTitle: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#0f172a',
-  },
-  piMeta: {
-    fontSize: 11,
-    color: '#94a3b8',
-  },
-  piStatsRow: {
-    flexDirection: 'row',
-  },
-  piStatItem: {
-    flex: 1,
-    gap: 2,
-  },
-  piStatCenter: {
-    alignItems: 'center',
-  },
-  piStatRight: {
-    alignItems: 'flex-end',
-  },
-  piStatLabel: {
-    fontSize: 11,
-    color: '#94a3b8',
-  },
-  piStatValue: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: '#0f172a',
-  },
-  piStatGreen: {
-    color: '#16a34a',
-  },
-  piStatRed: {
-    color: '#ef4444',
-  },
-  piPercentileWrap: {
-    gap: 4,
-  },
-  piPercentileTrack: {
-    height: 6,
-    backgroundColor: '#e2e8f0',
-    borderRadius: 3,
-    overflow: 'hidden',
-  },
-  piPercentileFill: {
-    height: 6,
-    backgroundColor: '#3b82f6',
-    borderRadius: 3,
-  },
-  piPercentileLabel: {
-    fontSize: 11,
-    color: '#64748b',
-  },
-  piGuidanceRow: {
-    alignItems: 'flex-start',
-  },
-  piGuidanceGreen: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: '#16a34a',
-    backgroundColor: '#f0fdf4',
-    borderRadius: 6,
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    overflow: 'hidden',
-  },
-  piGuidanceOrange: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: '#c2410c',
-    backgroundColor: '#fff7ed',
-    borderRadius: 6,
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    overflow: 'hidden',
-  },
-  piGuidanceRed: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: '#b91c1c',
-    backgroundColor: '#fef2f2',
-    borderRadius: 6,
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    overflow: 'hidden',
   },
   // ─── Timing banner ───────────────────────────────────────────────────────────
   timingBanner: {

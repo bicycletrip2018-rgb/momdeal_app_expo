@@ -2,7 +2,6 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Alert,
   Animated,
-  AppState,
   FlatList,
   Image,
   Linking,
@@ -18,11 +17,15 @@ import {
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
+import { onAuthStateChanged } from 'firebase/auth';
+import { collection, doc, getDoc, onSnapshot, query, where } from 'firebase/firestore';
+import { db, auth } from '../firebase/config';
 import { Ionicons } from '@expo/vector-icons';
 import { useTracking } from '../context/TrackingContext';
 import * as Clipboard from 'expo-clipboard';
 import * as IntentLauncher from 'expo-intent-launcher';
 import { registerCoupangProduct } from '../utils/registerCoupangProduct';
+import { setExpectingCoupangReturn } from '../utils/coupangIntentFlag';
 import { TrackingCard } from '../components/TrackingCard';
 import { COLORS } from '../constants/theme';
 
@@ -96,7 +99,79 @@ const demoStyles = StyleSheet.create({
 // ─── Screen ───────────────────────────────────────────────────────────────────
 
 export default function TrackingListScreen({ navigation }) {
-  const { globalTrackedItems, addTrackedItem, removeTrackedItem, updateTrackedItems } = useTracking();
+  const { globalTrackedItems, addTrackedItem, removeTrackedItem, updateTrackedItems, setTrackedItems } = useTracking();
+
+  // ─── Firestore real-time listener ────────────────────────────────────────────
+  // Populates globalTrackedItems from user_saved_products + products docs.
+  // Fires immediately on auth resolution and on every Firestore change thereafter.
+  useEffect(() => {
+    let unsubSnapshot = null;
+
+    const unsubAuth = onAuthStateChanged(auth, (user) => {
+      console.log('[TrackingList] Auth state changed. User:', user?.uid);
+
+      if (unsubSnapshot) { unsubSnapshot(); unsubSnapshot = null; }
+
+      if (!user) {
+        setTrackedItems([]);
+        return;
+      }
+
+      const q = query(
+        collection(db, 'user_saved_products'),
+        where('userId', '==', user.uid),
+      );
+
+      unsubSnapshot = onSnapshot(q, async (snapshot) => {
+        console.log('[TrackingList] Snapshot docs count:', snapshot.size);
+        if (snapshot.empty) { setTrackedItems([]); return; }
+
+        try {
+          const linkages = snapshot.docs.map((d) => ({ savedId: d.id, ...d.data() }));
+          console.log('[TrackingList] productGroupIds:', linkages.map((l) => l.productGroupId));
+
+          const enriched = await Promise.all(
+            linkages.map(async (link) => {
+              if (!link.productGroupId) {
+                console.error('[TrackingList] Missing productGroupId:', link);
+                return null;
+              }
+              const productSnap = await getDoc(doc(db, 'products', link.productGroupId));
+              if (!productSnap.exists()) {
+                console.error('[TrackingList] Product doc not found:', link.productGroupId);
+                return null;
+              }
+              const p = productSnap.data();
+              return {
+                productId:        link.productGroupId,
+                savedId:          link.savedId,
+                name:             p.name         ?? '상품',
+                image:            p.image        ?? null,
+                currentPrice:     p.currentPrice ?? 0,
+                priceDrop:        0,
+                coupangUrl:       null,
+                deliveryType:     undefined,
+                targetPrice:      undefined,
+                isPriceAlertOn:   true,
+                isRestockAlertOn: false,
+                isFavorite:       false,
+              };
+            })
+          );
+
+          const valid = enriched.filter(Boolean);
+          console.log('[TrackingList] Enriched valid count:', valid.length);
+          setTrackedItems(valid);
+        } catch (err) {
+          console.error('[TrackingList] Enrichment error:', err);
+        }
+      }, (err) => {
+        console.error('[TrackingList] onSnapshot error:', err);
+      });
+    });
+
+    return () => { unsubAuth(); if (unsubSnapshot) unsubSnapshot(); };
+  }, [setTrackedItems]);
 
   const [isEditMode,        setIsEditMode]        = useState(false);
   const [selectedIds,       setSelectedIds]       = useState([]);
@@ -140,50 +215,7 @@ export default function TrackingListScreen({ navigation }) {
 
 
 
-  // Auto-detect Coupang link when app comes to foreground
-  useEffect(() => {
-    const handleAppStateChange = async (nextAppState) => {
-      if (nextAppState === 'active') {
-        const hasString = await Clipboard.hasStringAsync();
-        if (hasString) {
-          const text = await Clipboard.getStringAsync();
-          if (text.includes('coupang.com')) {
-            await Clipboard.setStringAsync('');
-            setPendingClipAction(() => async () => {
-              try {
-                console.log('데이터 파싱 시작: ', text);
-                const result = await registerCoupangProduct(text);
-                if (result && result.ok) {
-                  addTrackedItem({
-                    productId: result.productGroupId,
-                    name: result.name || '쿠팡 상품',
-                    coupangUrl: result.affiliateUrl || text,
-                    image: result.image || null,
-                    isRocket: result.isRocket || false,
-                    currentPrice: null,
-                    deliveryType: result.isRocket ? 'rocket' : null,
-                  });
-                  if (result.isMonetized) {
-                    setSuccessModal({ title: '🎉 관심상품 추가 완료!', body: '가격이 떨어지면 즉시 알려드릴게요!' });
-                  } else {
-                    setSuccessModal({ title: '🎉 관심상품 추가 완료!', body: '가격이 떨어지면 즉시 알려드릴게요!' });
-                  }
-                } else {
-                  throw new Error(result?.errorMessage || '상품 데이터를 가져오지 못했습니다.');
-                }
-              } catch (error) {
-                console.error('Scraping Error: ', error);
-                setSuccessModal({ title: '오류', body: '상품 정보를 불러오는데 실패했습니다. 링크를 다시 확인해주세요.' });
-              }
-            });
-            setClipConfirmUrl(text);
-          }
-        }
-      }
-    };
-    const subscription = AppState.addEventListener('change', handleAppStateChange);
-    return () => subscription.remove();
-  }, []);
+  // Clipboard auto-detection handled globally by GlobalMagicNudge (intent-flag gated)
 
   // Dismiss tooltip whenever the screen goes out of focus (tab switch, navigation)
   useFocusEffect(useCallback(() => {
@@ -383,10 +415,34 @@ export default function TrackingListScreen({ navigation }) {
   const isEmpty    = globalTrackedItems.length === 0;
 
   const openCoupang = async () => {
+    setExpectingCoupangReturn();
     try {
-      await Linking.openURL('coupang://');
-    } catch (error) {
-      Alert.alert('디버그 로그', '안드로이드 OS 보안 정책으로 쿠팡 앱을 열 수 없습니다. (정식 빌드 시 해결됨)\n\n테스트를 위해 직접 쿠팡 앱을 열어주세요.');
+      // Attempt 1: host-qualified scheme (fixes naked coupang:// ActivityNotFoundException)
+      await Linking.openURL('coupang://home');
+    } catch (_) {
+      if (Platform.OS === 'android') {
+        try {
+          // Attempt 2: force-launch package via Android IntentLauncher
+          await IntentLauncher.startActivityAsync('android.intent.action.MAIN', {
+            category: 'android.intent.category.LAUNCHER',
+            packageName: 'com.coupang.mobile',
+          });
+          return;
+        } catch (__) {}
+      }
+      // Attempt 3: Store (native scheme → web store page; web browser fallback forbidden per RULE-02)
+      try {
+        const storeUrl = Platform.OS === 'android'
+          ? 'market://details?id=com.coupang.mobile'
+          : 'itms-apps://itunes.apple.com/app/id476266412';
+        await Linking.openURL(storeUrl);
+      } catch (___) {
+        // market:// not available — fall back to web store page (NOT coupang product page — RULE-02)
+        const webStoreUrl = Platform.OS === 'android'
+          ? 'https://play.google.com/store/apps/details?id=com.coupang.mobile'
+          : 'https://apps.apple.com/app/id476266412';
+        Linking.openURL(webStoreUrl).catch(() => {});
+      }
     }
   };
 
@@ -478,7 +534,7 @@ export default function TrackingListScreen({ navigation }) {
                 <TouchableOpacity
                   style={styles.addCard}
                   activeOpacity={0.7}
-                  onPress={() => Linking.openURL('coupang://').catch(() => Linking.openURL('https://m.coupang.com'))}
+                  onPress={openCoupang}
                 >
                   <Ionicons name="add-circle-outline" size={32} color="#94a3b8" />
                   <Text style={styles.addCardText}>상품 추가</Text>
@@ -490,7 +546,7 @@ export default function TrackingListScreen({ navigation }) {
                 <TouchableOpacity
                   style={styles.addCardCompact}
                   activeOpacity={0.7}
-                  onPress={() => Linking.openURL('coupang://').catch(() => Linking.openURL('https://m.coupang.com'))}
+                  onPress={openCoupang}
                 >
                   <Ionicons name="add-circle-outline" size={20} color="#94a3b8" />
                   <Text style={styles.addCardTextCompact}>추가</Text>
@@ -501,7 +557,7 @@ export default function TrackingListScreen({ navigation }) {
               <TouchableOpacity
                 style={styles.addCardList}
                 activeOpacity={0.7}
-                onPress={() => Linking.openURL('coupang://').catch(() => Linking.openURL('https://m.coupang.com'))}
+                onPress={openCoupang}
               >
                 <Ionicons name="add-circle-outline" size={22} color="#94a3b8" />
                 <Text style={styles.addCardText}>상품 추가하기</Text>

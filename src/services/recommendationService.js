@@ -1,4 +1,4 @@
-import { collection, getDocs, limit, orderBy, query, Timestamp, where } from 'firebase/firestore';
+import { collection, doc, getDoc, getDocs, limit, orderBy, query, Timestamp, where } from 'firebase/firestore';
 import { db } from '../firebase/config';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -667,6 +667,20 @@ const buildSimilarityFromActions = (userId, actions) => {
   });
   return similarity;
 };
+
+// ─── Fresh child profile (LAL sync) ──────────────────────────────────────────
+// Fetches the child doc by ID so categoryTags always reflect latest Firestore state.
+// Call this before scoring when returning from MyPage after a profile update.
+export async function fetchFreshChildProfile(childId) {
+  if (!childId) return null;
+  try {
+    const snap = await getDoc(doc(db, 'children', childId));
+    if (!snap.exists()) return null;
+    return { id: snap.id, ...snap.data() };
+  } catch {
+    return null;
+  }
+}
 
 // ─── Main export ──────────────────────────────────────────────────────────────
 

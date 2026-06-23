@@ -2,6 +2,7 @@
   "expo": {
     "name": "세이브루",
     "slug": "saveroo",
+    "scheme": "saveroo",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -17,7 +18,8 @@
       "bundleIdentifier": "com.saveroo.app",
       "infoPlist": {
         "LSApplicationQueriesSchemes": [
-          "coupang"
+          "coupang",
+          "itms-apps"
         ]
       }
     },
@@ -48,7 +50,16 @@
     },
     "plugins": [
       "@react-native-community/datetimepicker",
-      ["@react-native-seoul/kakao-login", { "kakaoAppKey": "368bdabdb629cc39e9a7cb0fcc21de2d", "kotlinVersion": "2.1.0" }]
+      ["@react-native-seoul/kakao-login", { "kakaoAppKey": "368bdabdb629cc39e9a7cb0fcc21de2d", "kotlinVersion": "2.1.0" }],
+      "./plugins/withAndroidCoupangQueries",
+      "./plugins/withKakaoMavenRepo",
+      "./plugins/withTransparentShare",
+      ["expo-share-intent", {
+        "androidIntentFilters": ["text/*"],
+        "androidMainActivityAttributes": {
+          "android:launchMode": "singleTask"
+        }
+      }]
     ]
   }
 }

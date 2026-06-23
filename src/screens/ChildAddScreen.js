@@ -385,7 +385,6 @@ export default function ChildAddScreen({ navigation, route }) {
 
   // ── Validation & submit ──────────────────────────────────────────────────
   const handleNext = () => {
-    if (type === 'child' && !lastName.trim())  { Alert.alert('안내', '성(姓)을 입력해 주세요.'); return; }
     if (type === 'child' && !firstName.trim()) { Alert.alert('안내', '이름을 입력해 주세요.'); return; }
     if (type === 'child' && !birthDate)        { Alert.alert('안내', '생년월일을 선택해 주세요.'); return; }
     handleSubmit();
@@ -514,7 +513,7 @@ export default function ChildAddScreen({ navigation, route }) {
                     style={[styles.input, { flex: 1 }]}
                     value={lastName}
                     onChangeText={setLastName}
-                    placeholder="성 (필수)"
+                    placeholder="성 (선택)"
                     placeholderTextColor="#aaa"
                   />
                   <TextInput

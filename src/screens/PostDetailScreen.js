@@ -83,7 +83,7 @@ const TAG_LABEL = { free: '자유', question: '질문', review: '후기', deal: 
 
 // ─── Compact Tier Badge (mirrors CommunityListScreen) ────────────────────────
 
-const TIER_BG = { 1: '#94A3B8', 2: '#10B981', 3: '#F59E0B', 4: '#2E6FF2' };
+const TIER_BG = { 1: '#475569', 2: '#047857', 3: '#B45309', 4: '#1E40AF' };
 
 function getMockTierLevel(seed) {
   if (!seed) return 1;

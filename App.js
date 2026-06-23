@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { DeepLinkProvider } from './src/contexts/DeepLinkContext';
 import { ActivityIndicator, Text, TouchableOpacity, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
@@ -52,8 +52,10 @@ import InquiryDetailScreen from './src/screens/InquiryDetailScreen';
 import ProfileSettingsScreen from './src/screens/ProfileSettingsScreen';
 import UserActivityScreen from './src/screens/UserActivityScreen';
 import MyActivityScreen from './src/screens/MyActivityScreen';
+import ActivityListScreen from './src/screens/ActivityListScreen';
 import RecentlyViewedScreen from './src/screens/RecentlyViewedScreen';
 import useAuthSync from './src/hooks/useAuthSync';
+import GlobalMagicNudge from './src/components/GlobalMagicNudge';
 import { COLORS } from './src/constants/theme';
 import { onAuthStateChanged } from 'firebase/auth';
 import { auth } from './src/firebase/config';
@@ -62,6 +64,8 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 const ONBOARDING_KEY = '@onboarding_completed';
 import { TrackingProvider } from './src/context/TrackingContext';
 import { NotificationProvider } from './src/context/NotificationContext';
+import { UserProvider } from './src/context/UserContext';
+import { TutorialProvider } from './src/context/TutorialContext';
 
 const Tab = createBottomTabNavigator();
 const Stack = createNativeStackNavigator();
@@ -377,7 +381,22 @@ function MyPageStack() {
         }}
       />
       <Stack.Screen
+        name="ActivityList"
+        component={ActivityListScreen}
+        options={{ headerShown: false }}
+      />
+      <Stack.Screen
         name="RecentlyViewed"
+        component={RecentlyViewedScreen}
+        options={{
+          title: '최근 본 상품',
+          headerBackTitleVisible: false,
+          headerTitleAlign: 'center',
+          headerTitleStyle: { fontSize: 18, fontWeight: '700', color: '#0f172a' },
+        }}
+      />
+      <Stack.Screen
+        name="RecentProductsScreen"
         component={RecentlyViewedScreen}
         options={{
           title: '최근 본 상품',
@@ -484,6 +503,8 @@ function MainTabs() {
 export default function App() {
   useAuthSync();
 
+  const navigationRef = useRef(null);
+
   // null = still checking, false = show onboarding, true = go straight to main
   const [onboardingDone, setOnboardingDone] = useState(null);
 
@@ -516,10 +537,12 @@ export default function App() {
   return (
     <DeepLinkProvider>
     <SafeAreaProvider>
+    <UserProvider>
+    <TutorialProvider>
     <TrackingProvider>
     <NotificationProvider>
     <View style={{ flex: 1 }}>
-      <NavigationContainer>
+      <NavigationContainer ref={navigationRef}>
         <RootStack.Navigator
           initialRouteName={onboardingDone ? 'MainTabs' : 'OnboardingScreen'}
           screenOptions={{ headerShown: false }}
@@ -528,9 +551,12 @@ export default function App() {
           <RootStack.Screen name="MainTabs" component={MainTabs} />
         </RootStack.Navigator>
       </NavigationContainer>
+      {onboardingDone && <GlobalMagicNudge navigationRef={navigationRef} />}
     </View>
     </NotificationProvider>
     </TrackingProvider>
+    </TutorialProvider>
+    </UserProvider>
     </SafeAreaProvider>
     </DeepLinkProvider>
   );

@@ -47,10 +47,10 @@ const TAG_META = {
 // ─── 4-Tier system ────────────────────────────────────────────────────────────
 
 const TIER_META = [
-  { level: 1, label: '일반맘', color: '#6B7280', bg: '#F3F4F6' },
-  { level: 2, label: '성실맘', color: '#10B981', bg: '#D1FAE5' },
-  { level: 3, label: '열심맘', color: '#F59E0B', bg: '#FEF3C7' },
-  { level: 4, label: '우수맘', color: '#2E6FF2', bg: '#DBEAFE' },
+  { level: 1, label: '일반맘', color: '#475569', bg: '#F1F5F9' },
+  { level: 2, label: '성실맘', color: '#047857', bg: '#D1FAE5' },
+  { level: 3, label: '열심맘', color: '#B45309', bg: '#FEF3C7' },
+  { level: 4, label: '우수맘', color: '#1E40AF', bg: '#DBEAFE' },
 ];
 
 function getMockTier(seed) {
@@ -59,11 +59,9 @@ function getMockTier(seed) {
   return TIER_META[n % TIER_META.length];
 }
 
-const TIER_BG = { 1: '#94A3B8', 2: '#10B981', 3: '#F59E0B', 4: '#2E6FF2' };
-
 function TierBadge({ tier }) {
   return (
-    <View style={[styles.tierBadge, { backgroundColor: TIER_BG[tier.level] ?? '#94A3B8' }]}>
+    <View style={[styles.tierBadge, { backgroundColor: tier.color ?? '#6B7280' }]}>
       <Text style={styles.tierBadgeText}>{tier.level}</Text>
     </View>
   );
@@ -71,6 +69,7 @@ function TierBadge({ tier }) {
 
 
 // ARCHITECTURE CONSTRAINT: Peer matching MUST use a "Dynamic Snapshot" logic. The DB must store 'authorBabyMonthAtCreation'. Filtering ranges must be dynamic (e.g., 0-12m: ±1m, 13-36m: ±3m, 37m+: ±12m) based on the currentUser's current baby month.
+// ARCHITECTURE CONSTRAINT (ECOSYSTEM DEFENSE): Because we use 'authorBabyMonthAtCreation', if a user with a 36-month-old tries to stealth-market a newborn (0-month) product, their post will naturally be hidden from newborn mothers using the "Peer Match" toggle. Do not alter this natural defense mechanism.
 
 // ─── Mock posts (shown when Firestore returns nothing) ────────────────────────
 
@@ -203,6 +202,7 @@ export default function CommunityListScreen({ navigation }) {
   const [activeFilter, setActiveFilter] = useState(null);
   const [isPeerMode,     setIsPeerMode]     = useState(false);
   const [isTooltipVisible, setIsTooltipVisible] = useState(false);
+  const [writeBlockVisible, setWriteBlockVisible] = useState(false);
 
   const loadPosts = useCallback(async () => {
     try {
@@ -346,11 +346,43 @@ export default function CommunityListScreen({ navigation }) {
       {/* Circular FAB */}
       <TouchableOpacity
         style={styles.fab}
-        onPress={() => navigation.navigate('WritePost')}
+        onPress={() => setWriteBlockVisible(true)}
         activeOpacity={0.85}
       >
         <Edit3 size={22} color="#FFFFFF" />
       </TouchableOpacity>
+
+      {/* ── Write Block Modal (Kakao lock) ── */}
+      <Modal
+        visible={writeBlockVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setWriteBlockVisible(false)}
+      >
+        <Pressable style={styles.writeBlockBackdrop} onPress={() => setWriteBlockVisible(false)}>
+          <Pressable style={styles.writeBlockCard} onPress={() => {}}>
+            <Text style={styles.writeBlockIcon}>🛡️</Text>
+            <Text style={styles.writeBlockTitle}>커뮤니티 글쓰기</Text>
+            <Text style={styles.writeBlockBody}>
+              {'찐 부모님들만의 클린한 소통을 위해\n카카오 연동(Lv.2)이 필요해요 🛡️'}
+            </Text>
+            <TouchableOpacity
+              style={styles.writeBlockCta}
+              onPress={() => { setWriteBlockVisible(false); navigation.navigate('Settings'); }}
+              activeOpacity={0.85}
+            >
+              <Text style={styles.writeBlockCtaText}>카카오 1초 연동하기</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.writeBlockCancel}
+              onPress={() => setWriteBlockVisible(false)}
+              activeOpacity={0.7}
+            >
+              <Text style={styles.writeBlockCancelText}>나중에</Text>
+            </TouchableOpacity>
+          </Pressable>
+        </Pressable>
+      </Modal>
     </View>
   );
 }
@@ -453,4 +485,29 @@ const styles = StyleSheet.create({
       android: { elevation: 8 },
     }),
   },
+
+  // ── Write Block Modal ──
+  writeBlockBackdrop: {
+    flex: 1, backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'center', alignItems: 'center', paddingHorizontal: 32,
+  },
+  writeBlockCard: {
+    backgroundColor: '#fff', borderRadius: 20,
+    padding: 28, alignItems: 'center', width: '100%',
+    ...Platform.select({
+      ios:     { shadowColor: '#000', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.15, shadowRadius: 20 },
+      android: { elevation: 12 },
+    }),
+  },
+  writeBlockIcon:       { fontSize: 36, marginBottom: 12 },
+  writeBlockTitle:      { fontSize: 17, fontWeight: '800', color: '#0f172a', marginBottom: 8 },
+  writeBlockBody:       { fontSize: 14, color: '#475569', textAlign: 'center', lineHeight: 21, marginBottom: 24 },
+  writeBlockCta: {
+    width: '100%', backgroundColor: '#FEE500',
+    borderRadius: 12, paddingVertical: 14,
+    alignItems: 'center', marginBottom: 10,
+  },
+  writeBlockCtaText:    { fontSize: 15, fontWeight: '800', color: '#374151' },
+  writeBlockCancel:     { paddingVertical: 8 },
+  writeBlockCancelText: { fontSize: 14, color: '#94A3B8', fontWeight: '600' },
 });

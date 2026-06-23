@@ -14,6 +14,7 @@ import {
 import { httpsCallable } from 'firebase/functions';
 import { auth, functions } from '../firebase/config';
 import { recordProductAction } from '../services/productActionService';
+import { setExpectingCoupangReturn } from '../utils/coupangIntentFlag';
 
 const SORT_OPTIONS = [
   { key: 'default',    label: '추천순' },
@@ -238,7 +239,7 @@ export default function CategoryDetailScreen({ route, navigation }) {
         <TouchableOpacity
           style={styles.ctaFooter}
           activeOpacity={0.85}
-          onPress={() => Linking.openURL('https://www.coupang.com').catch(() => {})}
+          onPress={() => { setExpectingCoupangReturn(); Linking.openURL('https://www.coupang.com').catch(() => {}); }}
         >
           <Text style={styles.ctaFooterText}>쿠팡에서 더 보기 →</Text>
           <Text style={styles.ctaFooterSub}>파트너스 활동을 통해 수수료를 받을 수 있습니다</Text>

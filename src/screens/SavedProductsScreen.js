@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   Image,
@@ -9,42 +9,34 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
-import { auth } from '../firebase/config';
+import { onAuthStateChanged } from 'firebase/auth';
+import { collection, doc, getDoc, onSnapshot, query, where } from 'firebase/firestore';
+import { db, auth } from '../firebase/config';
 import { toggleSavedProduct } from '../services/saveService';
-import { getSavedProductsWithPriceSignals } from '../services/priceAlertService';
 import { recordProductAction } from '../services/productActionService';
 
 function SavedCard({ item, onRemove, onPress }) {
-  const image = item?.image || null;
-  const category = item?.category || '';
+  const image        = item?.image || null;
   const currentPrice = typeof item?.currentPrice === 'number' ? item.currentPrice : null;
-  const lowestPrice = typeof item?.lowestPrice === 'number' ? item.lowestPrice : null;
-  const priceDrop = typeof item?.priceDrop === 'number' ? item.priceDrop : 0;
-  const guidance = item?.guidance || null;
-  const isGoodDeal = Boolean(item?.isGoodDeal);
+  const lowestPrice  = typeof item?.lowestPrice  === 'number' ? item.lowestPrice  : null;
+  const priceDrop    = typeof item?.priceDrop     === 'number' ? item.priceDrop    : 0;
+  const guidance     = item?.guidance || null;
+  const isGoodDeal   = Boolean(item?.isGoodDeal);
+  const category     = item?.category || '';
 
   const guidanceBadgeStyle =
-    guidance === '지금 구매 추천'
-      ? styles.guidanceBadgeGreen
-      : guidance === '최근 최고가 근처'
-        ? styles.guidanceBadgeRed
-        : styles.guidanceBadgeOrange;
+    guidance === '지금 구매 추천'   ? styles.guidanceBadgeGreen
+    : guidance === '최근 최고가 근처' ? styles.guidanceBadgeRed
+    : styles.guidanceBadgeOrange;
 
   const guidanceTextStyle =
-    guidance === '지금 구매 추천'
-      ? styles.guidanceTextGreen
-      : guidance === '최근 최고가 근처'
-        ? styles.guidanceTextRed
-        : styles.guidanceTextOrange;
+    guidance === '지금 구매 추천'   ? styles.guidanceTextGreen
+    : guidance === '최근 최고가 근처' ? styles.guidanceTextRed
+    : styles.guidanceTextOrange;
 
   return (
     <View style={styles.card}>
-      <TouchableOpacity
-        style={styles.cardPressArea}
-        activeOpacity={0.85}
-        onPress={onPress}
-      >
-        {/* Thumbnail */}
+      <TouchableOpacity style={styles.cardPressArea} activeOpacity={0.85} onPress={onPress}>
         <View style={styles.imagePlaceholder}>
           {image ? (
             <Image source={{ uri: image }} style={styles.image} resizeMode="cover" />
@@ -55,18 +47,14 @@ function SavedCard({ item, onRemove, onPress }) {
           )}
         </View>
 
-        {/* Info */}
         <View style={styles.cardInfo}>
-          <Text style={styles.cardName} numberOfLines={2}>{item.name || '이름 없음'}</Text>
+          <Text style={styles.cardName} numberOfLines={2}>{item?.name || '이름 없음'}</Text>
 
-          {/* Price drop + guidance badges */}
           {(priceDrop > 0 || guidance) ? (
             <View style={styles.badgeRow}>
               {priceDrop > 0 ? (
                 <View style={styles.priceDropBadge}>
-                  <Text style={styles.priceDropText}>
-                    🔥 ₩{priceDrop.toLocaleString('ko-KR')} 하락
-                  </Text>
+                  <Text style={styles.priceDropText}>🔥 ₩{priceDrop.toLocaleString('ko-KR')} 하락</Text>
                 </View>
               ) : null}
               {guidance ? (
@@ -77,21 +65,18 @@ function SavedCard({ item, onRemove, onPress }) {
             </View>
           ) : null}
 
-          {/* Good deal chip */}
           {isGoodDeal ? (
             <View style={styles.goodDealChip}>
               <Text style={styles.goodDealText}>지금 살만한 가격</Text>
             </View>
           ) : null}
 
-          {/* Category */}
           {category ? (
             <View style={styles.categoryBadge}>
               <Text style={styles.categoryBadgeText}>{category}</Text>
             </View>
           ) : null}
 
-          {/* Price row: current + lowest */}
           <View style={styles.priceRow}>
             <Text style={styles.cardPrice}>
               {currentPrice !== null && currentPrice > 0
@@ -99,22 +84,12 @@ function SavedCard({ item, onRemove, onPress }) {
                 : '가격 정보 없음'}
             </Text>
             {lowestPrice !== null && currentPrice !== null && lowestPrice < currentPrice ? (
-              <Text style={styles.lowestPriceText}>
-                최저 ₩{lowestPrice.toLocaleString('ko-KR')}
-              </Text>
+              <Text style={styles.lowestPriceText}>최저 ₩{lowestPrice.toLocaleString('ko-KR')}</Text>
             ) : null}
           </View>
-
-          {/* Alert status indicator */}
-          {typeof item?.isAlertActive === 'boolean' ? (
-            <Text style={styles.alertIndicatorText}>
-              {item.isAlertActive ? '🔔 알림 ON' : '🔕 알림 OFF'}
-            </Text>
-          ) : null}
         </View>
       </TouchableOpacity>
 
-      {/* Bookmark remove button */}
       <TouchableOpacity
         style={styles.bookmarkButton}
         onPress={onRemove}
@@ -128,67 +103,113 @@ function SavedCard({ item, onRemove, onPress }) {
 }
 
 export default function SavedProductsScreen({ navigation }) {
-  const [savedItems, setSavedItems] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
+  console.log('[SavedProducts] SCREEN RENDERED');
 
-  const loadSaved = useCallback(async () => {
-    const uid = auth.currentUser?.uid;
-    if (!uid) {
-      setLoading(false);
-      return;
-    }
+  const [savedProducts, setSavedProducts] = useState([]);
+  const [loading,       setLoading]       = useState(true);
+  const [refreshing,    setRefreshing]    = useState(false);
 
-    try {
-      const items = await getSavedProductsWithPriceSignals(uid);
-      setSavedItems(items);
-    } catch (error) {
-      console.log('SavedProductsScreen load error:', error);
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
-    }
+  useEffect(() => {
+    let unsubSnapshot = null;
+
+    const unsubAuth = onAuthStateChanged(auth, (user) => {
+      console.log('[SavedProducts] Auth state changed. User:', user?.uid);
+
+      if (unsubSnapshot) {
+        unsubSnapshot();
+        unsubSnapshot = null;
+      }
+
+      if (!user) {
+        setSavedProducts([]);
+        setLoading(false);
+        return;
+      }
+
+      const q = query(
+        collection(db, 'user_saved_products'),
+        where('userId', '==', user.uid),
+      );
+
+      unsubSnapshot = onSnapshot(
+        q,
+        async (snapshot) => {
+          console.log('[SavedProducts] Snapshot docs count:', snapshot.size);
+
+          if (snapshot.empty) {
+            setSavedProducts([]);
+            setLoading(false);
+            return;
+          }
+
+          try {
+            // Include the linkage doc ID as savedId so cards have a stable key
+            const linkages = snapshot.docs.map((d) => ({ savedId: d.id, ...d.data() }));
+            console.log('[SavedProducts] Linkages mapped. Group IDs:', linkages.map((l) => l.productGroupId));
+
+            const enrichedPromises = linkages.map(async (link) => {
+              if (!link.productGroupId) {
+                console.error('[SavedProducts] Missing productGroupId in linkage:', link);
+                return null;
+              }
+              const productRef  = doc(db, 'products', link.productGroupId);
+              const productSnap = await getDoc(productRef);
+              if (productSnap.exists()) {
+                return { id: productSnap.id, ...productSnap.data(), ...link };
+              } else {
+                console.error('[SavedProducts] Product doc not found for ID:', link.productGroupId);
+                return null;
+              }
+            });
+
+            const enrichedResults = await Promise.all(enrichedPromises);
+            const validProducts   = enrichedResults.filter((p) => p !== null);
+            console.log('[SavedProducts] Final enriched valid products count:', validProducts.length);
+            setSavedProducts(validProducts);
+          } catch (err) {
+            console.error('[SavedProducts] Enrichment error:', err);
+          } finally {
+            setLoading(false);
+            setRefreshing(false);
+          }
+        },
+        (error) => {
+          console.error('[SavedProducts] onSnapshot listener error:', error);
+          setLoading(false);
+        },
+      );
+    });
+
+    return () => {
+      unsubAuth();
+      if (unsubSnapshot) unsubSnapshot();
+    };
   }, []);
 
-  useEffect(() => {
-    loadSaved();
-  }, [loadSaved]);
+  const handleRefresh = () => {
+    // onSnapshot keeps data live; pull-to-refresh just resets the visual state
+    setRefreshing(true);
+    setTimeout(() => setRefreshing(false), 600);
+  };
 
-  // Refresh when navigating back to this tab
-  useEffect(() => {
-    const unsubscribe = navigation.addListener('focus', () => {
-      if (!loading) loadSaved();
-    });
-    return unsubscribe;
-  }, [navigation, loading, loadSaved]);
-
-  const handleRemove = async (productId) => {
+  const handleRemove = async (productGroupId) => {
     const uid = auth.currentUser?.uid;
     if (!uid) return;
-
-    // Optimistic remove
-    setSavedItems((prev) => prev.filter((item) => item.productId !== productId));
-
     try {
-      await toggleSavedProduct(uid, productId);
-    } catch (error) {
-      console.log('SavedProductsScreen remove error:', error);
-      loadSaved(); // re-fetch to restore correct state
+      await toggleSavedProduct(uid, productGroupId);
+      // onSnapshot fires automatically
+    } catch (e) {
+      console.error('[SavedProducts] handleRemove error:', e);
     }
   };
 
-  const handleProductPress = (productId, productName) => {
+  const handleProductPress = (productGroupId, productName) => {
     recordProductAction({
-      userId: auth.currentUser?.uid,
-      productId,
+      userId:     auth.currentUser?.uid,
+      productId:  productGroupId,
       actionType: 'click',
     });
-    navigation.navigate('ProductDetail', { productId, productName });
-  };
-
-  const handleRefresh = () => {
-    setRefreshing(true);
-    loadSaved();
+    navigation.navigate('ProductDetail', { productId: productGroupId, productName });
   };
 
   if (loading) {
@@ -204,22 +225,22 @@ export default function SavedProductsScreen({ navigation }) {
       style={styles.container}
       contentContainerStyle={[
         styles.scrollContent,
-        savedItems.length === 0 && styles.scrollContentEmpty,
+        savedProducts.length === 0 && styles.scrollContentEmpty,
       ]}
       refreshControl={<RefreshControl refreshing={refreshing} onRefresh={handleRefresh} />}
     >
-      {savedItems.length === 0 ? (
+      {savedProducts.length === 0 ? (
         <View style={styles.emptyContainer}>
           <Text style={styles.emptyText}>저장한 상품이 없습니다</Text>
           <Text style={styles.emptySubText}>상품 카드의 ☆ 버튼으로 저장해 보세요</Text>
         </View>
       ) : (
-        savedItems.map((item) => (
+        savedProducts.map((item) => (
           <SavedCard
-            key={item.savedId}
+            key={item.savedId || item.productGroupId}
             item={item}
-            onRemove={() => handleRemove(item.productId)}
-            onPress={() => handleProductPress(item.productId, item.name)}
+            onRemove={() => handleRemove(item.productGroupId)}
+            onPress={() => handleProductPress(item.productGroupId, item.name)}
           />
         ))
       )}

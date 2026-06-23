@@ -27,10 +27,14 @@ import Svg, {
 } from 'react-native-svg';
 
 import { Bell, BellRing, CheckCircle, ExternalLink, Info, Share2, Sparkles, Users } from 'lucide-react-native';
-import { doc, getDoc, setDoc } from 'firebase/firestore';
+import { collection, doc, getDoc, getCountFromServer, query, setDoc, where } from 'firebase/firestore';
+import { useUser } from '../context/UserContext';
+import { scrapeRealCoupangImage } from '../utils/scrapeProductImage';
 import { auth, db } from '../firebase/config';
 import { getChildrenByUserId } from '../services/firestore/childrenRepository';
 import { getMarketingAverage } from '../services/priceTrackingService';
+import { deriveSegmentFromBirthDate, toggleSavedProduct } from '../services/saveService';
+import { setExpectingCoupangReturn } from '../utils/coupangIntentFlag';
 
 // ─── Daily-price helpers ──────────────────────────────────────────────────────
 
@@ -171,34 +175,6 @@ function MultiBadgeComponent({ currentPrice, allTimeLow, periodAverage }) {
   );
 }
 
-// ─── Gauge Bar ─────────────────────────────────────────────────────────────────
-// pct = (currentPrice − allTimeLow) / (allTimeHigh − allTimeLow)
-// Fill width = pct × 100%. Thumb dot overlaid at the same percentage left.
-
-function GaugeBar({ current, min, max, avg, allTimeLow, fillColor = '#2E6FF2' }) {
-  const range  = max - min || 1;
-  const pct    = Math.min(1, Math.max(0, (current - min) / range));
-  const avgPct = Math.min(1, Math.max(0, (avg    - min) / range));
-  const fillW  = `${(pct * 100).toFixed(1)}%`;
-  const thumbL = `${(pct * 100).toFixed(1)}%`;
-  const avgL   = `${(avgPct * 100).toFixed(1)}%`;
-
-  return (
-    <View style={styles.gaugeWrap}>
-      {/* Track + fill + avg tick + thumb (no overflow:hidden on outer) */}
-      <View style={styles.gaugeOuter}>
-        <View style={styles.gaugeTrack}>
-          <View style={[styles.gaugeFill, { width: fillW, backgroundColor: fillColor }]} />
-        </View>
-        {/* Average price vertical tick */}
-        <View style={[styles.gaugeAvgTick, { left: avgL }]} />
-        {/* Thumb dot sits outside the overflow:hidden track */}
-        <View style={[styles.gaugeThumb, { left: thumbL }]} />
-      </View>
-
-    </View>
-  );
-}
 
 // ─── Price Chart ───────────────────────────────────────────────────────────────
 
@@ -500,11 +476,10 @@ function SocialProofCard({ pricePct, currentPrice }) {
       <TouchableOpacity
         style={[styles.fomoBtn, { backgroundColor: btnColor }]}
         activeOpacity={0.82}
-        onPress={() =>
-          Linking.openURL('coupang://').catch(() =>
-            Linking.openURL('https://m.coupang.com')
-          )
-        }
+        onPress={() => {
+          setExpectingCoupangReturn();
+          Linking.openURL('https://m.coupang.com').catch(() => {});
+        }}
       >
         <Text style={styles.fomoBtnText}>{btnLabel}</Text>
       </TouchableOpacity>
@@ -585,6 +560,7 @@ export default function DetailScreen({ route, navigation }) {
   };
   const displayItem = item || product || mockItem;
   const displayFrom = from || 'Ranking';
+  const { isWowMember, setIsWowMember } = useUser();
 
   const [timeRange,           setTimeRange]           = useState('2M');
   const [activeTooltipIdx,    setActiveTooltipIdx]    = useState(null);
@@ -619,8 +595,13 @@ export default function DetailScreen({ route, navigation }) {
     });
   }, [toastAnim]);
 
-  // Selected child's name for personalized tracking text
-  const [childName, setChildName] = useState('우리 아이');
+  // Selected child's name + type for personalized social proof text
+  const [childName,      setChildName]      = useState('우리 아이');
+  const [userType,       setUserType]       = useState('child');
+  const [fetalName,      setFetalName]      = useState(null);
+  const [childBirthDate, setChildBirthDate] = useState(null);
+  const [scrapedImage,   setScrapedImage]   = useState(null);
+  const [peerCount,      setPeerCount]      = useState(0);
 
   useEffect(() => {
     const backHandler = BackHandler.addEventListener('hardwareBackPress', () => {
@@ -639,11 +620,48 @@ export default function DetailScreen({ route, navigation }) {
         const selectedChildId = userSnap.exists() ? userSnap.data().selectedChildId ?? null : null;
         const children = await getChildrenByUserId(uid);
         const child = (selectedChildId ? children.find((c) => c.id === selectedChildId) : null) ?? children[0] ?? null;
-        if (child?.name) setChildName(child.name);
+        if (child?.name)      setChildName(child.name);
+        if (child?.type)      setUserType(child.type);
+        if (child?.fetalName) setFetalName(child.fetalName);
+        if (child?.birthDate) setChildBirthDate(child.birthDate);
       } catch (_) {}
     };
     load();
   }, []);
+
+  useEffect(() => {
+    const rawId = displayItem?.productGroupId || displayItem?.productId;
+    if (!rawId) return;
+    if (userType === 'child' && !childBirthDate) return;
+    const productGroupId = rawId.startsWith('coupang_') ? rawId : `coupang_${rawId}`;
+    const segment = deriveSegmentFromBirthDate(childBirthDate, userType);
+    const fetchPeerCount = async () => {
+      try {
+        const snap = await getCountFromServer(
+          query(
+            collection(db, 'user_saved_products'),
+            where('productGroupId', '==', productGroupId),
+            where('userSegment', '==', segment)
+          )
+        );
+        setPeerCount(snap.data().count);
+      } catch (_) {}
+    };
+    fetchPeerCount();
+  }, [displayItem?.productGroupId, displayItem?.productId, childBirthDate, userType, isSaved]);
+
+  useEffect(() => {
+    if (!displayItem) return;
+    console.log('API_DATA_STRUCTURE:', JSON.stringify(displayItem, null, 2));
+  }, [displayItem]);
+
+  // Scrape high-res og:image when product has no image URL
+  useEffect(() => {
+    if (displayItem?.image) return;
+    const url = displayItem?.productUrl || displayItem?.coupangUrl || null;
+    if (!url) return;
+    scrapeRealCoupangImage(url).then((img) => { if (img) setScrapedImage(img); });
+  }, [displayItem?.image, displayItem?.productUrl, displayItem?.coupangUrl]);
 
   // Real price data from Firebase daily_prices subcollection.
   // Stored newest-first (raw from Firestore); reversed to chronological when used.
@@ -721,12 +739,33 @@ export default function DetailScreen({ route, navigation }) {
     }
   }, [displayItem?.productId, displayItem?.currentPrice, loadDailyPrices]);
 
-  useLayoutEffect(() => {
-    navigation.setOptions({
-      headerRight: () => null,
-      title: '상품 상세',
-    });
-  }, [navigation]);
+  const handleToggleSave = useCallback(async () => {
+    const uid            = auth.currentUser?.uid;
+    const rawId          = displayItem?.productGroupId || displayItem?.productId;
+    if (!uid || !rawId) return;
+
+    // RULE-08: singleton product doc keyed by coupang_{productId}
+    const productGroupId = rawId.startsWith('coupang_') ? rawId : `coupang_${rawId}`;
+
+    // Upsert product document — setDoc + merge guarantees no duplicates
+    await setDoc(
+      doc(db, 'products', productGroupId),
+      {
+        productGroupId,
+        name:         displayItem?.name         || '',
+        brand:        displayItem?.brand        || '',
+        image:        displayItem?.image        || '',
+        currentPrice: displayItem?.currentPrice || 0,
+        market:       'coupang',
+        updatedAt:    new Date(),
+      },
+      { merge: true }
+    );
+
+    const nowSaved = await toggleSavedProduct(uid, productGroupId, childBirthDate, userType);
+    setIsSaved(nowSaved);
+    if (nowSaved) showToast('관심 상품에 추가되었어요!');
+  }, [displayItem, childBirthDate, userType, showToast]);
 
   const handleShare = () =>
     Share.share({
@@ -734,13 +773,11 @@ export default function DetailScreen({ route, navigation }) {
       title: '최저가 공유',
     });
 
-  const handleToggleSave = () => {
-    const newSavedState = !isSaved;
-    setIsSaved(newSavedState);
-    if (newSavedState) showToast('관심 상품에 추가되었어요!');
-  };
+  useLayoutEffect(() => {
+    navigation.setOptions({ title: '상품 상세' });
+  }, [navigation]);
 
-  const currentPrice  = 127600; // MOCK: expensive state (≈31% above average)
+  const currentPrice  = displayItem?.currentPrice || displayItem?.price || 0;
   const unitPriceText = '장당 768원';
 
   // Slice rawDailyPrices to the selected time range (already oldest-first).
@@ -792,140 +829,181 @@ export default function DetailScreen({ route, navigation }) {
         contentContainerStyle={styles.scrollContent}
       >
 
-        {/* ── Product header (hero image + vertical pricing) ── */}
-        <View style={styles.header}>
-          {/* Left: product image */}
-          {displayItem.image ? (
-            <Image source={{ uri: displayItem.image }} style={styles.heroImage} resizeMode="cover" />
-          ) : (
-            <View style={[styles.heroImage, styles.heroImageFallback]}>
-              <Ionicons name="cube-outline" size={44} color="#94a3b8" />
-            </View>
-          )}
+        {/* ── CPO PDP Hierarchy ── */}
+        {(() => {
+          const regularPrice   = currentPrice;
+          const displayedPrice = regularPrice;
+          const isRocket       = displayItem.isRocket || displayItem.deliveryType === 'rocket';
+          const deliveryText   = isRocket
+            ? (displayItem.categoryName === '로켓프레시' ? '로켓프레시' : '🚀 로켓배송')
+            : (displayItem.isFreeShipping ? '무료배송' : '일반');
+          const deliveryColor  = displayItem.categoryName === '로켓프레시' ? '#16A34A' : isRocket ? '#2E6FF2' : '#64748B';
+          const rawImage       = displayItem?.image;
+          const safeImage      = rawImage
+            ? (rawImage.startsWith('http://') ? rawImage.replace('http://', 'https://') : rawImage)
+            : null;
+          const finalImage     = safeImage || scrapedImage;
+          const fullText           = displayItem?.name || '';
+          const brand              = displayItem?.brand || fullText.split(' ')[0] || '브랜드 정보 없음';
+          const cleanName          = fullText.replace(brand, '').trim().split(',')[0].trim();
+          const displayedFullName  = fullText.startsWith(brand)
+            ? fullText
+            : `${brand} ${fullText}`.trim();
+          const specRegex      = /\d+\.?\d*\s*(g|ml|kg|L|리터|개|롤|매|팩|정|캡슐|포|박스)/ig;
+          const specMatchArr   = fullText.match(specRegex);
+          const fetchedSpec    = specMatchArr ? specMatchArr.join(' / ') : '상세 규격 없음';
 
-          {/* Right: title + prices */}
-          <View style={styles.headerRight}>
-            {/* Delivery badge */}
-            {displayItem.deliveryType === 'rocket' && (
-              <Text style={styles.headerDelivery}>🚀 로켓배송</Text>
-            )}
+          // ── Cold-start phase logic ─────────────────────────────────────────────
+          const trackedDays  = 60; // HARDCODED for CPO full-data review
+          const phase        = trackedDays < 7 ? 1 : trackedDays < 60 ? 2 : 3;
+          const avgSlice     = phase >= 2 ? (rawDailyPrices ?? []).slice(-Math.min(trackedDays, 60)) : [];
+          const averagePrice = avgSlice.length > 0
+            ? Math.round(avgSlice.reduce((s, r) => s + (r.maxPrice + r.minPrice) / 2, 0) / avgSlice.length)
+            : currentAverage;
 
-            {/* Social proof — absolute top of info column */}
-            <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
-              <Users size={14} color="#6B7280" />
-              <Text style={{ fontSize: 13, color: '#6B7280', marginLeft: 4 }}>또래 맘 84명이 지켜보고 있어요</Text>
-            </View>
+          // ── Dynamic rate & absolute diff ──────────────────────────────────────
+          const priceDiff = averagePrice - displayedPrice;
+          const rate      = averagePrice > 0 ? Math.round((Math.abs(priceDiff) / averagePrice) * 100) : 0;
+          const isCheaper = priceDiff >= 0;
+          const rateColor = isCheaper ? '#EF4444' : '#2E6FF2';
+          const rateArrow = isCheaper ? '▼' : '▲';
+          const absDiff   = Math.abs(priceDiff);
+          const diffText  = isCheaper
+            ? `-${absDiff.toLocaleString('ko-KR')}원`
+            : `+${absDiff.toLocaleString('ko-KR')}원`;
 
-            {/* Brand + Product Name */}
-            {(() => {
-              const fullName = displayItem.name || '상품 가격 분석';
-              const brand = displayItem.brand || fullName.split(' ')[0];
-              const productName = displayItem.brand ? fullName : fullName.split(' ').slice(1).join(' ') || fullName;
-              return (
-                <>
-                  <Text style={{ fontSize: 12, color: '#6B7280', fontWeight: '700', marginBottom: 2 }}>{brand}</Text>
-                  <Text style={{ fontSize: 15, color: '#111827', fontWeight: '700', lineHeight: 21 }} numberOfLines={3}>{productName}</Text>
-                </>
-              );
-            })()}
+          // ── Dynamic social proof line 2 ────────────────────────────────────────
+          const socialProofLine2 = userType === 'pregnancy'
+            ? `${fetalName || '아기'}와 출산 시기가 비슷한 유저가 보고 있어요`
+            : userType === 'planning'
+              ? '임신 계획이 비슷한 유저가 보고 있어요'
+              : `${childName || '아이'}와 비슷한 환경의 부모들이 지켜보고 있어요`;
 
-            {/* Unit price badge */}
-            <View style={styles.unitBadge}>
-              <Text style={styles.unitBadgeText}>{unitPriceText}</Text>
-            </View>
-
-            {/* Current price + label + expensive % indicator */}
-            <View style={{ flexDirection: 'row', alignItems: 'baseline', marginBottom: 8 }}>
-              <Text style={{ fontSize: 14, color: '#6B7280', fontWeight: '600', marginRight: 6 }}>현재가격</Text>
-              <Text style={{ fontSize: 26, fontWeight: '800', color: '#111827' }}>₩127,600</Text>
-              <Text style={{ fontSize: 16, fontWeight: '700', color: '#EF4444', marginLeft: 8 }}>▲ 31%</Text>
-            </View>
-
-            {/* Delivery & seller metadata */}
-            <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 6, marginBottom: 4 }}>
-              <Text style={{ fontSize: 13, color: '#4B5563', fontWeight: '500' }}>✓ 쿠팡 인증 상품</Text>
-              <View style={{ marginLeft: 8 }}>
-                {renderDeliveryTag('rocket')}
-              </View>
-            </View>
-
-          </View>
-        </View>
-
-        <View style={{ height: 8, backgroundColor: '#f1f5f9', width: '100%', marginTop: 0, marginBottom: 0 }} />
-
-        {/* ── 가격 분석 section header ── */}
-        <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 12, marginBottom: 8, paddingHorizontal: 16 }}>
-          <Text style={{ fontSize: 18, fontWeight: '700', color: '#111827' }}>가격 분석</Text>
-          <TouchableOpacity
-            onPress={() => setShowPriceInfoModal(true)}
-            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-            style={{ marginLeft: 6 }}
-          >
-            <Info size={14} color="#94A3B8" />
-          </TouchableOpacity>
-        </View>
-
-        {/* ── CTA Recommendation Card ── */}
-        <View style={[styles.ctaCard, { overflow: 'visible', marginTop: 0 }]}>
-          {/* Row: title + badge + share — single forced row */}
-          {(() => {
-            const badge = getBadgeState(127600, 63000, 135000, currentAverage);
-            return (
-              <View style={{ flexDirection: 'row', alignItems: 'center', width: '100%' }}>
-                <Text style={{ flexShrink: 1, fontSize: 16, fontWeight: '800', color: '#111827' }} numberOfLines={1}>
-                  평균가 대비 31% 비싸요!
-                </Text>
-                <View style={{ backgroundColor: badge.bg, paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4, marginLeft: 8 }}>
-                  <Text style={{ color: badge.color, fontSize: 11, fontWeight: '600' }}>{badge.label}</Text>
-                </View>
-                <TouchableOpacity
-                  onPress={() => Share.share({ message: '지금 종근당건강 프로메가 오메가3 트리플 최근 최저가 근접! 127,600원 - 세이브루에서 확인하세요.\nhttps://saveroo.app/link/product/12345' })}
-                  style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#F3F4F6', paddingVertical: 4, paddingHorizontal: 8, borderRadius: 6, marginLeft: 'auto' }}
-                >
-                  <Share2 size={12} color="#4B5563" />
-                  <Text style={{ fontSize: 11, color: '#4B5563', marginLeft: 4, fontWeight: '600' }}>지인 공유</Text>
-                </TouchableOpacity>
-              </View>
-            );
-          })()}
-
-          <View style={styles.ctaPriceRow}>
-            <Text style={styles.ctaPriceLabel}>현재가</Text>
-            <Text style={styles.ctaPrice}>₩{currentPrice.toLocaleString('ko-KR')}</Text>
-          </View>
-
-          <GaugeBar
-            current={127600}
-            min={63000}
-            max={135000}
-            avg={currentAverage}
-            allTimeLow={ALL_TIME_LOW}
-            fillColor="#EF4444"
-          />
-
-          {/* Gauge axis: min left, max right, avg absolute */}
-          {(() => {
-            const range = currentHigh - currentLow || 1;
-            const avgPct = Math.min(1, Math.max(0, (currentAverage - currentLow) / range));
-            return (
-              <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 8, position: 'relative' }}>
-                <View style={{ alignItems: 'flex-start' }}>
-                  <Text style={{ fontSize: 12, color: '#2E6FF2', fontWeight: '600' }}>최근 최저가</Text>
-                  <Text style={{ fontSize: 12, color: '#6B7280', fontWeight: '600' }}>{currentLow.toLocaleString('ko-KR')}원</Text>
-                </View>
-                <View style={{ position: 'absolute', left: `${(avgPct * 100).toFixed(1)}%`, alignItems: 'center', transform: [{ translateX: -28 }] }}>
-                  <Text style={{ fontSize: 12, color: '#64748B', fontWeight: '600' }}>평균가</Text>
-                  <Text style={{ fontSize: 12, color: '#64748B', fontWeight: '600' }}>{currentAverage.toLocaleString('ko-KR')}원</Text>
-                </View>
-                <View style={{ alignItems: 'flex-end' }}>
-                  <Text style={{ fontSize: 12, color: '#F87171', fontWeight: '600' }}>최근 최고가</Text>
-                  <Text style={{ fontSize: 12, color: '#6B7280', fontWeight: '600' }}>{currentHigh.toLocaleString('ko-KR')}원</Text>
+          return (
+            <>
+              {/* --- 최상단: 썸네일 + 텍스트 병렬 레이아웃 --- */}
+              <View style={{ flexDirection: 'row', paddingHorizontal: 16, paddingTop: 16, paddingBottom: 16 }}>
+                {finalImage ? (
+                  <Image
+                    source={{ uri: finalImage }}
+                    style={{ width: 105, height: 105, borderRadius: 8, marginRight: 16, backgroundColor: '#F8FAFC' }}
+                    resizeMode="contain"
+                  />
+                ) : (
+                  <View style={{ width: 105, height: 105, borderRadius: 8, marginRight: 16, backgroundColor: '#F8FAFC', alignItems: 'center', justifyContent: 'center' }}>
+                    <Ionicons name="cube-outline" size={40} color="#94a3b8" />
+                  </View>
+                )}
+                <View style={{ flex: 1, justifyContent: 'center' }}>
+                  <Text style={{ fontSize: 14, color: '#64748B', marginBottom: 4 }}>
+                    {brand || '브랜드 정보 없음'}
+                  </Text>
+                  <Text style={{ fontSize: 20, fontWeight: '800', color: '#0F172A', marginBottom: 4 }}>
+                    {displayedFullName}
+                  </Text>
+                  <Text style={{ fontSize: 14, color: '#475569' }}>
+                    {displayItem?.spec || fullText?.match(/\d+\.?\d*\s*(g|ml|kg|L|리터|개|롤|매|팩|정|캡슐|포|박스)/ig)?.join(' / ') || '상세 규격 없음'}
+                  </Text>
                 </View>
               </View>
-            );
-          })()}
-        </View>
+
+              {/* --- 소셜 증명 배너 --- */}
+              <View style={{ paddingHorizontal: 16, paddingBottom: 16 }}>
+                <View style={{ width: '100%', backgroundColor: '#F1F5F9', padding: 14, borderRadius: 8 }}>
+                  {(() => {
+                    const displayFirstName = childName ? childName.split(' ').pop() : '지우';
+                    return (
+                      <Text numberOfLines={1} style={{ fontSize: 14, color: '#334155' }}>
+                        <Text style={{ color: '#2E6FF2', fontWeight: '800' }}>{peerCount}명</Text>
+                        {userType === 'pregnancy'
+                          ? `의 ${fetalName || '튼튼이'}와 출산 시기가 비슷한 유저가 보고 있어요`
+                          : userType === 'planning'
+                            ? `의 임신 계획이 비슷한 유저가 보고 있어요`
+                            : `의 ${displayFirstName}와 비슷한 환경의 부모들이 지켜보고 있어요`}
+                      </Text>
+                    );
+                  })()}
+                </View>
+              </View>
+
+              {/* --- 가로 구분선 --- */}
+              <View style={{ height: 1, backgroundColor: '#E2E8F0', width: '100%' }} />
+
+              {/* --- 가격 정보 영역 --- */}
+              <View style={{ paddingHorizontal: 16, paddingTop: 16, paddingBottom: 16 }}>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-end' }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'baseline' }}>
+                    <Text style={{ fontSize: 14, color: '#475569', marginRight: 4 }}>현재가</Text>
+                    <Text style={{ fontSize: 22, fontWeight: '800', color: '#0F172A' }}>
+                      {displayedPrice.toLocaleString('ko-KR')}원
+                    </Text>
+                    {phase >= 2 && (
+                      <Text style={{ fontSize: 14, color: '#94A3B8', textDecorationLine: 'line-through', marginLeft: 6 }}>
+                        {averagePrice.toLocaleString('ko-KR')}원
+                      </Text>
+                    )}
+                    {phase < 2 && (
+                      <View style={{ marginLeft: 8, backgroundColor: '#F1F5F9', borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3 }}>
+                        <Text style={{ fontSize: 12, color: '#94A3B8', fontWeight: '600' }}>데이터 수집 중 🔍</Text>
+                      </View>
+                    )}
+                  </View>
+                  {phase >= 2 && rate > 0 && (
+                    <Text style={{ fontSize: 20, fontWeight: '700', color: '#EF4444' }}>
+                      {rateArrow} {rate}%
+                    </Text>
+                  )}
+                </View>
+
+                {/* 와우회원가 */}
+                <View style={{ flexDirection: 'row', alignItems: 'baseline', marginTop: 10 }}>
+                  <Text style={{ fontSize: 16, fontWeight: '600', color: '#475569', marginRight: 8 }}>
+                    와우회원가
+                  </Text>
+                  <Text style={{ fontSize: 24, fontWeight: '600', color: '#EF4444' }}>
+                    {(displayItem?.wowPrice || Math.floor(displayedPrice * 0.9)).toLocaleString('ko-KR')}원
+                  </Text>
+                </View>
+              </View>
+
+              {/* Row 3: Fintech Data Table */}
+              <View style={{ flexDirection: 'row', justifyContent: 'space-around', borderTopWidth: 1, borderColor: '#F3F4F6', paddingVertical: 16 }}>
+                <View style={{ alignItems: 'center' }}>
+                  <Text style={{ fontSize: 11, color: '#94A3B8', marginBottom: 4 }}>현재가격</Text>
+                  <Text style={{ fontSize: 14, fontWeight: '800', color: '#0F172A' }}>
+                    {displayedPrice.toLocaleString('ko-KR')}원
+                  </Text>
+                </View>
+                <View style={{ alignItems: 'center' }}>
+                  <Text style={{ fontSize: 11, color: '#94A3B8', marginBottom: 4 }}>60일 평균</Text>
+                  {phase >= 2 ? (
+                    <Text style={{ fontSize: 14, fontWeight: '700', color: '#64748B' }}>
+                      {averagePrice.toLocaleString('ko-KR')}원
+                    </Text>
+                  ) : (
+                    <Text style={{ fontSize: 12, color: '#CBD5E1' }}>-</Text>
+                  )}
+                </View>
+                <View style={{ alignItems: 'center' }}>
+                  <Text style={{ fontSize: 11, color: '#94A3B8', marginBottom: 4 }}>평균 대비</Text>
+                  {phase >= 2 && absDiff > 0 ? (
+                    <Text style={{ fontSize: 13, fontWeight: '800', color: rateColor }}>
+                      {diffText}
+                    </Text>
+                  ) : (
+                    <Text style={{ fontSize: 12, color: '#CBD5E1' }}>-</Text>
+                  )}
+                </View>
+                <View style={{ alignItems: 'center' }}>
+                  <Text style={{ fontSize: 11, color: '#94A3B8', marginBottom: 4 }}>배송 정보</Text>
+                  <Text style={{ fontSize: 13, fontWeight: '700', color: deliveryColor }}>
+                    {deliveryText}
+                  </Text>
+                </View>
+              </View>
+            </>
+          );
+        })()}
 
         <View style={styles.sectionDivider} />
 
@@ -1067,6 +1145,25 @@ export default function DetailScreen({ route, navigation }) {
           ))}
         </View>
 
+        {/* ── DEV: Social Proof Type Toggle ── */}
+        {__DEV__ && (
+          <View style={{ flexDirection: 'row', justifyContent: 'center', gap: 8, paddingVertical: 16, paddingHorizontal: 20, borderTopWidth: 1, borderColor: '#F1F5F9' }}>
+            {[
+              { label: 'TEST: 아이',  type: 'child'     },
+              { label: 'TEST: 임신',  type: 'pregnancy' },
+              { label: 'TEST: 계획',  type: 'planning'  },
+            ].map(({ label, type }) => (
+              <TouchableOpacity
+                key={type}
+                onPress={() => setUserType(type)}
+                style={{ paddingHorizontal: 12, paddingVertical: 6, borderRadius: 6, backgroundColor: userType === type ? '#2E6FF2' : '#F1F5F9' }}
+              >
+                <Text style={{ fontSize: 12, fontWeight: '700', color: userType === type ? '#fff' : '#64748B' }}>{label}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        )}
+
       </ScrollView>
 
       <Animated.View style={{
@@ -1085,17 +1182,58 @@ export default function DetailScreen({ route, navigation }) {
         <Text style={{ color: '#FFFFFF', fontSize: 14, fontWeight: '700' }}>{toastMsg}</Text>
       </Animated.View>
 
-      <View style={{flexDirection: 'row', alignItems: 'center', paddingTop: 12, paddingHorizontal: 16, paddingBottom: insets.bottom || 16, borderTopWidth: 1, borderColor: '#e2e8f0', backgroundColor: '#fff'}}>
-        <TouchableOpacity onPress={() => setIsTracking((v) => !v)} style={{alignItems: 'center', justifyContent: 'center', width: 60, marginRight: 8}}>
-          {isTracking ? <BellRing size={22} color="#2E6FF2" /> : <Bell size={22} color="#6B7280" />}
-          <Text style={{fontSize: 10, color: isTracking ? '#2E6FF2' : '#6B7280', marginTop: 4, fontWeight: isTracking ? '700' : '600'}}>{isTracking ? '추적 중' : '추적 시작'}</Text>
-        </TouchableOpacity>
+      <TouchableOpacity
+        onPress={handleToggleSave}
+        style={{
+          position: 'absolute', bottom: 100, right: 20, zIndex: 10,
+          flexDirection: 'row', alignItems: 'center', gap: 6,
+          paddingVertical: 10, paddingHorizontal: 16, borderRadius: 24,
+          backgroundColor: isSaved ? '#D1FAE5' : '#2E6FF2',
+          borderWidth: isSaved ? 1 : 0, borderColor: '#6EE7B7',
+          shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.2, shadowRadius: 4, elevation: 5,
+        }}
+      >
+        {isSaved
+          ? <BellRing size={16} color="#065F46" />
+          : <Bell size={16} color="#FFFFFF" />}
+        <Text style={{ fontSize: 14, fontWeight: '700', color: isSaved ? '#065F46' : '#FFFFFF' }}>
+          {isSaved ? '알림 받는 중' : '최저가 알림'}
+        </Text>
+      </TouchableOpacity>
+
+      <View style={{ paddingTop: 12, paddingHorizontal: 16, paddingBottom: insets.bottom || 16, borderTopWidth: 1, borderColor: '#e2e8f0', backgroundColor: '#fff' }}>
         <TouchableOpacity
-          style={{flex: 1, backgroundColor: '#f97316', paddingVertical: 14, borderRadius: 8, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8}}
-          onPress={() => Linking.openURL('coupang://').catch(() => Linking.openURL('https://m.coupang.com'))}
+          style={{ backgroundColor: '#f97316', paddingVertical: 14, borderRadius: 8, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 }}
+          onPress={() => {
+            let pid = displayItem?.pageKey || displayItem?.productId || '';
+            let vid = displayItem?.vendorItemId || '';
+            const affiliateUrl = displayItem?.affiliateUrl || '';
+
+            if (!pid && affiliateUrl) {
+              const pMatch = affiliateUrl.match(/pageKey=(\d+)/);
+              if (pMatch) pid = pMatch[1];
+            }
+            if (!vid && affiliateUrl) {
+              const vMatch = affiliateUrl.match(/vendorItemId=(\d+)/);
+              if (vMatch) vid = vMatch[1];
+            }
+
+            const webFallback = affiliateUrl || (pid ? `https://m.coupang.com/vm/products/${pid}` : 'https://m.coupang.com');
+            setExpectingCoupangReturn();
+            if (pid) {
+              const deepLink = `coupang://vp/products/${pid}${vid ? `?vendorItemId=${vid}` : ''}`;
+              Linking.canOpenURL(deepLink)
+                .then((supported) =>
+                  supported ? Linking.openURL(deepLink) : Linking.openURL(webFallback)
+                )
+                .catch(() => Linking.openURL(webFallback));
+            } else {
+              Linking.openURL(webFallback);
+            }
+          }}
         >
           <ExternalLink color="#FFFFFF" size={18} />
-          <Text style={{color: '#fff', fontSize: 16, fontWeight: 'bold'}}>쿠팡 최저가 확인하기</Text>
+          <Text style={{ color: '#fff', fontSize: 16, fontWeight: 'bold' }}>쿠팡에서 최저가 확인하기</Text>
         </TouchableOpacity>
       </View>
 
@@ -1333,32 +1471,6 @@ const styles = StyleSheet.create({
   ctaPriceLabel: { fontSize: 13, color: '#64748b', fontWeight: '600' },
   ctaPrice:      { fontSize: 26, fontWeight: '900', color: '#111827' },
 
-  // Gauge bar
-  gaugeWrap:  { gap: 8 },
-  gaugeOuter: { position: 'relative', height: 16, justifyContent: 'center' },
-  gaugeTrack: {
-    height: 6, borderRadius: 4, overflow: 'hidden',
-    backgroundColor: '#E5E7EB',
-  },
-  gaugeFill:  { height: '100%', borderRadius: 4, backgroundColor: '#2E6FF2' },
-  gaugeAvgTick: {
-    position: 'absolute', top: '50%',
-    width: 2, height: 12, borderRadius: 1,
-    backgroundColor: '#94a3b8', zIndex: 1,
-    transform: [{ translateY: -6 }],
-  },
-  gaugeThumb: {
-    position: 'absolute', top: '50%',
-    width: 14, height: 14, borderRadius: 7,
-    backgroundColor: '#fff', borderWidth: 2, borderColor: '#2E6FF2',
-    transform: [{ translateX: -7 }, { translateY: -7 }],
-    ...Platform.select({
-      ios:     { shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.3, shadowRadius: 2 },
-      android: { elevation: 2 },
-    }),
-  },
-  gaugeLabels:   { flexDirection: 'row', justifyContent: 'space-between' },
-  gaugeLabelText: { fontSize: 10, color: '#475569' },
 
   // CTA card buttons
   ctaBtnPrimary: {

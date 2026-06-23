@@ -175,12 +175,31 @@ export async function getSavedProductsWithPriceSignals(userId) {
 
   const results = await Promise.all(
     savedRecords.map(async (record) => {
+      const pgid = record.productGroupId || record.productId;
+      if (!pgid) return null;
+
       const [productSnap, intel] = await Promise.all([
-        getDoc(doc(db, 'products', record.productId)),
-        getPriceIntelligence(record.productId),
+        getDoc(doc(db, 'products', pgid)),
+        getPriceIntelligence(pgid),
       ]);
 
-      if (!productSnap.exists()) return null;
+      if (!productSnap.exists()) {
+        return {
+          savedId: record.savedId,
+          productGroupId: pgid,
+          name: '상품 정보 업데이트 중...',
+          image: null,
+          category: '',
+          currentPrice: null,
+          lowestPrice: null,
+          averagePrice: null,
+          priceDrop: 0,
+          guidance: null,
+          isGoodDeal: false,
+          isAlertActive: false,
+          isMissing: true,
+        };
+      }
       const product = productSnap.data();
 
       const currentPrice =
@@ -197,12 +216,12 @@ export async function getSavedProductsWithPriceSignals(userId) {
         guidance === '지금 구매 추천' ||
         (currentPrice !== null && averagePrice !== null && currentPrice <= averagePrice * 0.95);
 
-      const alertEntry = alertsByProductId[record.productId];
+      const alertEntry = alertsByProductId[pgid];
       const isAlertActive = alertEntry?.isActive ?? false;
 
       return {
         savedId: record.savedId,
-        productId: record.productId,
+        productGroupId: pgid,
         name: product.name || '',
         image: product.image || null,
         category: product.category || '',

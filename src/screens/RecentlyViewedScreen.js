@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
   FlatList,
   StyleSheet,
@@ -7,7 +7,7 @@ import {
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Info } from 'lucide-react-native';
+import { Info, X } from 'lucide-react-native';
 import Svg, { Circle, Path, Rect } from 'react-native-svg';
 
 function ImagePlaceholderIcon({ size = 24, color = '#cbd5e1' }) {
@@ -21,12 +21,12 @@ function ImagePlaceholderIcon({ size = 24, color = '#cbd5e1' }) {
 }
 
 const DUMMY_RECENTLY_VIEWED = [
-  { id: 'rv1', brand: '하기스',      name: '네이처메이드 3단계 기저귀 특대형 96매',    origPrice: 42900,  currentPrice: 32175  },
-  { id: 'rv2', brand: '매일유업',    name: '앱솔루트 명작 3단계 분유 800g × 2캔',      origPrice: 38500,  currentPrice: 31570  },
-  { id: 'rv3', brand: '베베숲',      name: '아쿠아 물티슈 100매 6팩 무향 저자극',       origPrice: 16900,  currentPrice: 11830  },
-  { id: 'rv4', brand: '다이치',      name: '듀얼핏 360 회전형 카시트 신생아~4세',      origPrice: 429000, currentPrice: 317460 },
-  { id: 'rv5', brand: '피셔프라이스', name: '소리나는 멀티활동 점퍼루 4-in-1 바운서',   origPrice: 199000, currentPrice: 214500 },
-  { id: 'rv6', brand: '레고 듀플로', name: '클래식 기본 벽돌 세트 38피스 (1.5~5세)', origPrice: 38000,  currentPrice: 28120  },
+  { id: 'rv1', brand: '하기스',       name: '네이처메이드 3단계 기저귀 특대형 96매',     origPrice: 42900,  currentPrice: 32175  },
+  { id: 'rv2', brand: '매일유업',     name: '앱솔루트 명작 3단계 분유 800g × 2캔',       origPrice: 38500,  currentPrice: 31570  },
+  { id: 'rv3', brand: '베베숲',       name: '아쿠아 물티슈 100매 6팩 무향 저자극',        origPrice: 16900,  currentPrice: 11830  },
+  { id: 'rv4', brand: '다이치',       name: '듀얼핏 360 회전형 카시트 신생아~4세',       origPrice: 429000, currentPrice: 317460 },
+  { id: 'rv5', brand: '피셔프라이스', name: '소리나는 멀티활동 점퍼루 4-in-1 바운서',    origPrice: 199000, currentPrice: 214500 },
+  { id: 'rv6', brand: '레고 듀플로',  name: '클래식 기본 벽돌 세트 38피스 (1.5~5세)',  origPrice: 38000,  currentPrice: 28120  },
 ];
 
 function calcIndicator(currentPrice, origPrice) {
@@ -36,7 +36,7 @@ function calcIndicator(currentPrice, origPrice) {
   return { arrow: '▲', pct, color: '#ef4444' };
 }
 
-function ProductCard({ item, onPress }) {
+function ProductCard({ item, onPress, onDelete }) {
   const indicator = calcIndicator(item.currentPrice, item.origPrice);
   return (
     <TouchableOpacity style={styles.card} activeOpacity={0.75} onPress={onPress}>
@@ -58,14 +58,28 @@ function ProductCard({ item, onPress }) {
           )}
         </View>
       </View>
+      <TouchableOpacity
+        style={styles.deleteBtn}
+        onPress={onDelete}
+        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+        activeOpacity={0.6}
+      >
+        <X size={16} color="#CBD5E1" />
+      </TouchableOpacity>
     </TouchableOpacity>
   );
 }
 
 export default function RecentlyViewedScreen({ route, navigation }) {
-  const insets   = useSafeAreaInsets();
-  const passed   = route?.params?.products;
-  const products = Array.isArray(passed) && passed.length > 0 ? passed : DUMMY_RECENTLY_VIEWED;
+  const insets  = useSafeAreaInsets();
+  const passed  = route?.params?.products;
+  const initial = Array.isArray(passed) && passed.length > 0 ? passed : DUMMY_RECENTLY_VIEWED;
+
+  const [products, setProducts] = useState(initial);
+
+  const handleDelete = (id) => {
+    setProducts((prev) => prev.filter((p) => p.id !== id));
+  };
 
   return (
     <View style={[styles.container, { paddingBottom: insets.bottom }]}>
@@ -84,8 +98,14 @@ export default function RecentlyViewedScreen({ route, navigation }) {
           <ProductCard
             item={item}
             onPress={() => navigation.navigate('Detail', { item })}
+            onDelete={() => handleDelete(item.id)}
           />
         )}
+        ListEmptyComponent={
+          <View style={styles.empty}>
+            <Text style={styles.emptyText}>최근 본 상품이 없습니다.</Text>
+          </View>
+        }
       />
     </View>
   );
@@ -112,22 +132,20 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
   },
   thumb: {
-    width: 66,
-    height: 66,
-    borderRadius: 10,
-    backgroundColor: '#f8fafc',
-    borderWidth: 1,
-    borderColor: '#e2e8f0',
-    alignItems: 'center',
-    justifyContent: 'center',
-    flexShrink: 0,
+    width: 66, height: 66, borderRadius: 10,
+    backgroundColor: '#f8fafc', borderWidth: 1, borderColor: '#e2e8f0',
+    alignItems: 'center', justifyContent: 'center', flexShrink: 0,
   },
-  info:  { flex: 1, gap: 3 },
-  brand: { fontSize: 11, fontWeight: '600', color: '#94a3b8' },
-  name:  { fontSize: 13, fontWeight: '600', color: '#0f172a', lineHeight: 18 },
-
-  priceRow:     { flexDirection: 'row', alignItems: 'baseline', flexWrap: 'wrap', gap: 6, marginTop: 3 },
-  indicator:    { fontSize: 12, fontWeight: '800' },
+  info:      { flex: 1, gap: 3 },
+  brand:     { fontSize: 11, fontWeight: '600', color: '#94a3b8' },
+  name:      { fontSize: 13, fontWeight: '600', color: '#0f172a', lineHeight: 18 },
+  priceRow:  { flexDirection: 'row', alignItems: 'baseline', flexWrap: 'wrap', gap: 6, marginTop: 3 },
+  indicator: { fontSize: 12, fontWeight: '800' },
   currentPrice: { fontSize: 14, fontWeight: '800', color: '#0f172a' },
   origPrice:    { fontSize: 11, color: '#94a3b8', textDecorationLine: 'line-through' },
+
+  deleteBtn: { padding: 4, alignSelf: 'flex-start', marginTop: 2 },
+
+  empty:     { flex: 1, alignItems: 'center', justifyContent: 'center', paddingTop: 80 },
+  emptyText: { fontSize: 14, color: '#94a3b8', fontWeight: '500' },
 });

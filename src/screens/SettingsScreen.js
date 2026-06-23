@@ -1,18 +1,20 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
+import { useUser } from '../context/UserContext';
 import {
   ActivityIndicator, Alert, Linking, Modal, Platform,
   ScrollView, StyleSheet, Switch, Text, TouchableOpacity, View,
-  KeyboardAvoidingView,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
-  Bell, ChevronLeft, ChevronRight, FileText,
-  HelpCircle, Info, MessageSquare,
+  Bell, ChevronLeft, ChevronRight, FileText, Gift,
+  HelpCircle, Info, MessageCircle, MessageSquare,
   ShieldCheck, UserX, Zap,
 } from 'lucide-react-native';
 import { COLORS } from '../constants/theme';
 import { loginWithKakao } from '../services/authService';
 import { useNotification } from '../context/NotificationContext';
+import KakaoConsentModal from '../components/KakaoConsentModal';
+import * as Notifications from 'expo-notifications';
 
 // ─── Section Header (Caption Token — uppercase label) ────────────────────────
 
@@ -26,7 +28,7 @@ function SectionHeader({ title }) {
 
 // ─── Standard Row ─────────────────────────────────────────────────────────────
 
-function SettingsRow({ icon, label, accessory, accessoryBlue, labelBlue, onPress, toggle, toggleValue, onToggle, disabled }) {
+function SettingsRow({ icon, label, subLabel, accessory, accessoryBlue, labelBlue, onPress, toggle, toggleValue, onToggle, disabled }) {
   const isToggle = !!toggle;
   return (
     <TouchableOpacity
@@ -37,7 +39,10 @@ function SettingsRow({ icon, label, accessory, accessoryBlue, labelBlue, onPress
     >
       <View style={styles.rowLeft}>
         <View style={[styles.iconWrap, labelBlue && styles.iconWrapBlue]}>{icon}</View>
-        <Text style={[styles.rowLabel, labelBlue && styles.rowLabelBlue]}>{label}</Text>
+        <View style={{ flex: 1 }}>
+          <Text style={[styles.rowLabel, labelBlue && styles.rowLabelBlue]}>{label}</Text>
+          {subLabel ? <Text style={styles.rowSubLabel}>{subLabel}</Text> : null}
+        </View>
       </View>
       <View style={styles.rowRight}>
         {accessory ? (
@@ -68,122 +73,6 @@ function Divider() {
   return <View style={styles.divider} />;
 }
 
-// ─── Kakao Consent Modal ──────────────────────────────────────────────────────
-
-function KakaoConsentModal({ visible, onClose, onConfirm, navigation }) {
-  const [termsAgreed,     setTermsAgreed]     = useState(false);
-  const [privacyAgreed,   setPrivacyAgreed]   = useState(false);
-  const [marketingAgreed, setMarketingAgreed] = useState(false);
-  const isAllSelected = termsAgreed && privacyAgreed && marketingAgreed;
-  const toggleAll = () => {
-    const v = !isAllSelected;
-    setTermsAgreed(v); setPrivacyAgreed(v); setMarketingAgreed(v);
-  };
-  const canConfirm = termsAgreed && privacyAgreed;
-
-  const handleClose = () => {
-    setTermsAgreed(false); setPrivacyAgreed(false); setMarketingAgreed(false);
-    onClose();
-  };
-
-  return (
-    <Modal visible={visible} transparent animationType="slide" onRequestClose={handleClose}>
-      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-        <TouchableOpacity style={consent.backdrop} activeOpacity={1} onPress={handleClose} />
-        <View style={consent.sheet}>
-          <View style={consent.handle} />
-
-          {/* Header */}
-          <Text style={consent.title}>카카오 계정 연동을{"\n"}위해 약관에 동의해 주세요</Text>
-          <Text style={consent.subtitle}>데이터를 안전하게 보관하고 기기 분실 시 복구할 수 있어요.</Text>
-
-          {/* Select All */}
-          <TouchableOpacity onPress={toggleAll} style={consent.selectAllRow}>
-            <View style={[consent.circleL, isAllSelected && consent.circleActive]}>
-              {isAllSelected && <Text style={consent.checkMark}>✓</Text>}
-            </View>
-            <Text style={consent.selectAllText}>약관 전체 동의하기</Text>
-          </TouchableOpacity>
-          <View style={consent.divider} />
-
-          {/* Terms */}
-          <View style={consent.itemWrap}>
-            <TouchableOpacity onPress={() => setTermsAgreed(!termsAgreed)} style={consent.itemRow}>
-              <View style={[consent.circleS, termsAgreed && consent.circleActive]}>
-                {termsAgreed && <Text style={consent.checkMarkS}>✓</Text>}
-              </View>
-              <Text style={consent.itemText}>(필수) 서비스 이용약관 동의</Text>
-            </TouchableOpacity>
-            <TouchableOpacity onPress={() => navigation.navigate('TermsDetail', { title: '서비스 이용약관', type: 'terms' })}>
-              <Text style={consent.viewLink}>보기 {'>'}</Text>
-            </TouchableOpacity>
-          </View>
-
-          {/* Privacy */}
-          <View style={consent.itemWrap}>
-            <TouchableOpacity onPress={() => setPrivacyAgreed(!privacyAgreed)} style={consent.itemRow}>
-              <View style={[consent.circleS, privacyAgreed && consent.circleActive]}>
-                {privacyAgreed && <Text style={consent.checkMarkS}>✓</Text>}
-              </View>
-              <Text style={consent.itemText}>(필수) 개인정보 수집 및 이용 동의</Text>
-            </TouchableOpacity>
-            <TouchableOpacity onPress={() => navigation.navigate('TermsDetail', { title: '개인정보 처리방침', type: 'privacy' })}>
-              <Text style={consent.viewLink}>보기 {'>'}</Text>
-            </TouchableOpacity>
-          </View>
-          <Text style={consent.itemHint}>초개인화 큐레이션을 위한 연령 및 양육 환경 수집</Text>
-
-          {/* Marketing */}
-          <View style={[consent.itemWrap, { marginBottom: 32 }]}>
-            <TouchableOpacity onPress={() => setMarketingAgreed(!marketingAgreed)} style={consent.itemRow}>
-              <View style={[consent.circleS, marketingAgreed && consent.circleActive]}>
-                {marketingAgreed && <Text style={consent.checkMarkS}>✓</Text>}
-              </View>
-              <Text style={consent.itemText}>(선택) 혜택 및 특가 알림 수신 동의</Text>
-            </TouchableOpacity>
-          </View>
-          <Text style={[consent.itemHint, { marginTop: -24, marginBottom: 28 }]}>관심 상품 최저가 도달 및 맞춤 혜택 PUSH 알림</Text>
-
-          {/* CTA */}
-          <TouchableOpacity
-            disabled={!canConfirm}
-            onPress={() => onConfirm(marketingAgreed)}
-            style={[consent.cta, !canConfirm && consent.ctaDisabled]}
-          >
-            <Text style={[consent.ctaText, !canConfirm && consent.ctaTextDisabled]}>
-              동의하고 카카오로 시작하기
-            </Text>
-          </TouchableOpacity>
-        </View>
-      </KeyboardAvoidingView>
-    </Modal>
-  );
-}
-
-const consent = StyleSheet.create({
-  backdrop:       { flex: 1, backgroundColor: 'rgba(0,0,0,0.45)' },
-  sheet:          { backgroundColor: '#fff', borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingHorizontal: 24, paddingBottom: 36, paddingTop: 16 },
-  handle:         { alignSelf: 'center', width: 40, height: 4, borderRadius: 2, backgroundColor: '#E5E7EB', marginBottom: 24 },
-  title:          { fontSize: 22, fontWeight: 'bold', color: '#111827', lineHeight: 30, marginBottom: 8 },
-  subtitle:       { fontSize: 14, color: '#6B7280', lineHeight: 20, marginBottom: 28 },
-  selectAllRow:   { flexDirection: 'row', alignItems: 'center', marginBottom: 16 },
-  circleL:        { width: 28, height: 28, borderRadius: 14, borderWidth: 2, borderColor: '#D1D5DB', backgroundColor: 'transparent', marginRight: 12, justifyContent: 'center', alignItems: 'center' },
-  circleS:        { width: 22, height: 22, borderRadius: 11, borderWidth: 2, borderColor: '#D1D5DB', backgroundColor: 'transparent', marginRight: 12, justifyContent: 'center', alignItems: 'center' },
-  circleActive:   { borderColor: '#2E6FF2', backgroundColor: '#2E6FF2' },
-  checkMark:      { color: '#fff', fontWeight: 'bold', fontSize: 14 },
-  checkMarkS:     { color: '#fff', fontWeight: 'bold', fontSize: 11 },
-  selectAllText:  { fontSize: 17, fontWeight: 'bold', color: '#111827' },
-  divider:        { height: 1, backgroundColor: '#F3F4F6', marginBottom: 20 },
-  itemWrap:       { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 },
-  itemRow:        { flexDirection: 'row', alignItems: 'center', flex: 1 },
-  itemText:       { fontSize: 15, color: '#374151', flex: 1 },
-  itemHint:       { fontSize: 12, color: '#9CA3AF', marginLeft: 34, marginBottom: 16 },
-  viewLink:       { fontSize: 13, color: '#9CA3AF' },
-  cta:            { backgroundColor: '#2E6FF2', padding: 18, borderRadius: 16, alignItems: 'center' },
-  ctaDisabled:    { backgroundColor: '#F3F4F6' },
-  ctaText:        { color: '#fff', fontSize: 17, fontWeight: 'bold' },
-  ctaTextDisabled:{ color: '#9CA3AF' },
-});
 
 // ─── Permission Modal ─────────────────────────────────────────────────────────
 
@@ -222,9 +111,9 @@ function VersionModal({ visible, onClose }) {
       <View style={permModal.overlay}>
         <View style={permModal.card}>
           <Text style={permModal.title}>버전 정보</Text>
-          <Text style={permModal.body}>현재 버전: v1.0.0{'\n'}(최신 버전입니다)</Text>
-          <TouchableOpacity style={permModal.confirmBtn} onPress={onClose} activeOpacity={0.85}>
-            <Text style={permModal.confirmText}>확인</Text>
+          <Text style={permModal.body}>{'현재 버전: v1.0.0\n(최신 버전입니다)\n\n개발/운영: SAVEROO Team'}</Text>
+          <TouchableOpacity style={permModal.soloBtn} onPress={onClose} activeOpacity={0.85}>
+            <Text style={{ color: '#fff', fontWeight: 'bold', fontSize: 16, textAlign: 'center' }}>확인</Text>
           </TouchableOpacity>
         </View>
       </View>
@@ -253,6 +142,8 @@ export default function SettingsScreen({ navigation }) {
   const { priceAlerts: priceAlertToggle,    setPriceAlerts:    setPriceAlertToggle,
           activityAlerts: activityAlertToggle, setActivityAlerts: setActivityAlertToggle,
         } = useNotification();
+  const { isWowMember, setIsWowMember } = useUser();
+  const [marketingAlerts,       setMarketingAlertsRaw]    = useState(false);
   const [kakaoLinked,           setKakaoLinked]           = useState(false);
   const [isLoggingIn,           setIsLoggingIn]           = useState(false);
   const [permModalVisible,      setPermModalVisible]      = useState(false);
@@ -276,6 +167,24 @@ export default function SettingsScreen({ navigation }) {
     } finally {
       setIsLoggingIn(false);
     }
+  };
+
+  // MD Spec 14.2 — sync all toggle UI state with actual OS permission on mount
+  useEffect(() => {
+    Notifications.getPermissionsAsync().then(({ status }) => {
+      if (status !== 'granted') {
+        setPriceAlertToggle(false);
+        setActivityAlertToggle(false);
+        setMarketingAlertsRaw(false);
+      }
+    });
+  }, []);
+
+  const handleMarketingToggle = async (val) => {
+    if (!val) { setMarketingAlertsRaw(false); return; }
+    const { status } = await Notifications.getPermissionsAsync();
+    if (status !== 'granted') { setPermModalVisible(true); return; }
+    setMarketingAlertsRaw(true);
   };
 
   const handleWithdraw = () => navigation.navigate('Withdraw');
@@ -317,41 +226,52 @@ export default function SettingsScreen({ navigation }) {
             onPress={handleKakaoLink}
             activeOpacity={0.85}
           >
-            <View style={styles.kakaoBannerLeft}>
-              <Text style={styles.kakaoBannerEmoji}>🔐</Text>
-              <View>
-                <Text style={styles.kakaoBannerTitle}>카카오 계정 연동하기</Text>
-                <Text style={styles.kakaoBannerSub}>데이터를 안전하게 보관하고 기기 분실 시 복구하세요</Text>
-              </View>
-            </View>
+            <MessageCircle size={22} color="#191919" strokeWidth={0} fill="#191919" style={{ marginRight: 10 }} />
+            <Text style={styles.kakaoBannerTitle}>카카오 연동하기</Text>
             {isLoggingIn
-              ? <ActivityIndicator size="small" color="#fff" />
-              : <ChevronRight size={18} color="#fff" strokeWidth={2.5} />}
+              ? <ActivityIndicator size="small" color="#191919" style={{ marginLeft: 'auto' }} />
+              : <ChevronRight size={16} color="#191919" style={{ marginLeft: 'auto', opacity: 0.6 }} />}
           </TouchableOpacity>
         )}
 
-        {/* ── 알림 설정 ── */}
+        {/* ── 회원정보 ── */}
+        <SectionHeader title="회원정보" />
+        <SettingsRow
+          icon={<Zap size={17} color={COLORS.primary} strokeWidth={1.9} />}
+          label="쿠팡 와우 회원"
+          subLabel="와우 회원가로 가격을 표시합니다"
+          toggle
+          toggleValue={isWowMember}
+          onToggle={setIsWowMember}
+        />
+
+        {/* ── 알림 설정 (1-depth flat) ── */}
         <SectionHeader title="알림 설정" />
         <SettingsRow
           icon={<Bell size={17} color={COLORS.primary} strokeWidth={1.9} />}
-          label="가격 알림"
+          label="가격·재입고 알림"
+          subLabel="관심상품 최저가 도달 시"
           toggle
           toggleValue={priceAlertToggle}
           onToggle={handlePriceToggle}
         />
         <Divider />
         <SettingsRow
-          icon={<Zap size={17} color={COLORS.primary} strokeWidth={1.9} />}
-          label="활동 알림"
+          icon={<MessageCircle size={17} color={COLORS.primary} strokeWidth={1.9} />}
+          label="커뮤니티·활동 알림"
+          subLabel="내 글의 댓글 및 반응"
           toggle
           toggleValue={activityAlertToggle}
           onToggle={handleActivityToggle}
         />
         <Divider />
         <SettingsRow
-          icon={<Bell size={17} color={COLORS.primary} strokeWidth={1.9} />}
-          label="알림 상세 설정"
-          onPress={() => navigation.navigate('NotificationSettings')}
+          icon={<Gift size={17} color={COLORS.primary} strokeWidth={1.9} />}
+          label="혜택·이벤트 알림"
+          subLabel="마케팅 정보 수신 동의"
+          toggle
+          toggleValue={marketingAlerts}
+          onToggle={handleMarketingToggle}
         />
 
         {/* ── 정보 ── */}
@@ -365,25 +285,25 @@ export default function SettingsScreen({ navigation }) {
         <Divider />
         <SettingsRow
           icon={<HelpCircle size={17} color={COLORS.primary} strokeWidth={1.9} />}
-          label="1:1 문의"
+          label="1:1 문의 및 버그 신고"
           labelBlue
           onPress={() => navigation.navigate('Inquiry')}
         />
         <Divider />
         <SettingsRow
-          icon={<FileText size={17} color="#64748b" strokeWidth={1.9} />}
+          icon={<FileText size={17} color={COLORS.primary} strokeWidth={1.9} />}
           label="서비스 이용약관"
           onPress={() => navigation.navigate('TermsDetail', { title: '이용약관', type: 'terms' })}
         />
         <Divider />
         <SettingsRow
-          icon={<ShieldCheck size={17} color="#64748b" strokeWidth={1.9} />}
+          icon={<ShieldCheck size={17} color={COLORS.primary} strokeWidth={1.9} />}
           label="개인정보 처리방침"
           onPress={() => navigation.navigate('TermsDetail', { title: '개인정보 처리방침', type: 'privacy' })}
         />
         <Divider />
         <SettingsRow
-          icon={<Info size={17} color="#64748b" strokeWidth={1.9} />}
+          icon={<Info size={17} color={COLORS.primary} strokeWidth={1.9} />}
           label="버전 정보"
           accessory="v1.0.0"
           onPress={() => setVersionModalVisible(true)}
@@ -393,8 +313,8 @@ export default function SettingsScreen({ navigation }) {
         <SectionHeader title="위험 구역" />
         <View style={styles.dangerSection}>
           <DangerRow
-            icon={<UserX size={17} color="#dc2626" strokeWidth={1.9} />}
-            label="계정 탈퇴"
+            icon={<UserX size={17} color="#EF4444" strokeWidth={1.9} />}
+            label={kakaoLinked ? '계정 탈퇴' : '앱 데이터 초기화'}
             onPress={handleWithdraw}
           />
         </View>
@@ -444,23 +364,23 @@ const styles = StyleSheet.create({
   rowRight:          { flexDirection: 'row', alignItems: 'center', gap: 8 },
   rowAccessory:      { fontSize: 13, fontWeight: '500', color: '#94a3b8' },
   rowAccessoryBlue:  { color: COLORS.primary, fontWeight: '700' },
+  rowSubLabel:       { fontSize: 12, color: '#94a3b8', marginTop: 2 },
 
   divider: { height: 1, backgroundColor: '#f1f5f9', marginLeft: 66 },
 
-  // ── Kakao Banner ──
+  // ── Kakao Banner (Official Kakao spec: #FEE500 / #191919, h:48, r:12) ──
   kakaoBanner: {
     marginHorizontal: 16, marginTop: 20, marginBottom: 4,
-    backgroundColor: '#2E6FF2', borderRadius: 16, padding: 18,
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    backgroundColor: '#FEE500', borderRadius: 12,
+    height: 48,
+    flexDirection: 'row', alignItems: 'center',
+    paddingHorizontal: 16,
     ...Platform.select({
-      ios:     { shadowColor: '#2E6FF2', shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.35, shadowRadius: 12 },
-      android: { elevation: 6 },
+      ios:     { shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.12, shadowRadius: 6 },
+      android: { elevation: 3 },
     }),
   },
-  kakaoBannerLeft:  { flexDirection: 'row', alignItems: 'center', gap: 14, flex: 1 },
-  kakaoBannerEmoji: { fontSize: 28 },
-  kakaoBannerTitle: { fontSize: 15, fontWeight: '800', color: '#fff', marginBottom: 2 },
-  kakaoBannerSub:   { fontSize: 12, color: 'rgba(255,255,255,0.8)', lineHeight: 17 },
+  kakaoBannerTitle: { fontSize: 15, fontWeight: 'bold', color: '#191919' },
 
   // ── Danger section — Section 4, 6.7 ──
   dangerSection: {
@@ -475,7 +395,7 @@ const styles = StyleSheet.create({
   },
   dangerRowLeft:  { flexDirection: 'row', alignItems: 'center', gap: 14 },
   dangerIconWrap: { width: 32, height: 32, borderRadius: 8, backgroundColor: '#fee2e2', alignItems: 'center', justifyContent: 'center' },
-  dangerLabel:    { fontSize: 15, fontWeight: '600', color: '#DC2626' },
+  dangerLabel:    { fontSize: 15, fontWeight: '600', color: '#EF4444' },
   dangerDivider:  { height: 1, backgroundColor: '#fee2e2', marginLeft: 62 },
 });
 
@@ -499,4 +419,5 @@ const permModal = StyleSheet.create({
   cancelText: { fontSize: 15, fontWeight: '700', color: '#475569' },
   confirmBtn: { flex: 1, paddingVertical: 14, borderRadius: 12, backgroundColor: '#2E6FF2', alignItems: 'center' },
   confirmText:{ fontSize: 15, fontWeight: '800', color: '#fff' },
+  soloBtn:    { paddingVertical: 14, borderRadius: 12, backgroundColor: '#2E6FF2', alignItems: 'center', alignSelf: 'stretch' },
 });

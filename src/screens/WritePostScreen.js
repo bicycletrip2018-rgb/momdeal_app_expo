@@ -183,6 +183,7 @@ export default function WritePostScreen({ navigation, route }) {
   const [error,                setError]                = useState('');
   const [selectedImages,       setSelectedImages]       = useState([]);
   const [isSearchModalVisible, setIsSearchModalVisible] = useState(false);
+  // ARCHITECTURE CONSTRAINT (ANTI-SPAM): A user (userId) can only tag a specific product (productId) ONCE in their lifetime. If they try to write a second review for the exact same product, block the tag. This prevents agency shilling.
   const [taggedProduct,        setTaggedProduct]        = useState(null);
 
   useEffect(() => {

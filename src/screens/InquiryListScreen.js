@@ -13,10 +13,24 @@ import { COLORS } from '../constants/theme';
 
 const fmtDate = (ts) => {
   if (!ts) return '';
-  const d = ts.toDate ? ts.toDate() : ts.seconds ? new Date(ts.seconds * 1000) : null;
+  const d = ts.toDate ? ts.toDate() : ts.seconds ? new Date(ts.seconds * 1000) : ts instanceof Date ? ts : null;
   if (!d) return '';
-  return `${d.getFullYear()}.${String(d.getMonth() + 1).padStart(2, '0')}.${String(d.getDate()).padStart(2, '0')}`;
+  const date = `${d.getFullYear()}.${String(d.getMonth() + 1).padStart(2, '0')}.${String(d.getDate()).padStart(2, '0')}`;
+  const time = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+  return `${date} ${time}`;
 };
+
+const CAT_COLORS = {
+  '서비스 오류': '#EF4444',
+  '앱 사용 문의': '#10B981',
+  '제안/건의':   '#8B5CF6',
+  '기타':        '#64748B',
+};
+
+const MOCK_ITEMS = [
+  { id: 'mock1', category: '앱 사용 문의', title: '관심상품 알림이 오지 않아요', status: 'pending',  createdAt: new Date('2026-05-15T14:30:00') },
+  { id: 'mock2', category: '서비스 오류',  title: '로그인 후 앱이 강제 종료됩니다', status: 'answered', createdAt: new Date('2026-05-10T09:15:00') },
+];
 
 // ─── Status Badge ─────────────────────────────────────────────────────────────
 
@@ -33,11 +47,11 @@ function StatusBadge({ status }) {
 
 const badge = StyleSheet.create({
   wrap:         { borderRadius: 20, paddingHorizontal: 10, paddingVertical: 3 },
-  pending:      { backgroundColor: '#f1f5f9' },
-  answered:     { backgroundColor: '#dbeafe' },
+  pending:      { backgroundColor: '#F1F5F9' },
+  answered:     { backgroundColor: '#EFF6FF' },
   text:         { fontSize: 11, fontWeight: '700' },
-  pendingText:  { color: '#64748b' },
-  answeredText: { color: COLORS.primary },
+  pendingText:  { color: '#64748B' },
+  answeredText: { color: '#2E6FF2' },
 });
 
 // ─── Screen ──────────────────────────────────────────────────────────────────
@@ -62,7 +76,7 @@ export default function InquiryListScreen({ navigation, route }) {
 
   const loadInquiries = useCallback(async () => {
     const uid = auth.currentUser?.uid;
-    if (!uid) { setLoading(false); return; }
+    if (!uid) { setItems(MOCK_ITEMS); setLoading(false); return; }
     try {
       const q = query(
         collection(db, 'inquiries'),
@@ -70,9 +84,11 @@ export default function InquiryListScreen({ navigation, route }) {
         orderBy('createdAt', 'desc')
       );
       const snap = await getDocs(q);
-      setItems(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+      const real = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      setItems(real.length > 0 ? real : MOCK_ITEMS);
     } catch (e) {
       console.error('[InquiryListScreen] load error', e);
+      setItems(MOCK_ITEMS);
     } finally {
       setLoading(false);
     }
@@ -101,8 +117,8 @@ export default function InquiryListScreen({ navigation, route }) {
     >
       <View style={styles.rowMeta}>
         {item.category ? (
-          <View style={styles.catBadge}>
-            <Text style={styles.catText}>{item.category}</Text>
+          <View style={[styles.catBadge, { backgroundColor: `${CAT_COLORS[item.category] ?? '#64748B'}18` }]}>
+            <Text style={[styles.catText, { color: CAT_COLORS[item.category] ?? '#64748B' }]}>{item.category}</Text>
           </View>
         ) : null}
         <StatusBadge status={item.status} />

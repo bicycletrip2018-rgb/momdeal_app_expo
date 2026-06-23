@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
-import { View, Text, TouchableOpacity, TextInput, ScrollView, KeyboardAvoidingView, Platform, Modal, Keyboard, ActivityIndicator } from 'react-native';
+import { View, Text, TouchableOpacity, TextInput, ScrollView, KeyboardAvoidingView, Platform, Modal, Keyboard, ActivityIndicator, Switch } from 'react-native';
+import { useUser } from '../context/UserContext';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -138,7 +139,8 @@ function SpinnerPicker({ selectedDate, onSelect, minimumDate, maximumDate }) {
 }
 
 export default function OnboardingScreen() {
-  const navigation = useNavigation();
+  const navigation  = useNavigation();
+  const { isWowMember, setIsWowMember } = useUser();
   const [step, setStep] = useState(0);
 
   // Step 1 — child status
@@ -515,6 +517,18 @@ export default function OnboardingScreen() {
                 </View>
               </View>
             )}
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 16, marginTop: 8, borderTopWidth: 1, borderTopColor: '#F1F5F9' }}>
+              <View style={{ flex: 1 }}>
+                <Text style={{ fontSize: 15, fontWeight: '600', color: '#0F172A' }}>쿠팡 와우 회원이신가요?</Text>
+                <Text style={{ fontSize: 12, color: '#94A3B8', marginTop: 2 }}>와우 회원가로 가격을 표시합니다</Text>
+              </View>
+              <Switch
+                value={isWowMember}
+                onValueChange={setIsWowMember}
+                trackColor={{ false: '#E2E8F0', true: '#BFDBFE' }}
+                thumbColor={isWowMember ? '#2E6FF2' : '#94A3B8'}
+              />
+            </View>
           </ScrollView>
 
           <NavBar onPrev={() => setStep(1)} onNext={() => setStep(3)} nextDisabled={!step2Valid} />
