@@ -2,14 +2,14 @@ import { addDoc, collection, doc, increment, serverTimestamp, updateDoc } from '
 import { db } from '../firebase/config';
 
 export async function recordProductAction({ userId, productId, productGroupId, actionType }) {
-  if (!userId || !productId) {
+  if (!userId || !actionType) {
     return;
   }
 
   try {
     await addDoc(collection(db, 'user_product_actions'), {
       userId,
-      productId,
+      ...(productId ? { productId } : {}),
       ...(productGroupId ? { productGroupId } : {}),
       actionType,
       createdAt: serverTimestamp(),

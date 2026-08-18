@@ -19,8 +19,9 @@ import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 import * as ImagePicker from 'expo-image-picker';
 import { ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { auth, storage } from '../firebase/config';
-import { createPost } from '../services/communityService';
+import { createPost, updatePost } from '../services/communityService';
 import { getOrCreateNickname, incrementPostCount } from '../services/firestore/userRepository';
+import { searchCoupangProducts } from '../services/coupangApiService';
 import { Image as ImageIcon, Link, X, Search, Camera } from 'lucide-react-native';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -33,13 +34,6 @@ const CATEGORIES = [
 ];
 
 const PRODUCT_CATEGORIES = new Set(['review', 'deal']);
-
-const MOCK_PRODUCTS = [
-  { id: 'p1', brand: '하기스', name: '하기스 매직팬티 5단계 (남아) 40매', price: 28900 },
-  { id: 'p2', brand: '마미포코', name: '마미포코 팬티형 기저귀 XL 60매', price: 32500 },
-  { id: 'p3', brand: '노리플레이', name: '노리플레이 소프트 블록 세트 48P', price: 45000 },
-  { id: 'p4', brand: '매일유업', name: '앱솔루트 명작 분유 2단계 800g', price: 39800 },
-];
 
 // ─── Star Selector ────────────────────────────────────────────────────────────
 
@@ -93,13 +87,28 @@ function CategoryPillRow({ current, onSelect }) {
 function ProductSearchModal({ visible, onClose, onSelect }) {
   const { top: topInset } = useSafeAreaInsets();
   const [query, setQuery] = useState('');
+  const [results, setResults] = useState([]);
+  const [searching, setSearching] = useState(false);
 
-  const filtered = MOCK_PRODUCTS.filter(
-    (p) =>
-      query.trim() === '' ||
-      p.name.includes(query.trim()) ||
-      p.brand.includes(query.trim())
-  );
+  useEffect(() => {
+    if (!visible) return;
+    const trimmed = query.trim();
+    if (!trimmed) { setResults([]); return; }
+    setSearching(true);
+    const handle = setTimeout(() => {
+      searchCoupangProducts(trimmed, 20)
+        .then((r) => setResults(r))
+        .catch(() => setResults([]))
+        .finally(() => setSearching(false));
+    }, 350);
+    return () => clearTimeout(handle);
+  }, [query, visible]);
+
+  useEffect(() => {
+    if (!visible) { setQuery(''); setResults([]); }
+  }, [visible]);
+
+  const filtered = results;
 
   return (
     <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
@@ -139,20 +148,28 @@ function ProductSearchModal({ visible, onClose, onSelect }) {
         {/* Results */}
         <FlatList
           data={filtered}
-          keyExtractor={(item) => item.id}
+          keyExtractor={(item) => item.id || item.productGroupId}
           contentContainerStyle={{ paddingBottom: 40 }}
           keyboardShouldPersistTaps="handled"
           ListEmptyComponent={
-            <Text style={modalStyles.emptyText}>검색 결과가 없어요</Text>
+            searching ? (
+              <ActivityIndicator style={{ marginTop: 48 }} color="#2E6FF2" />
+            ) : (
+              <Text style={modalStyles.emptyText}>
+                {query.trim() ? '검색 결과가 없어요' : '태그할 쿠팡 상품을 검색해보세요'}
+              </Text>
+            )
           }
           renderItem={({ item }) => (
             <View style={modalStyles.resultRow}>
-              {/* Thumbnail placeholder */}
-              <View style={modalStyles.thumb} />
+              {item.image ? (
+                <Image source={{ uri: item.image }} style={modalStyles.thumb} />
+              ) : (
+                <View style={modalStyles.thumb} />
+              )}
               <View style={{ flex: 1, gap: 2 }}>
-                <Text style={modalStyles.brand}>{item.brand}</Text>
                 <Text style={modalStyles.name} numberOfLines={2}>{item.name}</Text>
-                <Text style={modalStyles.price}>₩{item.price.toLocaleString('ko-KR')}</Text>
+                <Text style={modalStyles.price}>₩{(item.currentPrice ?? 0).toLocaleString('ko-KR')}</Text>
               </View>
               <TouchableOpacity
                 style={modalStyles.selectBtn}
@@ -277,16 +294,28 @@ export default function WritePostScreen({ navigation, route }) {
       const nickname   = await getOrCreateNickname(uid);
       const isVerified = category === 'review';
 
-      const imageUrls = selectedImages.length > 0
-        ? await uploadImages(uid, selectedImages)
-        : [];
+      // Only re-upload images that are still local device URIs — already-hosted
+      // URLs (kept from the original post in edit mode) pass through untouched.
+      const localImages  = selectedImages.filter((u) => !u.startsWith('http'));
+      const hostedImages = selectedImages.filter((u) => u.startsWith('http'));
+      const uploadedUrls = localImages.length > 0 ? await uploadImages(uid, localImages) : [];
+      const imageUrls = [...hostedImages, ...uploadedUrls];
 
-      await createPost({
-        userId: uid, category, title, content, nickname, isVerified, imageUrls,
-        taggedProductId: taggedProduct?.id ?? null,
-        ...(showProductArea && { rating }),
-      });
-      incrementPostCount(uid).catch(() => {});
+      const taggedProductId = taggedProduct?.productGroupId ?? taggedProduct?.id ?? null;
+
+      if (editMode && postData?.postId) {
+        await updatePost(postData.postId, {
+          category, title, content, imageUrls, taggedProductId,
+          ...(showProductArea && { rating }),
+        });
+      } else {
+        await createPost({
+          userId: uid, category, title, content, nickname, isVerified, imageUrls,
+          taggedProductId,
+          ...(showProductArea && { rating }),
+        });
+        incrementPostCount(uid).catch(() => {});
+      }
       navigation.goBack();
     } catch (err) {
       setError('등록에 실패했습니다. 다시 시도해 주세요.');
@@ -409,10 +438,14 @@ export default function WritePostScreen({ navigation, route }) {
         {/* ── Tagged product mini-card ── */}
         {taggedProduct && (
           <View style={styles.taggedCard}>
-            <View style={styles.taggedThumb} />
+            {taggedProduct.image ? (
+              <Image source={{ uri: taggedProduct.image }} style={styles.taggedThumb} />
+            ) : (
+              <View style={styles.taggedThumb} />
+            )}
             <View style={{ flex: 1, gap: 2 }}>
               <Text style={styles.taggedName} numberOfLines={1}>{taggedProduct.name}</Text>
-              <Text style={styles.taggedPrice}>₩{taggedProduct.price.toLocaleString('ko-KR')}</Text>
+              <Text style={styles.taggedPrice}>₩{(taggedProduct.currentPrice ?? 0).toLocaleString('ko-KR')}</Text>
             </View>
             <TouchableOpacity
               onPress={() => setTaggedProduct(null)}

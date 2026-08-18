@@ -21,6 +21,7 @@ import { TrackingCard } from '../components/TrackingCard';
 import {
   fetchGoldboxDeals,
   fetchBestCategoryProducts,
+  fetchPersonalizedDeals,
 } from '../services/coupangApiService';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -177,13 +178,13 @@ function ProductCard({ item, navigation, viewMode = 'grid', rank }) {
 // ─── Screen ───────────────────────────────────────────────────────────────────
 
 export default function CurationDetailScreen({ route, navigation }) {
-  const { curationId, type } = route.params ?? {};
+  const { curationId, type, stage } = route.params ?? {};
   const { globalTrackedItems } = useTracking();
 
-  // goldbox / mamtem / pl_deals all use the product-list layout
-  const isProductList = type === 'goldbox' || type === 'mamtem' || type === 'pl_deals';
+  // goldbox / mamtem / pl_deals / personalized all use the product-list layout
+  const isProductList = type === 'goldbox' || type === 'mamtem' || type === 'pl_deals' || type === 'personalized';
 
-  // ── Product list state (shared by goldbox / mamtem / pl_deals) ──────────────
+  // ── Product list state (shared by goldbox / mamtem / pl_deals / personalized) ──
   const [productItems,   setProductItems]   = useState([]);
   const [productLoading, setProductLoading] = useState(isProductList); // start true → spinner shows immediately
   const [activeCategory, setActiveCategory] = useState('전체');
@@ -192,15 +193,16 @@ export default function CurationDetailScreen({ route, navigation }) {
     if (!isProductList) return;
     setProductLoading(true);
     const fetch =
-      type === 'goldbox'  ? fetchGoldboxDeals(50)
-      : type === 'mamtem' ? fetchBestCategoryProducts(1011, 50)
-      : /* pl_deals */      fetchBestCategoryProducts(1014, 50);
+      type === 'goldbox'      ? fetchGoldboxDeals(50)
+      : type === 'mamtem'     ? fetchBestCategoryProducts(1011, 50)
+      : type === 'personalized' ? fetchPersonalizedDeals({ stage })
+      : /* pl_deals */           fetchBestCategoryProducts(1014, 50);
 
     fetch
       .then((items) => { setProductItems(items); setActiveCategory('전체'); })
       .catch(() => setProductItems([]))
       .finally(() => setProductLoading(false));
-  }, [isProductList, type]);
+  }, [isProductList, type, stage]);
 
   useEffect(() => { loadProducts(); }, [loadProducts]);
 

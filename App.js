@@ -184,6 +184,11 @@ function ProductStack() {
         options={({ route }) => ({ title: route.params?.item?.name || '상품 상세' })}
       />
       <Stack.Screen
+        name="ProductDetail"
+        component={ProductDetail}
+        options={{ title: '상품 상세' }}
+      />
+      <Stack.Screen
         name="CategoryDetail"
         component={CategoryDetailScreen}
         options={({ route }) => ({ title: route.params?.categoryName || '카테고리' })}
@@ -256,6 +261,11 @@ function CommunityStack() {
         options={({ route }) => ({ title: route.params?.item?.name || '상품 상세' })}
       />
       <Stack.Screen
+        name="ProductDetail"
+        component={ProductDetail}
+        options={{ title: '상품 상세' }}
+      />
+      <Stack.Screen
         name="ReviewWrite"
         component={ReviewWriteScreen}
         options={{ title: '리뷰 작성' }}
@@ -318,6 +328,11 @@ function MyPageStack() {
         name="Detail"
         component={DetailScreen}
         options={({ route }) => ({ title: route.params?.item?.name || '상품 상세' })}
+      />
+      <Stack.Screen
+        name="ProductDetail"
+        component={ProductDetail}
+        options={{ title: '상품 상세' }}
       />
       <Stack.Screen
         name="ReviewWrite"

@@ -261,12 +261,12 @@ export default function PostDetailScreen({ route, navigation }) {
   const [productsLoading, setProductsLoading]  = useState(true);
   const [userNickname,    setUserNickname]      = useState('');
   const [showOwnerMenu,   setShowOwnerMenu]     = useState(false);
-  const [isMockAuthor,    setIsMockAuthor]      = useState(true);
   const inputRef = useRef(null);
 
-  const isOwner = (uid && route.params.userId === uid) || isMockAuthor;
+  const isOwner = Boolean(uid) && route.params.userId === uid;
 
   const handleDelete = async () => {
+    if (!isOwner) return;
     try {
       await deleteDoc(doc(db, 'posts', postId));
       setShowOwnerMenu(false);
@@ -545,13 +545,6 @@ export default function PostDetailScreen({ route, navigation }) {
           {!loading && comments.length === 0 ? (
             <Text style={styles.emptyComments}>첫 댓글을 남겨 보세요</Text>
           ) : null}
-
-          <TouchableOpacity
-            onPress={() => setIsMockAuthor(!isMockAuthor)}
-            style={{ padding: 8, backgroundColor: '#333', alignSelf: 'center', marginBottom: 20, borderRadius: 8 }}
-          >
-            <Text style={{ color: '#FFF', fontSize: 12 }}>[QA Test] Toggle Ownership: {isMockAuthor ? 'ON' : 'OFF'}</Text>
-          </TouchableOpacity>
         </ScrollView>
 
         {/* Comment input — outside ScrollView, inside KAV */}

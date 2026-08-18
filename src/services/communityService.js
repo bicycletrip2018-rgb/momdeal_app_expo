@@ -63,6 +63,28 @@ export async function getPosts(category = null, limitCount = 30) {
   return snap.docs.map((d) => ({ postId: d.id, ...d.data() }));
 }
 
+// Recent posts enriched with their tagged product (for CommunitySearchScreen's
+// client-side 제목+내용/작성자/상품태그 filtering — Firestore has no full-text
+// search, so this fetches a bounded recent window and filters in memory).
+export async function searchPosts(limitCount = 200) {
+  const posts = await getPosts(null, limitCount);
+
+  const uniqueProductIds = [...new Set(posts.map((p) => p.taggedProductId).filter(Boolean))];
+  const productMap = {};
+  await Promise.all(
+    chunkArray(uniqueProductIds, 30).map((chunk) =>
+      getDocs(query(collection(db, 'products'), where(documentId(), 'in', chunk))).then(
+        (pSnap) => pSnap.docs.forEach((d) => { productMap[d.id] = d.data(); })
+      )
+    )
+  );
+
+  return posts.map((post) => ({
+    ...post,
+    taggedProduct: post.taggedProductId ? (productMap[post.taggedProductId] ?? null) : null,
+  }));
+}
+
 export async function createPost({
   userId, category, title, content, nickname, isVerified,
   rating, taggedProductId, imageUrls,
@@ -85,6 +107,21 @@ export async function createPost({
   if (taggedProductId != null)  payload.taggedProductId  = taggedProductId;
   const ref = await addDoc(collection(db, 'posts'), payload);
   return ref.id;
+}
+
+// Updates an existing post in place (used by the WritePostScreen edit flow).
+export async function updatePost(postId, { category, title, content, rating, taggedProductId, imageUrls }) {
+  if (!postId || !title?.trim() || !content?.trim()) throw new Error('INVALID_POST');
+  const payload = {
+    category: category || 'free',
+    title: title.trim(),
+    content: content.trim(),
+    imageUrls: Array.isArray(imageUrls) ? imageUrls : [],
+  };
+  if (rating != null)          payload.rating          = rating;
+  if (taggedProductId != null) payload.taggedProductId = taggedProductId;
+  await updateDoc(doc(db, 'posts', postId), payload);
+  return postId;
 }
 
 // Toggle like: adds/removes uid from likedBy array and increments/decrements likeCount atomically.

@@ -18,13 +18,16 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
 import { onAuthStateChanged } from 'firebase/auth';
-import { collection, doc, getDoc, onSnapshot, query, where } from 'firebase/firestore';
+import { collection, doc, getDoc, getDocs, onSnapshot, query, updateDoc, where } from 'firebase/firestore';
 import { db, auth } from '../firebase/config';
 import { Ionicons } from '@expo/vector-icons';
 import { useTracking } from '../context/TrackingContext';
 import * as Clipboard from 'expo-clipboard';
 import * as IntentLauncher from 'expo-intent-launcher';
 import { registerCoupangProduct } from '../utils/registerCoupangProduct';
+import { toggleSavedProduct } from '../services/saveService';
+import { getPriceIntelligence } from '../services/priceTrackingService';
+import { togglePriceAlert } from '../services/priceAlertService';
 import { setExpectingCoupangReturn } from '../utils/coupangIntentFlag';
 import { TrackingCard } from '../components/TrackingCard';
 import { COLORS } from '../constants/theme';
@@ -130,13 +133,26 @@ export default function TrackingListScreen({ navigation }) {
           const linkages = snapshot.docs.map((d) => ({ savedId: d.id, ...d.data() }));
           console.log('[TrackingList] productGroupIds:', linkages.map((l) => l.productGroupId));
 
+          // Batch-fetch this user's price alerts once so per-item lookup is O(1),
+          // matching the pattern in priceAlertService.getSavedProductsWithPriceSignals.
+          const alertsSnap = await getDocs(
+            query(collection(db, 'price_alerts'), where('userId', '==', user.uid))
+          );
+          const alertActiveByProductId = {};
+          alertsSnap.docs.forEach((d) => {
+            alertActiveByProductId[d.data().productId] = Boolean(d.data().isActive);
+          });
+
           const enriched = await Promise.all(
             linkages.map(async (link) => {
               if (!link.productGroupId) {
                 console.error('[TrackingList] Missing productGroupId:', link);
                 return null;
               }
-              const productSnap = await getDoc(doc(db, 'products', link.productGroupId));
+              const [productSnap, intel] = await Promise.all([
+                getDoc(doc(db, 'products', link.productGroupId)),
+                getPriceIntelligence(link.productGroupId),
+              ]);
               if (!productSnap.exists()) {
                 console.error('[TrackingList] Product doc not found:', link.productGroupId);
                 return null;
@@ -147,14 +163,17 @@ export default function TrackingListScreen({ navigation }) {
                 savedId:          link.savedId,
                 name:             p.name         ?? '상품',
                 image:            p.image        ?? null,
-                currentPrice:     p.currentPrice ?? 0,
-                priceDrop:        0,
-                coupangUrl:       null,
+                currentPrice:     intel?.currentPrice ?? p.currentPrice ?? 0,
+                priceDrop:        intel?.priceDrop ?? 0,
+                averagePrice:     intel?.average ?? null,
+                lowestPrice:      intel?.lowest ?? null,
+                guidance:         intel?.guidance ?? null,
+                coupangUrl:       p.affiliateUrl ?? null,
                 deliveryType:     undefined,
                 targetPrice:      undefined,
-                isPriceAlertOn:   true,
-                isRestockAlertOn: false,
-                isFavorite:       false,
+                isPriceAlertOn:   alertActiveByProductId[link.productGroupId] ?? false,
+                isRestockAlertOn: link.isRestockAlertOn ?? false,
+                isFavorite:       link.isFavorite ?? false,
               };
             })
           );
@@ -247,9 +266,16 @@ export default function TrackingListScreen({ navigation }) {
         { text: '아니오', style: 'cancel' },
         {
           text: '예', style: 'destructive',
-          onPress: () => {
+          onPress: async () => {
+            // Optimistic local removal — the Firestore onSnapshot listener will
+            // reconcile shortly after with the authoritative deleted state.
             selectedIds.forEach((id) => removeTrackedItem(id));
             exitEditMode();
+            const uid = auth.currentUser?.uid;
+            if (!uid) return;
+            await Promise.all(
+              selectedIds.map((productId) => toggleSavedProduct(uid, productId).catch(() => {}))
+            );
           },
         },
       ]
@@ -264,6 +290,21 @@ export default function TrackingListScreen({ navigation }) {
     const onCount  = selected.filter((i) => i[flag]).length;
     const nextVal  = onCount < selected.length; // flip to ON unless all already ON
     updateTrackedItems(selectedIds, { [flag]: nextVal });
+
+    const uid = auth.currentUser?.uid;
+    if (!uid) return;
+    if (flag === 'isPriceAlertOn') {
+      // togglePriceAlert flips whatever the current server state is — only call
+      // it for items that actually need to change to reach nextVal.
+      selected
+        .filter((i) => Boolean(i.isPriceAlertOn) !== nextVal)
+        .forEach((i) => togglePriceAlert(uid, i.productId).catch(() => {}));
+    } else if (flag === 'isFavorite' || flag === 'isRestockAlertOn') {
+      selected.forEach((i) => {
+        if (!i.savedId) return;
+        updateDoc(doc(db, 'user_saved_products', i.savedId), { [flag]: nextVal }).catch(() => {});
+      });
+    }
   }, [selectedIds, globalTrackedItems, updateTrackedItems]);
 
   // Derive "active" state of each toggle button from selected items for visual feedback

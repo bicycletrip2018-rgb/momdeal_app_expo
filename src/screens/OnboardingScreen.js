@@ -4,11 +4,56 @@ import { useUser } from '../context/UserContext';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { onAuthStateChanged } from 'firebase/auth';
+import { doc, updateDoc } from 'firebase/firestore';
+import { auth, db } from '../firebase/config';
+import { createChild } from '../services/firestore/childrenRepository';
+import { updateSelectedChild } from '../services/firestore/userRepository';
+
+// Onboarding is the very first screen — anonymous sign-in (useAuthSync, App.js)
+// may still be in flight when the user finishes it, so wait for a uid instead
+// of assuming auth.currentUser is already set (unlike deeper screens such as
+// ChildAddScreen, which can safely assume auth has long since resolved).
+function getUid() {
+  if (auth.currentUser?.uid) return Promise.resolve(auth.currentUser.uid);
+  return new Promise((resolve) => {
+    const unsub = onAuthStateChanged(auth, (user) => {
+      if (user) { unsub(); resolve(user.uid); }
+    });
+  });
+}
 
 const REGIONS            = ['서울', '경기', '인천', '부산', '대구', '광주', '대전', '울산', '세종', '강원', '충북', '충남', '전북', '전남', '경북', '경남', '제주'];
 const PLANNING_PERIODS   = ['6개월 이내', '1년 이내', '1~2년 후', '아직 미정'];
+// Stored value is always the same 4 canonical tags — only the *label* changes
+// by status, since "워킹맘" (present tense) reads oddly to someone who has no
+// child yet. Storing the same canonical value regardless of label means a
+// pregnant "복직 예정" parent still matches with an already-born "워킹맘" for
+// segment purposes (arguably a *more* useful match — advice from someone a
+// step ahead), and matching logic never needs to special-case status.
 const PARENTING_ENV_OPTS = ['워킹맘', '전업맘', '조부모 도움', '기타'];
-const PET_TYPES          = ['강아지', '고양이', '기타'];
+const PARENTING_ENV_LABEL = {
+  born: { '워킹맘': '워킹맘', '전업맘': '전업맘', '조부모 도움': '조부모 도움', '기타': '기타' },
+  preBirth: { '워킹맘': '복직 예정', '전업맘': '전업 계획', '조부모 도움': '조부모 도움 예정', '기타': '기타' },
+};
+const UNDECIDED_ENV = '아직 미정';
+const FEEDING_TYPES      = [
+  { key: 'breast',  label: '모유' },
+  { key: 'formula', label: '분유' },
+  { key: 'mixed',   label: '혼합' },
+  { key: 'weaned',  label: '이유식/유아식' },
+];
+const ALLERGY_TAGS = [
+  '우유·유제품', '계란', '땅콩·견과류', '밀·글루텐', '대두', '갑각류', '아토피·민감성피부', '기타', '없음',
+];
+const INTEREST_AREAS = [
+  { key: 'travel',       label: '여행' },
+  { key: 'education',    label: '교육' },
+  { key: 'finance',      label: '자녀 금융/저축' },
+  { key: 'home_service',  label: '돌봄·생활서비스' },
+  { key: 'health',       label: '건강·의료' },
+  { key: 'resale',       label: '중고거래·나눔' },
+];
 const CONCERNS_BORN      = ['피부/기저귀', '수면/재우기', '수유/이유식', '발달/놀이', '안전/외출', '건강/면역', '교육/언어', '육아비용 절약', '기타', '없음'];
 const CONCERNS_PREGNANT  = ['출산 준비물', '산모 건강/회복', '태아 발달/검사', '산후조리/도우미', '육아비용 절약', '기타', '없음'];
 const CONCERNS_PLANNING  = ['임신 준비/영양제', '배란/가임기 확인', '난임/병원 검사', '생활습관/체력 관리', '육아비용 절약', '기타', '없음'];
@@ -149,23 +194,21 @@ export default function OnboardingScreen() {
   const [firstName,      setFirstName]      = useState('');
   const [gender,         setGender]         = useState(null);
   const [birthDate,      setBirthDate]      = useState(null);
+  const [isPremature,    setIsPremature]    = useState(null);
   const [taemyeong,      setTaemyeong]      = useState('');
   const [dueDate,        setDueDate]        = useState(null);
   const [planningPeriod, setPlanningPeriod] = useState(null);
 
-  // Step 2 — environment
-  const [region,       setRegion]       = useState('');
-  const [parentingEnv, setParentingEnv] = useState([]);
-  const [hasPet,       setHasPet]       = useState(null);
-  const [petTypes,     setPetTypes]     = useState([]);
-
-  // Step 2 — segmentation (T5)
-  const [isFirstChild,      setIsFirstChild]      = useState(null);
-  const [isWorking,         setIsWorking]          = useState(null);
-  const [takingSupplements, setTakingSupplements]  = useState(null);
+  // Step 2 — environment & segment signals
+  const [region,        setRegion]        = useState('');
+  const [parentingEnv,  setParentingEnv]  = useState([]);
+  const [feedingType,   setFeedingType]   = useState(null);
+  const [allergyTags,   setAllergyTags]   = useState([]);
+  const [allergyOtherNote, setAllergyOtherNote] = useState('');
 
   // Step 3 — interests
   const [selectedInterests, setSelectedInterests] = useState([]);
+  const [interestAreas,     setInterestAreas]     = useState([]);
   const [isCurating,        setIsCurating]        = useState(false);
 
   // Modals
@@ -189,19 +232,16 @@ export default function OnboardingScreen() {
     setShowDatePicker(false);
   };
 
-  const toggleArr = (arr, setArr, val) =>
-    setArr(arr.includes(val) ? arr.filter(v => v !== val) : [...arr, val]);
-
-  // T6: mutually exclusive '기타' in parentingEnv
+  // T6: mutually exclusive '기타' / '아직 미정' in parentingEnv
   const toggleParentingEnv = (val) => {
-    if (val === '기타') {
-      setParentingEnv(['기타']);
+    if (val === '기타' || val === UNDECIDED_ENV) {
+      setParentingEnv([val]);
     } else {
       setParentingEnv(prev => {
-        const without기타 = prev.filter(v => v !== '기타');
-        return without기타.includes(val)
-          ? without기타.filter(v => v !== val)
-          : [...without기타, val];
+        const cleared = prev.filter(v => v !== '기타' && v !== UNDECIDED_ENV);
+        return cleared.includes(val)
+          ? cleared.filter(v => v !== val)
+          : [...cleared, val];
       });
     }
   };
@@ -220,9 +260,66 @@ export default function OnboardingScreen() {
     });
   };
 
+  // Same '없음' mutual-exclusion pattern as concerns, no max count.
+  const toggleAllergy = (label) => {
+    if (label === '없음') {
+      setAllergyTags(prev => prev.includes('없음') ? [] : ['없음']);
+      setAllergyOtherNote('');
+      return;
+    }
+    setAllergyTags(prev => {
+      const without없음 = prev.filter(c => c !== '없음');
+      const next = without없음.includes(label) ? without없음.filter(c => c !== label) : [...without없음, label];
+      if (label === '기타' && !next.includes('기타')) setAllergyOtherNote('');
+      return next;
+    });
+  };
+
+  // Lightweight interest signal for future verticals — no '없음', no cap; skippable.
+  const toggleInterestArea = (key) => {
+    setInterestAreas(prev => prev.includes(key) ? prev.filter(k => k !== key) : [...prev, key]);
+  };
+
   const finishOnboarding = () => {
     setIsCurating(true);
     setTimeout(async () => {
+      try {
+        const userId = await getUid();
+
+        const childPayload = {
+          userId,
+          type: childStatus === 'born' ? 'child' : childStatus === 'pregnant' ? 'pregnancy' : 'planning',
+          firstName: (childStatus === 'born' ? firstName : taemyeong).trim(),
+          lastName: childStatus === 'born' ? lastName.trim() : '',
+          gender,
+          birthDate: childStatus === 'born' ? birthDate : null,
+          dueDate: childStatus === 'pregnant' ? dueDate : null,
+          planningPeriod: childStatus === 'planning' ? planningPeriod : null,
+          concerns: selectedInterests,
+          careEnvironment: parentingEnv,
+          allergyTags,
+          allergyOtherNote: allergyTags.includes('기타') ? allergyOtherNote.trim() : '',
+          ...(childStatus === 'born' ? {
+            feedingType: feedingType || 'unknown',
+            isPremature: Boolean(isPremature),
+          } : {}),
+        };
+
+        const { id: childId } = await createChild(childPayload);
+        await updateSelectedChild(userId, childId);
+        if (region || interestAreas.length > 0) {
+          await updateDoc(doc(db, 'users', userId), {
+            ...(region ? { region } : {}),
+            ...(interestAreas.length > 0 ? { interestAreas } : {}),
+          }).catch(() => {});
+        }
+      } catch (error) {
+        // Non-blocking — the user should still reach the app even if the
+        // profile write fails (e.g. transient network error); ChildAddScreen
+        // remains available as a manual retry path from My Page.
+        console.log('[Onboarding] failed to persist child profile:', error?.message || error);
+      }
+
       await AsyncStorage.setItem('@onboarding_completed', 'true');
       navigation.reset({ index: 0, routes: [{ name: 'MainTabs' }] });
     }, 2000);
@@ -238,9 +335,10 @@ export default function OnboardingScreen() {
     return false;
   })();
 
-  const petValid   = hasPet === false || (hasPet === true && petTypes.length > 0);
-  const envRequired = childStatus === 'born';
-  const step2Valid  = (!envRequired || parentingEnv.length > 0) && hasPet !== null && petValid;
+  // 수유방식/알레르기는 자녀있음 상태에서만 노출되는 질문이라 그때만 필수.
+  // 육아환경은 매칭 가중치에서 감쇠 대상(§5.4)이라 선택 사항 — 미입력 시 매칭에서만 제외.
+  const bornOnlyFieldsRequired = childStatus === 'born';
+  const step2Valid = !bornOnlyFieldsRequired || (allergyTags.length > 0 && !!feedingType);
 
   // ── Labor Illusion Loading Screen ────────────────────────────────────────────
   if (isCurating) {
@@ -371,6 +469,11 @@ export default function OnboardingScreen() {
                     </TouchableOpacity>
                   </View>
                 )}
+
+                {/* 조산 여부 — WHO 기준(37주 미만) 보정연령 계산용, 선택 사항 */}
+                {(firstName.trim().length > 0 && gender && birthDate) && (
+                  <YesNoToggle question="예정일보다 일찍 태어났나요? (조산)" value={isPremature} onSelect={setIsPremature} />
+                )}
               </View>
             )}
 
@@ -472,51 +575,63 @@ export default function OnboardingScreen() {
               <Text style={{ fontSize: 16, color: '#94a3b8' }}>{'>'}</Text>
             </TouchableOpacity>
 
-            {(childStatus !== 'planning' && childStatus !== 'pregnant') && (
-              <>
-                {/* T6: mutually exclusive '기타' via toggleParentingEnv */}
-                <Text style={{ fontSize: 13, fontWeight: '700', color: '#64748b', marginBottom: 10 }}>육아 환경 (복수 선택 가능) <Text style={{ color: '#ef4444' }}>*</Text></Text>
-                <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginBottom: 28 }}>
-                  {PARENTING_ENV_OPTS.map(opt => (
-                    <Chip key={opt} label={opt} active={parentingEnv.includes(opt)} onPress={() => toggleParentingEnv(opt)} />
-                  ))}
-                </View>
-              </>
-            )}
-
-            {/* T5: segmentation questions before pet section */}
-            {childStatus === 'pregnant' && (
-              <>
-                <YesNoToggle question="첫째 아이인가요?" value={isFirstChild} onSelect={setIsFirstChild} />
-                <YesNoToggle question="현재 직장에 출근 중이신가요?" value={isWorking} onSelect={setIsWorking} />
-              </>
-            )}
-            {childStatus === 'planning' && (
-              <YesNoToggle question="임신 준비를 위해 영양제를 챙겨 드시고 계신가요?" value={takingSupplements} onSelect={setTakingSupplements} />
-            )}
-
-            <Text style={{ fontSize: 13, fontWeight: '700', color: '#64748b', marginBottom: 10 }}>반려동물과 함께하시나요? <Text style={{ color: '#ef4444' }}>*</Text></Text>
-            <View style={{ flexDirection: 'row', gap: 10, marginBottom: 14 }}>
-              {[{ val: true, label: '네, 있어요' }, { val: false, label: '아니요' }].map(({ val, label }) => (
-                <TouchableOpacity
-                  key={String(val)}
-                  onPress={() => { setHasPet(val); setPetTypes([]); }}
-                  style={{ flex: 1, padding: 14, borderRadius: 12, borderWidth: 1.5, alignItems: 'center', borderColor: hasPet === val ? '#2E6FF2' : '#e2e8f0', backgroundColor: hasPet === val ? '#EFF6FF' : '#F8FAFC' }}
-                >
-                  <Text style={{ fontSize: 15, fontWeight: hasPet === val ? 'bold' : '500', color: hasPet === val ? '#2E6FF2' : '#334155' }}>{label}</Text>
-                </TouchableOpacity>
+            {/* 육아환경 — 전체 상태 공통으로 묻되, 라벨은 상태에 맞게 다르게.
+                "워킹맘"처럼 현재형 단어를 임신중/계획중에 그대로 쓰면 어색해서
+                저장값은 동일하게 유지한 채 표시 라벨만 상태별로 분기한다.
+                복직 여부 등은 시간이 지나며 바뀌기 쉬운데(§5.4 가중치 감쇠 대상)
+                재입력을 강제할 만큼 중요한 매칭 축은 아니라 선택 사항으로 둔다. */}
+            <Text style={{ fontSize: 13, fontWeight: '700', color: '#64748b', marginBottom: 10 }}>
+              {childStatus === 'born' ? '육아 환경' : '출산 후 육아 계획'} (복수 선택 가능, 선택)
+            </Text>
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginBottom: 28 }}>
+              {PARENTING_ENV_OPTS.map(opt => (
+                <Chip
+                  key={opt}
+                  label={(childStatus === 'born' ? PARENTING_ENV_LABEL.born : PARENTING_ENV_LABEL.preBirth)[opt]}
+                  active={parentingEnv.includes(opt)}
+                  onPress={() => toggleParentingEnv(opt)}
+                />
               ))}
+              {childStatus !== 'born' && (
+                <Chip label={UNDECIDED_ENV} active={parentingEnv.includes(UNDECIDED_ENV)} onPress={() => toggleParentingEnv(UNDECIDED_ENV)} />
+              )}
             </View>
-            {hasPet === true && (
-              <View>
-                <Text style={{ fontSize: 13, fontWeight: '700', color: '#64748b', marginBottom: 10 }}>어떤 반려동물인가요? <Text style={{ color: '#ef4444' }}>*</Text></Text>
-                <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
-                  {PET_TYPES.map(pt => (
-                    <Chip key={pt} label={pt} active={petTypes.includes(pt)} onPress={() => toggleArr(petTypes, setPetTypes, pt)} />
+
+            {/* 수유방식/알레르기 — 둘 다 '아이가 실제로 존재해야' 답할 수
+                있는 질문이라 자녀있음 상태에서만 노출한다. 임신중/계획중인
+                유저에게 "아이 알레르기"를 물어보는 건 원리적으로 불가능한
+                질문이었다. */}
+            {childStatus === 'born' && (
+              <>
+                <Text style={{ fontSize: 13, fontWeight: '700', color: '#64748b', marginBottom: 10 }}>수유 방식 <Text style={{ color: '#ef4444' }}>*</Text></Text>
+                <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginBottom: 28 }}>
+                  {FEEDING_TYPES.map(ft => (
+                    <Chip key={ft.key} label={ft.label} active={feedingType === ft.key} onPress={() => setFeedingType(ft.key)} />
                   ))}
                 </View>
-              </View>
+
+                <Text style={{ fontSize: 13, fontWeight: '700', color: '#64748b', marginBottom: 10 }}>알레르기/특이사항 (복수 선택 가능) <Text style={{ color: '#ef4444' }}>*</Text></Text>
+                <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginBottom: 8 }}>
+                  {ALLERGY_TAGS.map(tag => (
+                    <Chip key={tag} label={tag} active={allergyTags.includes(tag)} onPress={() => toggleAllergy(tag)} />
+                  ))}
+                </View>
+                {/* '기타' 선택 시에만 — 프리셋에 없는 알레르기는 매칭에서 '기타'
+                    태그만으로는 아무 변별력이 없어서, 구체적인 텍스트를 받아둔다. */}
+                {allergyTags.includes('기타') && (
+                  <TextInput
+                    style={{ borderWidth: 1.5, borderColor: '#e2e8f0', borderRadius: 12, paddingHorizontal: 16, paddingVertical: 14, fontSize: 15, color: '#0f172a', backgroundColor: '#F8FAFC', marginBottom: 20 }}
+                    placeholder="어떤 알레르기인지 적어주세요 (예: 복숭아)"
+                    placeholderTextColor="#94a3b8"
+                    value={allergyOtherNote}
+                    onChangeText={setAllergyOtherNote}
+                    returnKeyType="done"
+                    onSubmitEditing={Keyboard.dismiss}
+                  />
+                )}
+              </>
             )}
+
             <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 16, marginTop: 8, borderTopWidth: 1, borderTopColor: '#F1F5F9' }}>
               <View style={{ flex: 1 }}>
                 <Text style={{ fontSize: 15, fontWeight: '600', color: '#0F172A' }}>쿠팡 와우 회원이신가요?</Text>
@@ -598,6 +713,24 @@ export default function OnboardingScreen() {
                 </TouchableOpacity>
               );
             })}
+          </View>
+
+          {/* 관심 확장 영역 — 가볍게, 건너뛰어도 되는 의향 신호 (스킵 가능, 필수 아님) */}
+          <Text style={{ fontSize: 15, fontWeight: '700', color: '#0f172a', marginTop: 12, marginBottom: 4 }}>
+            앞으로 어떤 정보를 더 받아보고 싶으세요?
+          </Text>
+          <Text style={{ fontSize: 13, color: '#94a3b8', marginBottom: 14 }}>
+            선택하지 않아도 괜찮아요. 나중에 마이페이지에서 바꿀 수 있어요.
+          </Text>
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
+            {INTEREST_AREAS.map(area => (
+              <Chip
+                key={area.key}
+                label={area.label}
+                active={interestAreas.includes(area.key)}
+                onPress={() => toggleInterestArea(area.key)}
+              />
+            ))}
           </View>
         </ScrollView>
 

@@ -428,15 +428,6 @@ const PLACEHOLDER_PRODUCTS = [
   { id: 'ph3', name: '가격 추적 목록을 확인해보세요' },
 ];
 
-const DUMMY_RECENTLY_VIEWED = [
-  { id: 'rv1', brand: '하기스',      name: '네이처메이드 3단계 기저귀 특대형 96매',    origPrice: 42900,  currentPrice: 32175  },
-  { id: 'rv2', brand: '매일유업',    name: '앱솔루트 명작 3단계 분유 800g × 2캔',      origPrice: 38500,  currentPrice: 31570  },
-  { id: 'rv3', brand: '베베숲',      name: '아쿠아 물티슈 100매 6팩 무향 저자극',       origPrice: 16900,  currentPrice: 11830  },
-  { id: 'rv4', brand: '다이치',      name: '듀얼핏 360 회전형 카시트 신생아~4세',      origPrice: 429000, currentPrice: 317460 },
-  { id: 'rv5', brand: '피셔프라이스', name: '소리나는 멀티활동 점퍼루 4-in-1 바운서',   origPrice: 199000, currentPrice: 214500 },
-  { id: 'rv6', brand: '레고 듀플로', name: '클래식 기본 벽돌 세트 38피스 (1.5~5세)', origPrice: 38000,  currentPrice: 28120  },
-];
-
 // ─── Level System ────────────────────────────────────────────────────────────
 
 const LEVEL_LIST = [
@@ -894,16 +885,6 @@ export default function MyPageScreen({ navigation }) {
           />
         }
       >
-        {/* ── [DEV] God Mode Tier Cycler — remove before production ── */}
-        <TouchableOpacity
-          style={{ backgroundColor: '#000', padding: 8, borderRadius: 8, alignSelf: 'center', marginBottom: 10, marginTop: 8 }}
-          onPress={() => setGodModeStep((s) => (s + 1) % 4)}
-        >
-          <Text style={{ color: '#FFF', fontWeight: 'bold', fontSize: 12 }}>
-            {['🛠 테스트용 렙업 (God Mode)', '⬆ Lv.2 성실맘 (Emerald)', '⬆ Lv.3 열심맘 (Amber)', '⬆ Lv.4 우수맘 (Sapphire)'][godModeStep]}
-          </Text>
-        </TouchableOpacity>
-
         {/* ── Profile Card (Fintech-style) ── */}
         <View style={styles.profileCard}>
           <View style={styles.profileCardRow}>
@@ -1080,16 +1061,16 @@ export default function MyPageScreen({ navigation }) {
             <TouchableOpacity
               style={styles.recentViewAllBtn}
               hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-              onPress={() => navigation.navigate('RecentProductsScreen', { products: recentProducts.length > 0 ? recentProducts : DUMMY_RECENTLY_VIEWED })}
+              onPress={() => navigation.navigate('RecentProductsScreen', { products: recentProducts })}
             >
               <Text style={styles.recentViewAllText}>전체보기</Text>
               <ChevronRightSmIcon size={14} color="#94a3b8" />
             </TouchableOpacity>
           </View>
-          {(() => {
-            const displayItems = recentProducts.length > 0 ? recentProducts : null;
-            const dummyItems   = DUMMY_RECENTLY_VIEWED;
-            const source       = (displayItems ?? dummyItems).slice(0, 10);
+          {recentProducts.length === 0 ? (
+            <Text style={styles.recentEmptyText}>아직 본 상품이 없어요. 관심 있는 상품을 둘러보세요!</Text>
+          ) : (() => {
+            const source = recentProducts.slice(0, 10);
             return (
               <ScrollView
                 horizontal
@@ -1097,7 +1078,6 @@ export default function MyPageScreen({ navigation }) {
                 contentContainerStyle={styles.recentScroll}
               >
                 {source.map((item) => {
-                  const isReal       = !!displayItems;
                   const brand        = item.brand        ?? '';
                   const title        = item.name         ?? '';
                   const origPrice    = item.origPrice    ?? 0;
@@ -1110,7 +1090,7 @@ export default function MyPageScreen({ navigation }) {
                     <TouchableOpacity
                       key={item.id}
                       style={styles.recentCard}
-                      onPress={() => isReal ? handleProductPress(item.id, title) : null}
+                      onPress={() => handleProductPress(item.id, title)}
                       activeOpacity={0.8}
                     >
                       <View style={styles.recentThumb}>
@@ -1142,7 +1122,7 @@ export default function MyPageScreen({ navigation }) {
         {/* ── Savings Report Banner ── */}
         {(() => {
           const totalSaved = globalTrackedItems.reduce(
-            (sum, item) => sum + Math.max(0, (item.avgPrice ?? item.origPrice ?? 0) - (item.currentPrice ?? 0)),
+            (sum, item) => sum + Math.max(0, (item.averagePrice ?? 0) - (item.currentPrice ?? 0)),
             0,
           );
           return (
@@ -1183,15 +1163,6 @@ export default function MyPageScreen({ navigation }) {
             <Text style={styles.adminBtnText}>어드민 대시보드</Text>
           </TouchableOpacity>
         ) : null}
-
-        {/* ── Temp QA entry — remove before prod ── */}
-        <TouchableOpacity
-          style={styles.qaAdminBtn}
-          onPress={() => navigation.navigate('AdminDashboard')}
-          activeOpacity={0.8}
-        >
-          <Text style={styles.qaAdminBtnText}>⚙️ 운영자 대시보드 (Test)</Text>
-        </TouchableOpacity>
 
         <View style={{ height: 30 }} />
       </ScrollView>

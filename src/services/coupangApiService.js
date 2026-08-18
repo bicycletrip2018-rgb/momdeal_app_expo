@@ -1,7 +1,15 @@
 import { httpsCallable, connectFunctionsEmulator } from 'firebase/functions';
 import { functions } from '../firebase/config';
-if (__DEV__) {
-  connectFunctionsEmulator(functions, '192.168.0.83', 5001);
+
+// Opt-in only — this used to fire unconditionally whenever __DEV__ was true,
+// which is *every* local/dev-client build (RULE-01 requires --dev-client for
+// all local testing). That silently routed every product API call to one
+// developer's home LAN IP and made all product data time out for anyone not
+// on that exact network. Real Firebase Functions is the correct default;
+// set EXPO_PUBLIC_FUNCTIONS_EMULATOR_HOST to opt into a local emulator.
+const EMULATOR_HOST = process.env.EXPO_PUBLIC_FUNCTIONS_EMULATOR_HOST;
+if (__DEV__ && EMULATOR_HOST) {
+  connectFunctionsEmulator(functions, EMULATOR_HOST, 5001);
 }
 
 const normalizeImage = (img) => {
@@ -141,34 +149,15 @@ const toHCardItem = (raw, fallbackId) => {
   };
 };
 
-const RAW_BRIDGE_GOLDBOX = [
-  { id: 'bg1', name: '하기스 네이처메이드 기저귀 신생아 100매', currentPrice: 28900, originalPrice: 52900, discount: 45, isRocket: true  },
-  { id: 'bg2', name: '매일유업 앱솔루트 분유 스텝2 800g',       currentPrice: 39800, originalPrice: 62000, discount: 36, isRocket: true  },
-  { id: 'bg3', name: '피죤 아기 세탁세제 3L 대용량 무향',       currentPrice: 8900,  originalPrice: 12800, discount: 30, isRocket: false },
-  { id: 'bg4', name: '프리미엄베베 순한 아기 로션 400ml 무향',  currentPrice: 13900, originalPrice: 21400, discount: 35, isRocket: true  },
-];
-
-// Strict peer-deal schema: name, currentPrice, originalPrice, discountRate, image
-// Also includes `discount` alias so HorizontalCard (item.discount) renders the pill.
-const BRIDGE_PEER_FALLBACK = [
-  { productGroupId: 'bp1', name: '유한킴벌리 하기스 물티슈 100매×10팩', currentPrice: 18900, originalPrice: 26000, discountRate: 27, discount: 27, image: 'https://via.placeholder.com/150', isRocket: true  },
-  { productGroupId: 'bp2', name: '탐사 순한 아기 기저귀 신생아 100매',   currentPrice: 15900, originalPrice: 22000, discountRate: 28, discount: 28, image: 'https://via.placeholder.com/150', isRocket: true  },
-  { productGroupId: 'bp3', name: '피죤 베이비 세탁세제 2.5L 무향',       currentPrice: 10900, originalPrice: 15800, discountRate: 31, discount: 31, image: 'https://via.placeholder.com/150', isRocket: false },
-  { productGroupId: 'bp4', name: '비즈앤젤 아기 로션 400ml 무향',        currentPrice: 7900,  originalPrice: 11800, discountRate: 33, discount: 33, image: 'https://via.placeholder.com/150', isRocket: true  },
-];
-
-const BRIDGE_GOLDBOX_FALLBACK = RAW_BRIDGE_GOLDBOX.map((r) => toHCardItem(r, r.id));
-
 export async function fetchGoldboxDeals(limit = 10) {
   try {
     const fn  = httpsCallable(functions, 'getGoldboxDeals');
     const res = await fn({ limit });
     const arr = Array.isArray(res.data) ? res.data : (res.data?.products ?? []);
-    const mapped = arr.map((item, i) => toHCardItem(item, `g${i}`));
-    return mapped.length > 0 ? mapped : BRIDGE_GOLDBOX_FALLBACK;
+    return arr.map((item, i) => toHCardItem(item, `g${i}`));
   } catch (e) {
-    console.warn('[fetchGoldboxDeals] bridge fallback:', e?.message ?? e);
-    return BRIDGE_GOLDBOX_FALLBACK;
+    console.warn('[fetchGoldboxDeals] failed:', e?.message ?? e);
+    return [];
   }
 }
 
@@ -177,7 +166,7 @@ export async function fetchPeerBestDeals({ categoryId = 1014, limit = 10 } = {})
     const fn  = httpsCallable(functions, 'getBestCategoryProducts');
     const res = await fn({ categoryId, limit });
     const arr = res.data?.products ?? [];
-    const mapped = arr.map((item, i) => ({
+    return arr.map((item, i) => ({
       productGroupId: String(item.productId || item.id || `p${i}`),
       name:          String(item.name || item.productName || '쿠팡 상품'),
       currentPrice:  Number(item.currentPrice ?? item.productPrice ?? item.price ?? 0),
@@ -187,10 +176,9 @@ export async function fetchPeerBestDeals({ categoryId = 1014, limit = 10 } = {})
       image:         normalizeImage(extractImageDeep(item) || '') || '',
       isRocket:      item.isRocket === true,
     }));
-    return mapped.length > 0 ? mapped : BRIDGE_PEER_FALLBACK;
   } catch (e) {
-    console.warn('[fetchPeerBestDeals] bridge fallback:', e?.message ?? e);
-    return BRIDGE_PEER_FALLBACK;
+    console.warn('[fetchPeerBestDeals] failed:', e?.message ?? e);
+    return [];
   }
 }
 
@@ -225,19 +213,11 @@ export async function fetchBabyBestDeals(limit = 10) {
   }
 }
 
-const PL_DEALS_FALLBACK = [
-  { id: 'pl1', name: '코멧 탐사 아기 물티슈 캡형 100매 × 10팩', currentPrice: 18900, originalPrice: 26000, discountRate: 27, discount: 27, isRocket: true  },
-  { id: 'pl2', name: '탐사 기저귀 밴드형 대형 60매',              currentPrice: 15900, originalPrice: 22000, discountRate: 28, discount: 28, isRocket: true  },
-  { id: 'pl3', name: '피죤 아기 순한 세탁세제 3L 무향',            currentPrice: 8900,  originalPrice: 12800, discountRate: 30, discount: 30, isRocket: false },
-  { id: 'pl4', name: '하기스 물티슈 리필형 100매 × 6팩',           currentPrice: 12900, originalPrice: 18000, discountRate: 28, discount: 28, isRocket: true  },
-];
-
 export async function fetchPLDeals() {
   try {
-    const results = await searchCoupangProducts('탐사 기저귀');
-    return results.length > 0 ? results : PL_DEALS_FALLBACK.map((r) => toHCardItem(r, r.id));
+    return await searchCoupangProducts('탐사 기저귀');
   } catch {
-    return PL_DEALS_FALLBACK.map((r) => toHCardItem(r, r.id));
+    return [];
   }
 }
 

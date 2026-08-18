@@ -1,5 +1,6 @@
-import React, { useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
+  ActivityIndicator,
   FlatList,
   Image,
   Platform,
@@ -11,49 +12,12 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ArrowLeft, ChevronDown, Search, Link } from 'lucide-react-native';
+import { searchPosts } from '../services/communityService';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 const CATEGORY_OPTIONS = ['전체', '육아수다', '질문/고민', '육아꿀템', '특가제보'];
-const SORT_OPTIONS     = ['최신순', '댓글순', '조회순', '좋아요순'];
-
-// ─── Tier badge ───────────────────────────────────────────────────────────────
-
-const TIER_LIST = [
-  { number: 1, color: '#475569' },
-  { number: 2, color: '#047857' },
-  { number: 3, color: '#B45309' },
-  { number: 4, color: '#1E40AF' },
-];
-
-function getMockTier(seed) {
-  if (!seed) return TIER_LIST[0];
-  const n = String(seed).split('').reduce((a, c) => a + c.charCodeAt(0), 0);
-  return TIER_LIST[n % TIER_LIST.length];
-}
-
-function TierBadge({ seed }) {
-  const tier = getMockTier(seed);
-  return (
-    <View style={{ backgroundColor: tier.color, borderRadius: 4, paddingHorizontal: 6, paddingVertical: 2, marginLeft: 4, justifyContent: 'center', alignItems: 'center' }}>
-      <Text style={{ color: '#FFF', fontSize: 10, fontWeight: 'bold' }}>{tier.number}</Text>
-    </View>
-  );
-}
-
-// ─── Mock search results ──────────────────────────────────────────────────────
-
-// Full unfiltered dataset — peer match is intentionally bypassed in search
-const MOCK_RESULTS = [
-  { postId: 'r1', category: 'qna',  title: '12개월 아기 걷기 연습 어떻게 하셨어요?',     nickname: '12개월 솔이맘', timeAgo: '26.05.13.', commentCount: 14, viewCount: 892,  likeCount: 9  },
-  { postId: 'r2', category: 'tip',  title: '기저귀 발진에 진짜 효과 있었던 꿀템 공유',   nickname: '8개월 별이맘',  timeAgo: '26.05.12.', commentCount: 31, viewCount: 2103, likeCount: 74,
-    taggedProduct: { name: '베베숲 물티슈 캡형 100매', brand: '베베숲' } },
-  { postId: 'r3', category: 'chat', title: '오늘 아이랑 처음으로 공원 나들이 다녀왔어요', nickname: '15개월 하나맘', timeAgo: '26.05.11.', commentCount: 7,  viewCount: 445,  likeCount: 21 },
-  { postId: 'r4', category: 'deal', title: '하기스 매직팬티 5단계 역대급 특가 정보',      nickname: '9개월 노을맘',  timeAgo: '26.05.10.', commentCount: 5,  viewCount: 1247, likeCount: 33,
-    taggedProduct: { name: '하기스 매직팬티 5단계 남아 40매', brand: '하기스' } },
-  { postId: 'r5', category: 'qna',  title: '분유 끊는 시기 언제가 적당할까요?',           nickname: '11개월 콩이맘', timeAgo: '26.05.09.', commentCount: 22, viewCount: 673,  likeCount: 15,
-    taggedProduct: { name: '앱솔루트 명작 분유 2단계 800g', brand: '매일유업' } },
-];
+const SORT_OPTIONS     = ['최신순', '댓글순', '좋아요순'];
 
 // Covers both current and legacy Firestore category keys
 const CATEGORY_LABEL = {
@@ -61,15 +25,28 @@ const CATEGORY_LABEL = {
   question: '질문/고민', free: '육아수다', review: '육아꿀템', region: '지역',
 };
 
+function formatPostDate(createdAt) {
+  const date = createdAt?.toDate ? createdAt.toDate() : null;
+  if (!date) return '';
+  const yy = String(date.getFullYear()).slice(2);
+  const mm = String(date.getMonth() + 1).padStart(2, '0');
+  const dd = String(date.getDate()).padStart(2, '0');
+  return `${yy}.${mm}.${dd}.`;
+}
+
 // ─── Result Card ──────────────────────────────────────────────────────────────
 
-function ResultCard({ item }) {
+function ResultCard({ item, navigation }) {
   const catLabel  = CATEGORY_LABEL[item.category] ?? item.category;
   const thumbUri  = item.images?.[0] ?? item.imageUrls?.[0] ?? null;
   const extraImgs = Math.max(0, ((item.images ?? item.imageUrls)?.length ?? 0) - 1);
 
   return (
-    <TouchableOpacity style={styles.card} activeOpacity={0.85}>
+    <TouchableOpacity
+      style={styles.card}
+      activeOpacity={0.85}
+      onPress={() => navigation.navigate('PostDetail', { postId: item.postId, title: catLabel })}
+    >
       <View style={{ flexDirection: 'row' }}>
         {/* Left: text content */}
         <View style={{ flex: 1, marginRight: thumbUri ? 12 : 0 }}>
@@ -78,20 +55,17 @@ function ResultCard({ item }) {
           {item.taggedProduct && (
             <View style={styles.productPill}>
               <Link size={12} color="#64748B" />
-              <Text style={styles.productPillText} numberOfLines={1}>
-                {item.taggedProduct.brand ? `[${item.taggedProduct.brand}] ` : ''}{item.taggedProduct.name}
-              </Text>
+              <Text style={styles.productPillText} numberOfLines={1}>{item.taggedProduct.name}</Text>
             </View>
           )}
           <View style={styles.cardMeta}>
             <Text style={styles.cardMetaText}>{item.nickname}</Text>
-            <TierBadge seed={item.nickname} />
             <Text style={styles.cardMetaDot}> · </Text>
-            <Text style={styles.cardMetaText}>{item.timeAgo}</Text>
+            <Text style={styles.cardMetaText}>{formatPostDate(item.createdAt)}</Text>
             <Text style={styles.cardMetaDot}> · </Text>
-            <Text style={styles.cardMetaText}>댓글 {item.commentCount}</Text>
+            <Text style={styles.cardMetaText}>댓글 {item.commentCount ?? 0}</Text>
             <Text style={styles.cardMetaDot}> · </Text>
-            <Text style={styles.cardMetaText}>조회 {item.viewCount}</Text>
+            <Text style={styles.cardMetaText}>좋아요 {item.likeCount ?? 0}</Text>
           </View>
         </View>
 
@@ -123,20 +97,29 @@ export default function CommunitySearchScreen({ navigation }) {
   const [activeSort,   setActiveSort]   = useState('최신순');
   const [showCatMenu,  setShowCatMenu]  = useState(false);
   const [showSortMenu, setShowSortMenu] = useState(false);
+  const [allPosts,     setAllPosts]     = useState([]);
+  const [loading,      setLoading]      = useState(true);
+
+  useEffect(() => {
+    searchPosts(200)
+      .then((posts) => setAllPosts(posts))
+      .catch(() => setAllPosts([]))
+      .finally(() => setLoading(false));
+  }, []);
 
   const results = useMemo(() => {
     const q = query.trim().toLowerCase();
     if (!q) return [];
 
-    const filtered = MOCK_RESULTS.filter((p) => {
+    const filtered = allPosts.filter((p) => {
       let matchesTab = false;
       if (activeTab === 'title') {
-        matchesTab = p.title.toLowerCase().includes(q) || (p.content ?? '').toLowerCase().includes(q);
+        matchesTab = (p.title ?? '').toLowerCase().includes(q) || (p.content ?? '').toLowerCase().includes(q);
       } else if (activeTab === 'author') {
-        matchesTab = p.nickname.toLowerCase().includes(q);
+        matchesTab = (p.nickname ?? '').toLowerCase().includes(q);
       } else if (activeTab === 'product') {
         const tp = p.taggedProduct;
-        matchesTab = !!(tp && (tp.name.toLowerCase().includes(q) || tp.brand.toLowerCase().includes(q)));
+        matchesTab = !!(tp && (tp.name ?? '').toLowerCase().includes(q));
       }
       const matchesCat = activeCategory === '전체' || CATEGORY_LABEL[p.category] === activeCategory;
       return matchesTab && matchesCat;
@@ -144,13 +127,12 @@ export default function CommunitySearchScreen({ navigation }) {
 
     const sorted = [...filtered];
     switch (activeSort) {
-      case '댓글순': sorted.sort((a, b) => (b.commentCount ?? 0) - (a.commentCount ?? 0)); break;
-      case '조회순': sorted.sort((a, b) => (b.viewCount    ?? 0) - (a.viewCount    ?? 0)); break;
-      case '좋아요순': sorted.sort((a, b) => (b.likeCount  ?? 0) - (a.likeCount    ?? 0)); break;
-      default: sorted.sort((a, b) => (b.timeAgo ?? '').localeCompare(a.timeAgo ?? '')); break;
+      case '댓글순':   sorted.sort((a, b) => (b.commentCount ?? 0) - (a.commentCount ?? 0)); break;
+      case '좋아요순': sorted.sort((a, b) => (b.likeCount    ?? 0) - (a.likeCount    ?? 0)); break;
+      default: sorted.sort((a, b) => (b.createdAt?.toMillis?.() ?? 0) - (a.createdAt?.toMillis?.() ?? 0)); break;
     }
     return sorted;
-  }, [query, activeTab, activeCategory, activeSort]);
+  }, [query, activeTab, activeCategory, activeSort, allPosts]);
 
   return (
     <View style={[styles.container, { paddingTop: top }]}>
@@ -254,11 +236,15 @@ export default function CommunitySearchScreen({ navigation }) {
           <Search size={40} color="#CBD5E1" style={{ marginBottom: 16 }} />
           <Text style={styles.emptyStateText}>검색어를 입력해보세요</Text>
         </View>
+      ) : loading ? (
+        <View style={styles.emptyState}>
+          <ActivityIndicator color="#2E6FF2" />
+        </View>
       ) : (
         <FlatList
           data={results}
           keyExtractor={(item) => item.postId}
-          renderItem={({ item }) => <ResultCard item={item} />}
+          renderItem={({ item }) => <ResultCard item={item} navigation={navigation} />}
           keyboardShouldPersistTaps="handled"
           contentContainerStyle={{ paddingBottom: 40 }}
           ListEmptyComponent={

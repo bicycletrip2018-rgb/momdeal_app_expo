@@ -48,6 +48,9 @@ const normalizeChildPayload = (child) => {
     height:      normalizeNumberOrNull(child?.height),
     concerns:    Array.isArray(child?.concerns) ? child.concerns : [],
     careEnvironment: Array.isArray(child?.careEnvironment) ? child.careEnvironment : [],
+    allergyTags: Array.isArray(child?.allergyTags) ? child.allergyTags : [],
+    allergyOtherNote: typeof child?.allergyOtherNote === 'string' ? child.allergyOtherNote.trim() : '',
+    isPremature: type === 'child' ? Boolean(child?.isPremature) : false,
   };
 };
 
