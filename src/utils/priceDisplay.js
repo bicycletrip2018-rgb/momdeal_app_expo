@@ -9,6 +9,20 @@ function parseDateMs(dateValue) {
   return null;
 }
 
+// Picks which price to show as "the" price for this user, based on their
+// Wow-membership toggle (UserContext.isWowMember) and whether a real Wow
+// price was ever captured for this product (client-side WebView scrape —
+// see GlobalMagicNudge.js). Never invents a number: if no real wowPrice
+// exists yet, falls back to the regular price rather than an estimate.
+export function getEffectivePrice(item, isWowMember) {
+  const regular = item.currentPrice ?? item.price ?? null;
+  const wow = typeof item.wowPrice === 'number' && item.wowPrice > 0 ? item.wowPrice : null;
+  if (isWowMember && wow != null) {
+    return { price: wow, isWow: true, hasRealWowPrice: true };
+  }
+  return { price: regular, isWow: false, hasRealWowPrice: wow != null };
+}
+
 function calcDiscountPct(item) {
   if (typeof item.marketingDiscountPct === 'number' && item.marketingDiscountPct !== 0)
     return item.marketingDiscountPct;
@@ -22,12 +36,12 @@ function calcDiscountPct(item) {
 // Returns a price display descriptor for a product card.
 // mode='blind'  — tracking < 7 days: hide discount, show plain price + reveal-date hint
 // mode='active' — tracking >= 7 days or no tracking date: show discount%, price, strikethrough avg
-export function resolveAgingPriceDisplay(item) {
+export function resolveAgingPriceDisplay(item, isWowMember = false) {
   const startMs = parseDateMs(
     item.trackingStartDate ?? item.savedAt ?? item.createdAt ?? null
   );
 
-  const currentPrice = item.currentPrice ?? item.price ?? null;
+  const { price: currentPrice, isWow } = getEffectivePrice(item, isWowMember);
   const averagePrice = item.averagePrice ?? item.originalPrice ?? item.original ?? null;
 
   if (startMs !== null) {
@@ -37,6 +51,7 @@ export function resolveAgingPriceDisplay(item) {
       return {
         mode: 'blind',
         currentPrice,
+        isWow,
         revealLabel: `${revealDate.getMonth() + 1}월 ${revealDate.getDate()}일`,
       };
     }
@@ -45,7 +60,8 @@ export function resolveAgingPriceDisplay(item) {
   return {
     mode: 'active',
     currentPrice,
+    isWow,
     averagePrice,
-    discountPct: calcDiscountPct(item),
+    discountPct: calcDiscountPct({ ...item, currentPrice }),
   };
 }

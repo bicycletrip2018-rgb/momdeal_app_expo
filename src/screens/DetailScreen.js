@@ -560,7 +560,7 @@ export default function DetailScreen({ route, navigation }) {
   };
   const displayItem = item || product || mockItem;
   const displayFrom = from || 'Ranking';
-  const { isWowMember, setIsWowMember } = useUser();
+  const { isWowMember } = useUser();
 
   const [timeRange,           setTimeRange]           = useState('2M');
   const [activeTooltipIdx,    setActiveTooltipIdx]    = useState(null);
@@ -832,7 +832,11 @@ export default function DetailScreen({ route, navigation }) {
         {/* ── CPO PDP Hierarchy ── */}
         {(() => {
           const regularPrice   = currentPrice;
-          const displayedPrice = regularPrice;
+          const realWowPrice   = typeof displayItem?.wowPrice === 'number' && displayItem.wowPrice > 0
+            ? displayItem.wowPrice
+            : null;
+          const showWowPrice   = isWowMember && realWowPrice != null;
+          const displayedPrice = showWowPrice ? realWowPrice : regularPrice;
           const isRocket       = displayItem.isRocket || displayItem.deliveryType === 'rocket';
           const deliveryText   = isRocket
             ? (displayItem.categoryName === '로켓프레시' ? '로켓프레시' : '🚀 로켓배송')
@@ -933,7 +937,9 @@ export default function DetailScreen({ route, navigation }) {
               <View style={{ paddingHorizontal: 16, paddingTop: 16, paddingBottom: 16 }}>
                 <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-end' }}>
                   <View style={{ flexDirection: 'row', alignItems: 'baseline' }}>
-                    <Text style={{ fontSize: 14, color: '#475569', marginRight: 4 }}>현재가</Text>
+                    <Text style={{ fontSize: 14, color: '#475569', marginRight: 4 }}>
+                      {showWowPrice ? '와우회원가' : '현재가'}
+                    </Text>
                     <Text style={{ fontSize: 22, fontWeight: '800', color: '#0F172A' }}>
                       {displayedPrice.toLocaleString('ko-KR')}원
                     </Text>
@@ -955,15 +961,21 @@ export default function DetailScreen({ route, navigation }) {
                   )}
                 </View>
 
-                {/* 와우회원가 */}
-                <View style={{ flexDirection: 'row', alignItems: 'baseline', marginTop: 10 }}>
-                  <Text style={{ fontSize: 16, fontWeight: '600', color: '#475569', marginRight: 8 }}>
-                    와우회원가
+                {/* 참고용 보조 가격 — 실제로 캡쳐된 값이 있을 때만, 추정치는 절대 만들어 보여주지 않음 */}
+                {showWowPrice ? (
+                  <Text style={{ fontSize: 12, color: '#94A3B8', marginTop: 6 }}>
+                    일반 회원가 {regularPrice.toLocaleString('ko-KR')}원
                   </Text>
-                  <Text style={{ fontSize: 24, fontWeight: '600', color: '#EF4444' }}>
-                    {(displayItem?.wowPrice || Math.floor(displayedPrice * 0.9)).toLocaleString('ko-KR')}원
-                  </Text>
-                </View>
+                ) : realWowPrice != null ? (
+                  <View style={{ flexDirection: 'row', alignItems: 'baseline', marginTop: 6 }}>
+                    <Text style={{ fontSize: 13, fontWeight: '600', color: '#2E6FF2', marginRight: 6 }}>
+                      와우회원가
+                    </Text>
+                    <Text style={{ fontSize: 14, fontWeight: '700', color: '#2E6FF2' }}>
+                      {realWowPrice.toLocaleString('ko-KR')}원
+                    </Text>
+                  </View>
+                ) : null}
               </View>
 
               {/* Row 3: Fintech Data Table */}

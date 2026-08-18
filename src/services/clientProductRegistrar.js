@@ -29,11 +29,12 @@ export async function registerProductFromClient(productId, details, uid) {
   const existing = await getDoc(docRef);
   const isNew    = !existing.exists();
 
-  const name  = cleanName(details.name);
-  const price = details.price;
-  const image = details.image ?? null;
+  const name     = cleanName(details.name);
+  const price    = details.price;
+  const image    = details.image ?? null;
+  const wowPrice = typeof details.wowPrice === 'number' && details.wowPrice > 0 ? details.wowPrice : null;
 
-  console.log('[Registrar] Writing product doc:', productGroupId, '| isNew:', isNew, '| price:', price);
+  console.log('[Registrar] Writing product doc:', productGroupId, '| isNew:', isNew, '| price:', price, '| wowPrice:', wowPrice);
 
   const baseFields = {
     productGroupId,
@@ -41,6 +42,7 @@ export async function registerProductFromClient(productId, details, uid) {
     originalId:   productId,
     name,
     currentPrice: price,
+    ...(wowPrice != null ? { wowPrice } : {}),
     image,
     isOutOfStock: false,
     stockStatus:  'in_stock',
@@ -56,6 +58,7 @@ export async function registerProductFromClient(productId, details, uid) {
 
   await addDoc(collection(docRef, 'offers'), {
     price,
+    ...(wowPrice != null ? { wowPrice } : {}),
     checkedAt: serverTimestamp(),
     source:    'client_fetch',
   });
@@ -86,5 +89,5 @@ export async function registerProductFromClient(productId, details, uid) {
     }
   }
 
-  return { productGroupId, name, price, image, isNew };
+  return { productGroupId, name, price, wowPrice, image, isNew };
 }

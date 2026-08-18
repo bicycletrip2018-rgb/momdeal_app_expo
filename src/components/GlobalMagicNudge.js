@@ -55,6 +55,10 @@ const WV_STYLE = {
 //   1. JSON field "salePrice", "price", or "originalPrice" — most accurate.
 //   2. Fallback: any "NN,NNN원" pattern in raw HTML — covers text rendered into
 //      script blocks or data attributes.
+// Wow price: tried via real rendered DOM selectors first (this WebView actually
+// renders the page, unlike the old server-side regex-only scraper), then the
+// same inline-JSON key fallback. Absent entirely for non-Wow-eligible products —
+// that's fine, the UI never invents a Wow price when this comes back 0.
 // Soft exit: Linking.openURL("coupang://") shifts OS focus to the Coupang app
 // without killing the Saveroo process, so state and nav history are preserved.
 const SCRAPE_SCRIPT =
@@ -80,13 +84,27 @@ const SCRAPE_SCRIPT =
     '}' +
     'let price=parseInt(priceStr.replace(/[^0-9]/g,""),10);' +
     'if(isNaN(price))price=0;' +
+    'let wowSelectors=[".members-price-txt",".coupon-price-txt",".wow-price",".coupon-discount-price","[class*=\'members-price\']","[class*=\'wow-price\']","[class*=\'coupon-price\']"];' +
+    'let wowPriceStr=null;' +
+    'for(let i=0;i<wowSelectors.length;i++){' +
+      'let wEl=document.querySelector(wowSelectors[i]);' +
+      'if(wEl&&wEl.textContent&&wEl.textContent.trim()){wowPriceStr=wEl.textContent;break;}' +
+    '}' +
+    'let wowPrice=0;' +
+    'if(wowPriceStr){' +
+      'wowPrice=parseInt(wowPriceStr.replace(/[^0-9]/g,""),10)||0;' +
+    '}' +
+    'if(!wowPrice){' +
+      'let wowJsonMatch=rawHtml.match(/"(?:wowPrice|couponPrice|membersPrice|wowMemberPrice)"\\s*:\\s*["\']?([\\d,]+)["\']?/i);' +
+      'if(wowJsonMatch)wowPrice=parseInt(wowJsonMatch[1].replace(/[^0-9]/g,""),10)||0;' +
+    '}' +
     'let name=nameEl.content||document.title;' +
     'let imgEl=document.querySelector("meta[property=\'og:image\']");' +
     'let image=imgEl?imgEl.content:"";' +
     'if(image&&image.startsWith("//"))image="https:"+image;' +
     'if(!window.hasScraped){' +
       'window.hasScraped=true;' +
-      'window.ReactNativeWebView.postMessage(JSON.stringify({type:"SCRAPE_SUCCESS",payload:{productId:productId,name:name,price:price,image:image}}));' +
+      'window.ReactNativeWebView.postMessage(JSON.stringify({type:"SCRAPE_SUCCESS",payload:{productId:productId,name:name,price:price,wowPrice:wowPrice,image:image}}));' +
     '}' +
   '},500);' +
   'true;';

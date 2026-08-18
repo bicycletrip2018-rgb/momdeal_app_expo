@@ -29,6 +29,8 @@ import { fetchGoldboxDeals, fetchBestCategoryProducts, fetchPersonalizedDeals, f
 import { getPosts } from '../services/communityService';
 import { COLORS } from '../constants/theme';
 import { useTracking } from '../context/TrackingContext';
+import { useUser } from '../context/UserContext';
+import { getEffectivePrice } from '../utils/priceDisplay';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -336,8 +338,11 @@ function HorizontalCard({ item, index, navigation, showRank = false, onPress }) 
     }
     navigation.navigate('Detail', { item });
   });
+  const { isWowMember } = useUser();
   const origPrice    = item.originalPrice ?? null;
-  const currentPrice = item.price ?? item.currentPrice ?? 0;
+  const effectivePrice = getEffectivePrice(item, isWowMember);
+  const currentPrice = effectivePrice.price ?? 0;
+  const isWow         = effectivePrice.isWow;
   const apiDiscount  = item.discountRate ?? item.discount ?? null;
   const calcDiscount = (origPrice != null && origPrice > currentPrice)
     ? Math.round(((origPrice - currentPrice) / origPrice) * 100) : null;
@@ -398,7 +403,10 @@ function HorizontalCard({ item, index, navigation, showRank = false, onPress }) 
             <Text style={{ fontSize: 16, color: '#EF4444', fontWeight: '900', marginRight: 4 }}>{discount}%</Text>
           )}
           <Text style={{ fontSize: 16, color: '#0F172A', fontWeight: '800' }} numberOfLines={1}>
-            ₩{currentPrice.toLocaleString('ko-KR')}
+            {isWow && (
+              <Text style={{ fontSize: 11, fontWeight: '800', color: '#fff', backgroundColor: '#2E6FF2', borderRadius: 3 }}> WOW </Text>
+            )}
+            {' '}₩{currentPrice.toLocaleString('ko-KR')}
           </Text>
           {origPrice != null && (
             <Text style={{ fontSize: 11, color: '#94A3B8', textDecorationLine: 'line-through', marginLeft: 4 }}>

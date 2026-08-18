@@ -10,6 +10,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { resolveAgingPriceDisplay } from '../utils/priceDisplay';
+import { useUser } from '../context/UserContext';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -123,9 +124,10 @@ export function TrackingCard({
   onLongPressActivate,
   onPress,
 }) {
+  const { isWowMember } = useUser();
   const pct       = resolveDiscountPct(item);
   const orig      = (item.currentPrice || 0) + (item.priceDrop || 0);
-  const aging     = resolveAgingPriceDisplay(item);
+  const aging     = resolveAgingPriceDisplay(item, isWowMember);
   const itemId    = item.productId ?? item.savedId;
   const isList    = viewMode === 'list';
   const isCompact = viewMode === 'grid3';
@@ -181,6 +183,7 @@ export function TrackingCard({
           {aging.mode === 'blind' ? (
             <View>
               <Text style={styles.currentPrice}>
+                {aging.isWow && <Text style={styles.wowTag}>WOW </Text>}
                 {aging.currentPrice != null ? `₩${aging.currentPrice.toLocaleString('ko-KR')}` : '—'}
               </Text>
               <Text style={styles.agingBlindText}>가격 추적 중. {aging.revealLabel}부터 할인율 노출</Text>
@@ -191,6 +194,7 @@ export function TrackingCard({
                 <Text style={styles.origPrice}>₩{aging.averagePrice.toLocaleString('ko-KR')}</Text>
               )}
               <Text style={styles.currentPrice}>
+                {aging.isWow && <Text style={styles.wowTag}>WOW </Text>}
                 {aging.currentPrice != null ? `₩${aging.currentPrice.toLocaleString('ko-KR')}` : '—'}
               </Text>
               {aging.discountPct != null && aging.discountPct > 0 && (
@@ -245,6 +249,7 @@ export function TrackingCard({
           {item.isRocket && <Text style={styles.compactRocket}>🚀</Text>}
           <Text style={styles.compactName} numberOfLines={2}>{item.name || '상품'}</Text>
           <Text style={styles.compactPrice}>
+            {aging.isWow && <Text style={styles.wowTag}>WOW </Text>}
             {aging.currentPrice != null ? `₩${aging.currentPrice.toLocaleString('ko-KR')}` : '—'}
           </Text>
           {aging.mode === 'blind' && (
@@ -287,6 +292,7 @@ export function TrackingCard({
         {aging.mode === 'blind' ? (
           <View>
             <Text style={styles.currentPrice}>
+              {aging.isWow && <Text style={styles.wowTag}>WOW </Text>}
               {aging.currentPrice != null ? `₩${aging.currentPrice.toLocaleString('ko-KR')}` : '—'}
             </Text>
             <Text style={styles.agingBlindText}>가격 추적 중{'\n'}{aging.revealLabel}부터 할인율 노출</Text>
@@ -298,6 +304,7 @@ export function TrackingCard({
                 <Text style={styles.origPrice}>₩{aging.averagePrice.toLocaleString('ko-KR')}</Text>
               )}
               <Text style={styles.currentPrice}>
+                {aging.isWow && <Text style={styles.wowTag}>WOW </Text>}
                 {aging.currentPrice != null ? `₩${aging.currentPrice.toLocaleString('ko-KR')}` : '—'}
               </Text>
             </View>
@@ -422,6 +429,7 @@ const styles = StyleSheet.create({
   priceRow:     { flexDirection: 'row', alignItems: 'center', gap: 4, flexWrap: 'wrap' },
   origPrice:    { fontSize: 11, color: '#cbd5e1', textDecorationLine: 'line-through' },
   currentPrice: { fontSize: 16, fontWeight: '800', color: '#0f172a' },
+  wowTag:       { fontSize: 11, fontWeight: '800', color: '#fff', backgroundColor: '#2E6FF2', paddingHorizontal: 4, borderRadius: 3 },
   trendBadge:    { fontSize: 12, fontWeight: '800', color: '#3b82f6', marginTop: 2 },
   trendBadgeUp:  { color: '#ef4444' },
 

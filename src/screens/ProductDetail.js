@@ -756,8 +756,10 @@ export default function ProductDetail({ route, navigation }) {
         const basePrice      = offerPrice ?? currentPrice ?? (displayPrice > 0 ? displayPrice : null);
         const averagePrice   = product?.averagePrice ?? null;
         const regularPrice   = basePrice;
-        const fallbackWowPrice = product?.wowPrice || (regularPrice != null ? Math.floor(regularPrice * 0.9) : null);
-        const displayedPrice = isWowMember && fallbackWowPrice != null ? fallbackWowPrice : regularPrice;
+        // Real Wow price only — captured client-side via GlobalMagicNudge's
+        // WebView scrape at registration time. Never invented from regularPrice.
+        const realWowPrice   = typeof product?.wowPrice === 'number' && product.wowPrice > 0 ? product.wowPrice : null;
+        const displayedPrice = isWowMember && realWowPrice != null ? realWowPrice : regularPrice;
         const discountRate   = (averagePrice != null && averagePrice > 0 && displayedPrice != null && averagePrice > displayedPrice)
           ? Math.round(((averagePrice - displayedPrice) / averagePrice) * 100) : null;
 
@@ -790,13 +792,13 @@ export default function ProductDetail({ route, navigation }) {
               })()}
             </View>
 
-            {!isWowMember && fallbackWowPrice != null && (
+            {!isWowMember && realWowPrice != null && (
               <View style={{ backgroundColor: '#EFF6FF', borderRadius: 12, padding: 18, marginHorizontal: 20, marginBottom: 24, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
                 <Text style={{ fontSize: 14, color: '#1E3A8A', fontWeight: '700', flex: 1 }}>
-                  쿠팡 와우 회원은 {fallbackWowPrice.toLocaleString('ko-KR')}원에 살 수 있어요!
+                  쿠팡 와우 회원은 {realWowPrice.toLocaleString('ko-KR')}원에 살 수 있어요!
                 </Text>
                 <TouchableOpacity onPress={() => setIsWowMember(true)} activeOpacity={0.8}>
-                  <Text style={{ fontSize: 13, color: '#2E6FF2', fontWeight: 'bold' }}>회원가입/변경 ➔</Text>
+                  <Text style={{ fontSize: 13, color: '#2E6FF2', fontWeight: 'bold' }}>나도 와우회원이에요 ➔</Text>
                 </TouchableOpacity>
               </View>
             )}

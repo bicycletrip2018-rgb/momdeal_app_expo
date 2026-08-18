@@ -22,6 +22,8 @@ import { collection, getDocs, query, where } from 'firebase/firestore';
 import { auth, db } from '../firebase/config';
 import { recordProductAction } from '../services/productActionService';
 import { fetchBestCategoryProducts, searchCoupangProducts } from '../services/coupangApiService';
+import { useUser } from '../context/UserContext';
+import { getEffectivePrice } from '../utils/priceDisplay';
 
 // ─── All categories (bottom sheet) ───────────────────────────────────────────
 // Real Coupang categoryId for the 3 primary (cohort tab) categories; the rest
@@ -75,9 +77,11 @@ function resolveTabLabel(cat, child) {
 // ─── Sub-component: RankItem ──────────────────────────────────────────────────
 
 function RankItem({ item, rank, navigation }) {
+  const { isWowMember } = useUser();
   const medalColors = { 1: '#FBBF24', 2: '#94A3B8', 3: '#B45309' };
   const medalBg = medalColors[rank];
   const discountPct = item.discountRate ?? item.discount ?? null;
+  const { price: displayPrice, isWow } = getEffectivePrice(item, isWowMember);
 
   return (
     <TouchableOpacity
@@ -121,7 +125,10 @@ function RankItem({ item, rank, navigation }) {
             </Text>
           )}
           <Text style={{ fontSize: 16, fontWeight: '800', color: '#111827' }}>
-            ₩{(item.currentPrice ?? 0).toLocaleString('ko-KR')}
+            {isWow && (
+              <Text style={{ fontSize: 11, fontWeight: '800', color: '#fff', backgroundColor: '#2E6FF2', borderRadius: 3 }}> WOW </Text>
+            )}
+            {' '}₩{(displayPrice ?? 0).toLocaleString('ko-KR')}
           </Text>
           {item.isRocket && (
             <Text style={{ fontSize: 10, color: '#2E6FF2', fontWeight: '700', borderWidth: 1, borderColor: '#BFDBFE', borderRadius: 3, paddingHorizontal: 4, paddingVertical: 1 }}>로켓배송</Text>
