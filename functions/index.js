@@ -7,7 +7,6 @@ const { onSchedule } = require("firebase-functions/v2/scheduler");
 const { onDocumentCreated } = require("firebase-functions/v2/firestore");
 const admin = require("firebase-admin");
 const fetch = require("node-fetch");
-const crawler = require("./crawlerService");
 const cheerio = require("cheerio");
 
 // ─── RULE-12: Segment derivation (server-side mirror of saveService.js) ───────
@@ -1201,12 +1200,12 @@ exports.registerProductFromUrl = functions.https.onCall(async (request) => {
 // ---------------------------------------------------------------------------
 // registerProductFromHtml
 // ---------------------------------------------------------------------------
-// scrapeProductDetails — server-side Puppeteer scraping endpoint
+// scrapeProductDetails — official-API-only product lookup endpoint
 //
-// Uses puppeteer-core + @sparticuz/chromium (serverless Chrome) +
-// puppeteer-extra-plugin-stealth to bypass Coupang WAF bot detection.
-// Proxy support: set PROXY_URL env var (e.g. Brightdata / Oxylabs residential
-// proxy) to route through a residential IP — required for GCP IP ranges.
+// Was a Puppeteer + stealth-plugin WAF-bypass scraper; replaced with an
+// official-API-only implementation (Partners deeplink API, then Partners
+// search-by-ID API as fallback) — no browser automation, no proxy, no
+// bot-detection evasion. Returns 503/RETRY_REQUIRED if both fail.
 //
 // Input:  { url: string }
 // Output: { productGroupId, market, originalId, name, price, image,
@@ -1254,19 +1253,11 @@ const scrapeWriteAndReturn = async (res, originalId, details, source) => {
 };
 
 exports.scrapeProductDetails = onRequest(
-  { timeoutSeconds: 120, memory: "2GiB" },
+  { timeoutSeconds: 30, memory: "256MiB" },
   (req, res) => {
     const cors = require("cors")({ origin: true });
     cors(req, res, async () => {
-      let browser = null;
       try {
-        const puppeteer = require("puppeteer-core");
-        const chromium  = require("@sparticuz/chromium");
-
-        if (!process.env.PROXY_URL) throw new Error("PROXY_URL secret missing");
-        const proxyParsed = new URL(process.env.PROXY_URL);
-        const proxyHost   = `${proxyParsed.protocol}//${proxyParsed.host}`;
-
         const accessKey = process.env.COUPANG_ACCESS_KEY;
         const secretKey = process.env.COUPANG_SECRET_KEY;
 
@@ -1278,131 +1269,56 @@ exports.scrapeProductDetails = onRequest(
           return res.status(422).json({ error: "상품 ID 추출 실패", debug_url: targetUrl });
         }
         const originalId = urlMatch[1];
-        const mobileUrl  = `https://m.coupang.com/vm/products/${originalId}`;
-        console.log("[V8] Target:", mobileUrl);
+        console.log("[scrapeProductDetails] Target productId:", originalId);
 
-        // ── Step 1: Partners deeplink API (fastest — no Puppeteer needed) ─────────
-        if (accessKey && secretKey) {
-          console.log("[V8] Trying Partners deeplink API...");
-          const partnersResult = await tryPartnersApi(originalId, accessKey, secretKey).catch((err) => { console.error("[V8] Partners API Network Error:", err.message); return null; });
-          if (partnersResult?.price > 0) {
-            console.log("[V8] Partners API success, price:", partnersResult.price);
-            return await scrapeWriteAndReturn(res, originalId, partnersResult, "partners_deeplink");
-          }
-          console.log("[V8] Partners API failed, falling to mobile Puppeteer");
+        if (!accessKey || !secretKey) {
+          return res.status(503).json({ error: "API keys not configured" });
         }
 
-        // ── Step 2: Mobile Puppeteer — iPhone 13 Pro Max emulation ───────────────
-        browser = await puppeteer.launch({
-          args: [
-            ...chromium.args,
-            `--proxy-server=${proxyHost}`,
-            "--ignore-certificate-errors",
-            "--ignore-certificate-errors-spki-list",
-          ],
-          defaultViewport:   { width: 390, height: 844, isMobile: true, hasTouch: true, deviceScaleFactor: 3 },
-          executablePath:    await chromium.executablePath(),
-          headless:          chromium.headless,
-          ignoreHTTPSErrors: true,
-        });
-
-        const page = await browser.newPage();
-        await page.authenticate({ username: proxyParsed.username, password: proxyParsed.password });
-
-        await page.setUserAgent(
-          "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
-        );
-
-        await page.setExtraHTTPHeaders({
-          "Accept-Language":           "ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7",
-          "Accept":                    "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-          "sec-ch-ua":                 '"Not_A Brand";v="8", "Chromium";v="120"',
-          "sec-ch-ua-mobile":          "?1",
-          "sec-ch-ua-platform":        '"iOS"',
-          "sec-fetch-dest":            "document",
-          "sec-fetch-mode":            "navigate",
-          "sec-fetch-site":            "none",
-          "sec-fetch-user":            "?1",
-          "upgrade-insecure-requests": "1",
-        });
-
-        await page.evaluateOnNewDocument(() => {
-          Object.defineProperty(navigator, "webdriver",           { get: () => false });
-          Object.defineProperty(navigator, "languages",           { get: () => ["ko-KR", "ko", "en-US", "en"] });
-          Object.defineProperty(navigator, "hardwareConcurrency", { get: () => 6 });
-          Object.defineProperty(navigator, "deviceMemory",        { get: () => 4 });
-          ["__nightmare", "_phantom", "__webdriver_script_fn", "__selenium_evaluate",
-           "callSelenium", "_Selenium_IDE_Recorder"].forEach((k) => { try { delete window[k]; } catch (_) {} });
-        });
-
-        let mobileDetails = null;
-        try {
-          await page.goto(mobileUrl, { waitUntil: "domcontentloaded", timeout: 10000 });
-          const html = await page.content();
-          console.log(`[V8] Mobile HTML bytes: ${html.length}`);
-
-          if (html.length > 500) {
-            await Promise.race([
-              page.waitForSelector(".price-value",            { timeout: 6000 }),
-              page.waitForSelector("#couponPriceValue",       { timeout: 6000 }),
-              page.waitForSelector(".prod-price",             { timeout: 6000 }),
-              page.waitForSelector("[class*='priceValue']",   { timeout: 6000 }),
-              page.waitForSelector("meta[property='product:price:amount']", { timeout: 6000 }),
-            ]).catch(() => {});
-
-            const fullHtml = await page.content();
-            const extracted = extractFromHtml(fullHtml);
-            if (extracted?.price > 0) {
-              console.log("[V8] Mobile scrape success, price:", extracted.price);
-              mobileDetails = extracted;
-            }
-          }
-        } catch (navErr) {
-          console.log("[V8] Mobile nav error:", navErr.message);
+        // ── Step 1: Partners deeplink API ─────────────────────────────────────────
+        console.log("[scrapeProductDetails] Trying Partners deeplink API...");
+        const partnersResult = await tryPartnersApi(originalId, accessKey, secretKey).catch((err) => { console.error("[scrapeProductDetails] Partners API error:", err.message); return null; });
+        if (partnersResult?.price > 0) {
+          console.log("[scrapeProductDetails] Partners API success, price:", partnersResult.price);
+          return await scrapeWriteAndReturn(res, originalId, partnersResult, "partners_deeplink");
         }
 
-        if (mobileDetails) {
-          return await scrapeWriteAndReturn(res, originalId, mobileDetails, "mobile_puppeteer");
-        }
-
-        // ── Step 3: Partners search API fallback ──────────────────────────────────
+        // ── Step 2: Partners search API fallback ──────────────────────────────────
         // Use explicit versioned path /v1/products/search — the unversioned SEARCH_PATH
         // constant causes a server-side redirect; fetch follows it but the Authorization
         // header carries the signature for the original path → HMAC mismatch → 401.
-        if (accessKey && secretKey) {
-          console.log("[V8] Mobile failed, trying Partners search API for id:", originalId);
-          try {
-            const SEARCH_PATH_V1 = "/v2/providers/affiliate_open_api/apis/openapi/v1/products/search";
-            const searchPath     = `${SEARCH_PATH_V1}?keyword=${encodeURIComponent(originalId)}&limit=5`;
-            const searchRes      = await fetch(`https://api-gateway.coupang.com${searchPath}`, {
-              redirect: "follow",
-              headers: {
-                Authorization: buildPartnersAuth("GET", SEARCH_PATH_V1, accessKey, secretKey),
-                "Accept":      "application/json;charset=UTF-8",
-              },
-            });
-            console.log("[V8] Search API HTTP status:", searchRes.status, "final url:", searchRes.url);
-            if (searchRes.ok) {
-              const searchJson = await searchRes.json();
-              console.log("[V8] Search API rCode:", searchJson?.rCode, "rMessage:", searchJson?.rMessage);
-              const items = searchJson?.data?.productData ?? [];
-              const match = items.find((i) => String(i.productId) === String(originalId)) ?? items[0] ?? null;
-              if (match && match.productPrice > 0) {
-                console.log("[V8] Search API fallback success, price:", match.productPrice);
-                return await scrapeWriteAndReturn(res, originalId, {
-                  name:  match.productName,
-                  price: match.productPrice,
-                  image: typeof match.productImage === "string" ? match.productImage : null,
-                  isOutOfStock: false,
-                }, "search_api_fallback");
-              }
-            } else {
-              const errBody = await searchRes.text().catch(() => "");
-              console.error("[V8] Search API HTTP Error:", searchRes.status, errBody.slice(0, 200));
+        console.log("[scrapeProductDetails] Deeplink failed, trying Partners search API for id:", originalId);
+        try {
+          const SEARCH_PATH_V1 = "/v2/providers/affiliate_open_api/apis/openapi/v1/products/search";
+          const searchPath     = `${SEARCH_PATH_V1}?keyword=${encodeURIComponent(originalId)}&limit=5`;
+          const searchRes      = await fetch(`https://api-gateway.coupang.com${searchPath}`, {
+            redirect: "follow",
+            headers: {
+              Authorization: buildPartnersAuth("GET", SEARCH_PATH_V1, accessKey, secretKey),
+              "Accept":      "application/json;charset=UTF-8",
+            },
+          });
+          console.log("[scrapeProductDetails] Search API HTTP status:", searchRes.status, "final url:", searchRes.url);
+          if (searchRes.ok) {
+            const searchJson = await searchRes.json();
+            console.log("[scrapeProductDetails] Search API rCode:", searchJson?.rCode, "rMessage:", searchJson?.rMessage);
+            const items = searchJson?.data?.productData ?? [];
+            const match = items.find((i) => String(i.productId) === String(originalId)) ?? items[0] ?? null;
+            if (match && match.productPrice > 0) {
+              console.log("[scrapeProductDetails] Search API fallback success, price:", match.productPrice);
+              return await scrapeWriteAndReturn(res, originalId, {
+                name:  match.productName,
+                price: match.productPrice,
+                image: typeof match.productImage === "string" ? match.productImage : null,
+                isOutOfStock: false,
+              }, "search_api_fallback");
             }
-          } catch (searchErr) {
-            console.error("[V8] Search API Network Error:", searchErr.message);
+          } else {
+            const errBody = await searchRes.text().catch(() => "");
+            console.error("[scrapeProductDetails] Search API HTTP Error:", searchRes.status, errBody.slice(0, 200));
           }
+        } catch (searchErr) {
+          console.error("[scrapeProductDetails] Search API Network Error:", searchErr.message);
         }
 
         return res.status(503).json({ error: "RETRY_REQUIRED: 쿠팡 서버가 응답이 느립니다. 다시 한번 시도해주세요." });
@@ -1410,8 +1326,6 @@ exports.scrapeProductDetails = onRequest(
       } catch (err) {
         console.error("Scrape error:", err.message);
         res.status(500).json({ error: err.message });
-      } finally {
-        if (browser) await browser.close().catch(console.error);
       }
     });
   }
@@ -2012,51 +1926,6 @@ exports.onReviewCreate = onDocumentCreated("reviews/{reviewId}", async (event) =
 // ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
-// crawlerTier1 — every 1 hour
-// Target: high-priority products with recent user engagement (views/clicks).
-// ---------------------------------------------------------------------------
-
-exports.crawlerTier1 = onSchedule("every 1 hours", async () => {
-  try {
-    const result = await crawler.syncHighPriority();
-    console.log("[crawlerTier1] completed:", JSON.stringify(result));
-  } catch (err) {
-    console.error("[crawlerTier1] fatal error:", err.message);
-  }
-  return null;
-});
-
-// ---------------------------------------------------------------------------
-// crawlerTier2 — every 6 hours
-// Target: all active category-best products that haven't been crawled in 6 h.
-// ---------------------------------------------------------------------------
-
-exports.crawlerTier2 = onSchedule("every 6 hours", async () => {
-  try {
-    const result = await crawler.syncCategoryBest();
-    console.log("[crawlerTier2] completed:", JSON.stringify(result));
-  } catch (err) {
-    console.error("[crawlerTier2] fatal error:", err.message);
-  }
-  return null;
-});
-
-// ---------------------------------------------------------------------------
-// globalSync — daily at 00:05 KST (= 15:05 UTC)
-// Target: every active product in the products collection.
-// ---------------------------------------------------------------------------
-
-exports.globalSync = onSchedule({ schedule: "5 15 * * *", timeZone: "UTC" }, async () => {
-  try {
-    const result = await crawler.syncAllProducts();
-    console.log("[globalSync] completed:", JSON.stringify(result));
-  } catch (err) {
-    console.error("[globalSync] fatal error:", err.message);
-  }
-  return null;
-});
-
-// ---------------------------------------------------------------------------
 // scheduledDailyPriceCheck — daily at 02:00 KST (= 17:00 UTC)
 // Loops all active products, scrapes current price, appends to priceHistory
 // array on the product doc, and flags drops > 5% for push notifications.
@@ -2202,3 +2071,4 @@ exports.handleShareLink = functions.https.onRequest(async (req, res) => {
     return res.redirect(302, fallbackUrl);
   }
 });
+
