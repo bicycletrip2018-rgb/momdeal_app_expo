@@ -4,7 +4,7 @@ const functions = require("firebase-functions");
 const { onCall, onRequest, HttpsError } = require("firebase-functions/v2/https");
 const corsMiddleware = require("cors")({ origin: true });
 const { onSchedule } = require("firebase-functions/v2/scheduler");
-const { onDocumentCreated } = require("firebase-functions/v2/firestore");
+const { onDocumentCreated, onDocumentDeleted } = require("firebase-functions/v2/firestore");
 const admin = require("firebase-admin");
 const fetch = require("node-fetch");
 const cheerio = require("cheerio");
@@ -1532,14 +1532,14 @@ exports.scheduledPriceUpdate = onSchedule("every 3 hours", async () => {
     // ── Step 1a: build Tier A from actual save/track relationships ───────────
     // This is the primary Tier A signal — a saved item should stay fresh
     // even if the owner hasn't opened the app to "view" it again recently.
+    // Uses the savedCount counter (maintained by onSavedProductCreate/Delete)
+    // instead of scanning all of user_saved_products every 3 hours.
     const savedProductsSnap = await firestoreDb
-      .collection("user_saved_products")
-      .select("productGroupId")
+      .collection("products")
+      .where("savedCount", ">", 0)
+      .select()
       .get();
-    savedProductsSnap.docs.forEach((d) => {
-      const pid = d.data().productGroupId;
-      if (pid) tierAIds.add(pid);
-    });
+    savedProductsSnap.docs.forEach((d) => tierAIds.add(d.id));
 
     // ── Step 1b: also fold in recently-viewed products (browsing signal,   ──
     // not yet saved) — single-field range query on createdAt, no composite
@@ -2114,6 +2114,71 @@ exports.scheduledDailyPriceCheck = onSchedule({ schedule: "0 17 * * *", timeZone
   }
 
   console.log(`[scheduledDailyPriceCheck] done — updated=${updated} drops=${dropped} total=${docs.length}`);
+  return null;
+});
+
+// ---------------------------------------------------------------------------
+// onSavedProductCreate / onSavedProductDelete
+//
+// Maintain two denormalized counters on write, instead of every consumer
+// full-scanning user_saved_products on every read:
+//   1. products/{id}.savedCount — lets scheduledPriceUpdate's Tier A query
+//      become `products where savedCount > 0` (indexed) instead of scanning
+//      the entire user_saved_products collection every 3 hours.
+//   2. segment_popularity/{segment}_{productId}.count — lets "또래 추천"
+//      (getPeerPopularityMap) query `segment_popularity where segment==X`
+//      (one doc per segment×product, already deduplicated) instead of
+//      scanning every save in that segment.
+// Both counters are best-effort — a missed decrement just means a stale
+// (slightly high) count, never a broken query, so failures here are logged
+// and swallowed rather than retried.
+// ---------------------------------------------------------------------------
+
+exports.onSavedProductCreate = onDocumentCreated("user_saved_products/{docId}", async (event) => {
+  const data = event.data?.data();
+  const { productGroupId, userSegment } = data || {};
+  if (!productGroupId) return null;
+
+  const firestoreDb = admin.firestore();
+  const writes = [
+    firestoreDb.collection("products").doc(productGroupId).set(
+      { savedCount: admin.firestore.FieldValue.increment(1) },
+      { merge: true }
+    ),
+  ];
+  if (userSegment && userSegment !== "unknown_segment") {
+    writes.push(
+      firestoreDb.collection("segment_popularity").doc(`${userSegment}_${productGroupId}`).set(
+        { segment: userSegment, productGroupId, count: admin.firestore.FieldValue.increment(1) },
+        { merge: true }
+      )
+    );
+  }
+  await Promise.all(writes).catch((err) => console.error("onSavedProductCreate:", err.message));
+  return null;
+});
+
+exports.onSavedProductDelete = onDocumentDeleted("user_saved_products/{docId}", async (event) => {
+  const data = event.data?.data();
+  const { productGroupId, userSegment } = data || {};
+  if (!productGroupId) return null;
+
+  const firestoreDb = admin.firestore();
+  const writes = [
+    firestoreDb.collection("products").doc(productGroupId).set(
+      { savedCount: admin.firestore.FieldValue.increment(-1) },
+      { merge: true }
+    ),
+  ];
+  if (userSegment && userSegment !== "unknown_segment") {
+    writes.push(
+      firestoreDb.collection("segment_popularity").doc(`${userSegment}_${productGroupId}`).set(
+        { segment: userSegment, productGroupId, count: admin.firestore.FieldValue.increment(-1) },
+        { merge: true }
+      )
+    );
+  }
+  await Promise.all(writes).catch((err) => console.error("onSavedProductDelete:", err.message));
   return null;
 });
 

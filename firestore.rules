@@ -153,6 +153,14 @@ service cloud.firestore {
       }
     }
 
+    // Denormalized per-segment save counters (또래 추천) — written only by
+    // the onSavedProductCreate/Delete Cloud Functions (Admin SDK bypasses
+    // rules entirely), never directly by clients.
+    match /segment_popularity/{docId} {
+      allow read: if true;
+      allow write: if false;
+    }
+
     // Anything not explicitly matched above is closed by default (no
     // implicit allow-all fallback).
   }

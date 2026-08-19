@@ -95,22 +95,30 @@ export async function getCurrentUserSegment(userId) {
 
 // ─── getPeerPopularityMap ───────────────────────────────────────────────────────
 //
-// Counts how many *other* users in the given segment have saved each product —
-// feeds the "또래 추천" curation box. 'unknown_segment' never counts as a real
-// peer group (it's the "no child profile yet" bucket, not a comparable cohort),
+// Counts how many users in the given segment have saved each product — feeds
+// the "또래 추천" curation box. 'unknown_segment' never counts as a real peer
+// group (it's the "no child profile yet" bucket, not a comparable cohort),
 // so it always returns empty rather than a meaningless match.
+//
+// Reads the segment_popularity counter (one doc per segment×product,
+// maintained by the onSavedProductCreate/Delete Cloud Functions) instead of
+// scanning every user_saved_products doc in the segment on every call — a
+// segment's popularity data doesn't grow with total saves, just distinct
+// products, so this stays cheap as the user base grows. Trade-off: the count
+// includes the requesting user's own save (no per-user exclusion in a
+// pre-aggregated counter) — negligible at the ≥2 threshold curationFilters.js
+// applies.
 
-export async function getPeerPopularityMap(userSegment, excludeUserId) {
+export async function getPeerPopularityMap(userSegment) {
   if (!userSegment || userSegment === 'unknown_segment') return {};
   const snap = await getDocs(
-    query(collection(db, 'user_saved_products'), where('userSegment', '==', userSegment))
+    query(collection(db, 'segment_popularity'), where('segment', '==', userSegment))
   );
   const counts = {};
   snap.docs.forEach((d) => {
     const data = d.data();
-    if (excludeUserId && data.userId === excludeUserId) return;
     if (!data.productGroupId) return;
-    counts[data.productGroupId] = (counts[data.productGroupId] || 0) + 1;
+    counts[data.productGroupId] = data.count ?? 0;
   });
   return counts;
 }

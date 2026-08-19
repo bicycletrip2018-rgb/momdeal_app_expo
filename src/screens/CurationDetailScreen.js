@@ -198,7 +198,7 @@ export default function CurationDetailScreen({ route, navigation }) {
         getCurrentUserSegment(uid),
         getPurchaseFrequencyMap(uid),
       ]);
-      const peerMap = await getPeerPopularityMap(segment, uid);
+      const peerMap = await getPeerPopularityMap(segment);
       if (cancelled) return;
       setPeerCounts(peerMap);
       setPurchaseCounts(purchaseMap);
