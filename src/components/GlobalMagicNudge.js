@@ -102,9 +102,20 @@ const SCRAPE_SCRIPT =
     'let imgEl=document.querySelector("meta[property=\'og:image\']");' +
     'let image=imgEl?imgEl.content:"";' +
     'if(image&&image.startsWith("//"))image="https:"+image;' +
-    'let isRocket=/"isRocket"\\s*:\\s*true/.test(rawHtml)||/"rocketDelivery"\\s*:\\s*true/.test(rawHtml);' +
-    'let isFresh=/"isFresh"\\s*:\\s*true/.test(rawHtml);' +
-    'let deliveryType=isFresh?"fresh":isRocket?"rocket":"normal";' +
+    // Delivery badge — checked against the page's VISIBLE text first (what
+    // the screenshot actually shows: "🚀 판매자로켓" or "🚀 로켓배송"), since
+    // that's more reliable than guessing JSON key names we can't verify live
+    // (coupang.com browsing is blocked for direct inspection here). The old
+    // isRocket/rocketDelivery JSON-key check stays as a secondary fallback —
+    // it only ever covers Coupang's own 로켓배송, never 판매자로켓, which is
+    // why it was previously missing sellers using Coupang's merchant-rocket
+    // program despite them showing a rocket badge on the real page.
+    'let bodyText=document.body.innerText||"";' +
+    'let deliveryType="normal";' +
+    'if(/판매자\\s*로켓/.test(bodyText)){deliveryType="rocketSeller";}' +
+    'else if(/로켓\\s*프레시/.test(bodyText)||/"isFresh"\\s*:\\s*true/.test(rawHtml)){deliveryType="fresh";}' +
+    'else if(/로켓\\s*배송/.test(bodyText)||/"isRocket"\\s*:\\s*true/.test(rawHtml)||/"rocketDelivery"\\s*:\\s*true/.test(rawHtml)){deliveryType="rocket";}' +
+    'let isRocket=deliveryType==="rocket"||deliveryType==="rocketSeller";' +
     'let specMatch=name.match(/\\d+\\.?\\d*\\s*(g|ml|kg|L|리터|개|롤|매|팩|정|캡슐|포|박스)/ig);' +
     'let spec=specMatch?Array.from(new Set(specMatch)).join(" / "):null;' +
     'let brandSelectors=["[class*=\'brand-name\']","[class*=\'seller-name\']","[class*=\'prod-brand\']"];' +

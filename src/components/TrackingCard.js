@@ -106,6 +106,9 @@ function DeliveryBadge({ deliveryType }) {
   if (deliveryType === 'rocket') {
     return <Text style={[styles.deliveryBadge, { color: '#3b82f6' }]}>🚀 로켓배송</Text>;
   }
+  if (deliveryType === 'rocketSeller') {
+    return <Text style={[styles.deliveryBadge, { color: '#e8590c' }]}>🚀 판매자로켓</Text>;
+  }
   if (deliveryType === 'fresh') {
     return <Text style={[styles.deliveryBadge, { color: '#16a34a' }]}>🌿 로켓프레시</Text>;
   }
