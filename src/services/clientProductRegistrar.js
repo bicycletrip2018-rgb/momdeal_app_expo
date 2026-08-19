@@ -16,6 +16,9 @@ import { recordPrice } from './priceTrackingService';
 function cleanName(raw) {
   return String(raw || '쿠팡 상품')
     .replace(/\[LIVE서버\]|\[API 브릿지 우회\]/g, '')
+    // Coupang's <title>/og:title carries a trailing " | 쿠팡" site suffix —
+    // meaningless noise once we only compare Coupang prices in-app anyway.
+    .replace(/\s*\|\s*쿠팡\s*$/, '')
     .trim() || '쿠팡 상품';
 }
 
@@ -38,6 +41,12 @@ export async function registerProductFromClient(productId, details, uid) {
   const isRocket     = details.isRocket === true;
   const deliveryType = typeof details.deliveryType === 'string' ? details.deliveryType : 'normal';
   const spec         = typeof details.spec === 'string' && details.spec.trim() ? details.spec.trim() : null;
+  // Real scraped brand when the page exposed one; otherwise the leading
+  // word of the (already-cleaned) name is a decent approximation — Korean
+  // Coupang listings are almost always titled "브랜드 상품명...".
+  const brand        = (typeof details.brand === 'string' && details.brand.trim())
+    ? details.brand.trim()
+    : (name.split(' ')[0] || null);
 
   console.log('[Registrar] Writing product doc:', productGroupId, '| isNew:', isNew, '| price:', price, '| wowPrice:', wowPrice);
 
@@ -52,6 +61,7 @@ export async function registerProductFromClient(productId, details, uid) {
     isRocket,
     deliveryType,
     ...(spec != null ? { spec } : {}),
+    ...(brand != null ? { brand } : {}),
     isOutOfStock: false,
     stockStatus:  'in_stock',
     status:       'active',

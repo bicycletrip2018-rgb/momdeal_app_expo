@@ -165,6 +165,7 @@ export default function TrackingListScreen({ navigation }) {
                 productId:        link.productGroupId,
                 savedId:          link.savedId,
                 name:             p.name         ?? '상품',
+                brand:            p.brand        ?? null,
                 image:            p.image        ?? null,
                 currentPrice:     intel?.currentPrice ?? p.currentPrice ?? 0,
                 wowPrice:         p.wowPrice ?? null,

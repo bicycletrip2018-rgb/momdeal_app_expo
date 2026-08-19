@@ -107,9 +107,19 @@ const SCRAPE_SCRIPT =
     'let deliveryType=isFresh?"fresh":isRocket?"rocket":"normal";' +
     'let specMatch=name.match(/\\d+\\.?\\d*\\s*(g|ml|kg|L|리터|개|롤|매|팩|정|캡슐|포|박스)/ig);' +
     'let spec=specMatch?Array.from(new Set(specMatch)).join(" / "):null;' +
+    'let brandSelectors=["[class*=\'brand-name\']","[class*=\'seller-name\']","[class*=\'prod-brand\']"];' +
+    'let brand=null;' +
+    'for(let i=0;i<brandSelectors.length;i++){' +
+      'let bEl=document.querySelector(brandSelectors[i]);' +
+      'if(bEl&&bEl.textContent&&bEl.textContent.trim()){brand=bEl.textContent.trim();break;}' +
+    '}' +
+    'if(!brand){' +
+      'let brandJsonMatch=rawHtml.match(/"(?:brandName|sellerName)"\\s*:\\s*"([^"]{1,60})"/);' +
+      'if(brandJsonMatch)brand=brandJsonMatch[1].trim();' +
+    '}' +
     'if(!window.hasScraped){' +
       'window.hasScraped=true;' +
-      'window.ReactNativeWebView.postMessage(JSON.stringify({type:"SCRAPE_SUCCESS",payload:{productId:productId,name:name,price:price,wowPrice:wowPrice,image:image,isRocket:isRocket,deliveryType:deliveryType,spec:spec}}));' +
+      'window.ReactNativeWebView.postMessage(JSON.stringify({type:"SCRAPE_SUCCESS",payload:{productId:productId,name:name,price:price,wowPrice:wowPrice,image:image,isRocket:isRocket,deliveryType:deliveryType,spec:spec,brand:brand}}));' +
     '}' +
   '},500);' +
   'true;';

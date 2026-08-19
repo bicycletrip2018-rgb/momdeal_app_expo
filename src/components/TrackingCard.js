@@ -164,7 +164,7 @@ export function TrackingCard({
         </View>
 
         <View style={styles.listBody}>
-          <Text style={styles.sourceBadge}>C 쿠팡</Text>
+          {item.brand ? <Text style={styles.sourceBadge} numberOfLines={1}>{item.brand}</Text> : null}
           <DeliveryBadge deliveryType={item.deliveryType} />
           {(item.isFavorite || item.isPriceAlertOn || item.isRestockAlertOn) && (
             <View style={styles.listStatusRow}>
@@ -287,7 +287,7 @@ export function TrackingCard({
       </View>
 
       <View style={styles.body}>
-        <Text style={styles.sourceBadge}>C 쿠팡</Text>
+        {item.brand ? <Text style={styles.sourceBadge} numberOfLines={1}>{item.brand}</Text> : null}
         <DeliveryBadge deliveryType={item.deliveryType} />
         <Text style={styles.name} numberOfLines={2}>{item.name || '상품'}</Text>
         {item.spec && <Text style={styles.specText} numberOfLines={1}>{item.spec}</Text>}

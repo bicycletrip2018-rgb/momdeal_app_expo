@@ -59,7 +59,7 @@ function withTimeout(promise, ms) {
 
 const forceHttps = (url) => url ? String(url).replace(/^http:\/\//i, 'https://') : null;
 const pickImage  = (item) => forceHttps(item.productImage || item.image || item.imageUrl || null);
-const cleanName  = (raw)  => String(raw || '쿠팡 상품').replace(/\[LIVE서버\]|\[API 브릿지 우회\]/g, '').trim() || '쿠팡 상품';
+const cleanName  = (raw)  => String(raw || '쿠팡 상품').replace(/\[LIVE서버\]|\[API 브릿지 우회\]/g, '').replace(/\s*\|\s*쿠팡\s*$/, '').trim() || '쿠팡 상품';
 
 // Server-side mirror of priceTrackingService.js's _updateDailyPrice — keeps
 // products/{id}/daily_prices/{date} populated from scheduled price checks too,
