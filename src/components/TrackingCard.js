@@ -167,8 +167,12 @@ export function TrackingCard({
         </View>
 
         <View style={styles.listBody}>
-          {item.brand ? <Text style={styles.sourceBadge} numberOfLines={1}>{item.brand}</Text> : null}
-          <DeliveryBadge deliveryType={item.deliveryType} />
+          {(item.brand || item.deliveryType) && (
+            <View style={styles.brandRow}>
+              {item.brand ? <Text style={styles.brandText} numberOfLines={1}>{item.brand}</Text> : null}
+              <DeliveryBadge deliveryType={item.deliveryType} />
+            </View>
+          )}
           {(item.isFavorite || item.isPriceAlertOn || item.isRestockAlertOn) && (
             <View style={styles.listStatusRow}>
               {item.isFavorite && (
@@ -290,8 +294,12 @@ export function TrackingCard({
       </View>
 
       <View style={styles.body}>
-        {item.brand ? <Text style={styles.sourceBadge} numberOfLines={1}>{item.brand}</Text> : null}
-        <DeliveryBadge deliveryType={item.deliveryType} />
+        {(item.brand || item.deliveryType) && (
+          <View style={styles.brandRow}>
+            {item.brand ? <Text style={styles.brandText} numberOfLines={1}>{item.brand}</Text> : null}
+            <DeliveryBadge deliveryType={item.deliveryType} />
+          </View>
+        )}
         <Text style={styles.name} numberOfLines={2}>{item.name || '상품'}</Text>
         {item.spec && <Text style={styles.specText} numberOfLines={1}>{item.spec}</Text>}
         {aging.mode === 'blind' ? (
@@ -374,7 +382,7 @@ const styles = StyleSheet.create({
   },
 
   // Delivery badge
-  deliveryBadge: { fontSize: 11, fontWeight: '700', marginBottom: 3 },
+  deliveryBadge: { fontSize: 11, fontWeight: '700' },
 
   // Checkbox (edit mode)
   checkbox: {
@@ -429,7 +437,8 @@ const styles = StyleSheet.create({
   },
 
   // Shared body typography
-  sourceBadge:  { fontSize: 10, fontWeight: '700', color: '#64748b', marginBottom: 2 },
+  brandRow:     { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 3 },
+  brandText:    { fontSize: 13, fontWeight: '800', color: '#475569' },
   name:         { fontSize: 13, fontWeight: '600', color: '#334155', lineHeight: 18, marginBottom: 4 },
   specText:     { fontSize: 11, color: '#94a3b8', marginBottom: 4 },
   priceRow:     { flexDirection: 'row', alignItems: 'center', gap: 4, flexWrap: 'wrap' },
