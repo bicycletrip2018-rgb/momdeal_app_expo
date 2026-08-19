@@ -142,6 +142,15 @@ service cloud.firestore {
         allow create, update: if isSignedIn();
         allow delete: if isAdmin();
       }
+
+      // Daily max/min price bucket — written client-side on registration
+      // (priceTrackingService.recordPrice) in addition to the scheduled
+      // server-side price checks. Same residual-risk note as offers above.
+      match /daily_prices/{dateId} {
+        allow read: if true;
+        allow create, update: if isSignedIn();
+        allow delete: if isAdmin();
+      }
     }
 
     match /product_price_history/{docId} {

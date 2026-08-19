@@ -61,6 +61,28 @@ const forceHttps = (url) => url ? String(url).replace(/^http:\/\//i, 'https://')
 const pickImage  = (item) => forceHttps(item.productImage || item.image || item.imageUrl || null);
 const cleanName  = (raw)  => String(raw || '쿠팡 상품').replace(/\[LIVE서버\]|\[API 브릿지 우회\]/g, '').trim() || '쿠팡 상품';
 
+// Server-side mirror of priceTrackingService.js's _updateDailyPrice — keeps
+// products/{id}/daily_prices/{date} populated from scheduled price checks too,
+// not just the client registration path, so DetailScreen's 60-day chart and
+// getMarketingAverage() actually have data for products that were never
+// opened in-app after being tracked.
+async function updateDailyPriceBucket(productGroupId, price) {
+  const dateKey = new Date().toISOString().slice(0, 10);
+  const ref = admin.firestore().collection("products").doc(productGroupId)
+    .collection("daily_prices").doc(dateKey);
+  const snap = await ref.get();
+  if (snap.exists) {
+    const existing = snap.data();
+    const newMax = Math.max(existing.maxPrice, price);
+    const newMin = Math.min(existing.minPrice, price);
+    if (newMax !== existing.maxPrice || newMin !== existing.minPrice) {
+      await ref.set({ maxPrice: newMax, minPrice: newMin, date: dateKey }, { merge: true });
+    }
+  } else {
+    await ref.set({ maxPrice: price, minPrice: price, date: dateKey });
+  }
+}
+
 const MOBILE_UA =
   "Mozilla/5.0 (iPhone; CPU iPhone OS 15_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/15.0 Mobile/15E148 Safari/604.1";
 
@@ -1465,33 +1487,51 @@ exports.registerProductFromHtml = functions.https.onCall(async (request) => {
 // ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
-// scheduledPriceUpdate  — runs every 6 hours via Cloud Scheduler
+// scheduledPriceUpdate  — runs every 3 hours via Cloud Scheduler
 //
 // Tiered update logic (minimises Coupang API calls):
-//   Tier A — High priority: products that received a product_click or
-//             product_purchase_click action in the last 48 h.
-//             → Updated on every 6-hour run.
-//   Tier B — Low priority: all other active products.
+//   Tier A — High priority: products someone has actually saved/tracked
+//             (user_saved_products), OR that received a product_click /
+//             product_purchase_click / product_view action in the last 48 h.
+//             → Updated on every 3-hour run (8×/day — frequent enough to
+//               catch most Coupang flash-sale/coupon windows without
+//               hammering the API for marginal accuracy gains).
+//   Tier B — Low priority: all other active products (browsed but never
+//             saved and not recently viewed).
 //             → Skipped unless priceLastUpdatedAt is null or > 24 h ago.
 //
 // Rate-limit strategy: 10 products per batch, 1-second delay between batches.
 // ---------------------------------------------------------------------------
 
-exports.scheduledPriceUpdate = onSchedule("every 6 hours", async () => {
+exports.scheduledPriceUpdate = onSchedule("every 3 hours", async () => {
     const firestoreDb = admin.firestore();
     const now = Date.now();
     const MS_48H = 48 * 60 * 60 * 1000;
     const MS_24H = 24 * 60 * 60 * 1000;
 
-    // ── Step 1: build Tier A set (recently clicked products) ─────────────────
-    // Single-field range query on createdAt → no composite index needed.
+    const tierAIds = new Set();
+
+    // ── Step 1a: build Tier A from actual save/track relationships ───────────
+    // This is the primary Tier A signal — a saved item should stay fresh
+    // even if the owner hasn't opened the app to "view" it again recently.
+    const savedProductsSnap = await firestoreDb
+      .collection("user_saved_products")
+      .select("productGroupId")
+      .get();
+    savedProductsSnap.docs.forEach((d) => {
+      const pid = d.data().productGroupId;
+      if (pid) tierAIds.add(pid);
+    });
+
+    // ── Step 1b: also fold in recently-viewed products (browsing signal,   ──
+    // not yet saved) — single-field range query on createdAt, no composite
+    // index needed.
     const cutoff48h = admin.firestore.Timestamp.fromMillis(now - MS_48H);
     const recentActionsSnap = await firestoreDb
       .collection("user_product_actions")
       .where("createdAt", ">=", cutoff48h)
       .get();
 
-    const tierAIds = new Set();
     recentActionsSnap.docs.forEach((d) => {
       const { actionType, productGroupId, productId } = d.data();
       if (
@@ -1571,6 +1611,10 @@ exports.scheduledPriceUpdate = onSchedule("every 6 hours", async () => {
               source: "scheduled",
               checkedAt: admin.firestore.FieldValue.serverTimestamp(),
             });
+            // Also roll into today's daily max/min bucket (feeds the 60-day
+            // marketing average — DetailScreen's chart and, via
+            // getPriceIntelligence, the 관심상품 thumbnail discount badges).
+            await updateDailyPriceBucket(productDoc.id, newPrice).catch(() => {});
 
             const prevPrice =
               typeof currentPrice === "number" && currentPrice > 0
@@ -1965,6 +2009,10 @@ exports.scheduledDailyPriceCheck = onSchedule({ schedule: "0 17 * * *", timeZone
 
           const newPrice = details.price;
           const checkedAt = admin.firestore.FieldValue.serverTimestamp();
+
+          // Roll into today's daily max/min bucket — see scheduledPriceUpdate
+          // for why (feeds the 60-day marketing average).
+          await updateDailyPriceBucket(productDoc.id, newPrice).catch(() => {});
 
           // Append snapshot to priceHistory array on the product doc
           const updateFields = {

@@ -170,7 +170,13 @@ export default function TrackingListScreen({ navigation }) {
                 currentPrice:     intel?.currentPrice ?? p.currentPrice ?? 0,
                 wowPrice:         p.wowPrice ?? null,
                 priceDrop:        intel?.priceDrop ?? 0,
-                averagePrice:     intel?.average ?? null,
+                // averagePrice = fallback for the first ~week before enough
+                // daily_prices data exists (see calcDiscountPct's priority
+                // order in priceDisplay.js — marketingDiscountPct wins once
+                // it's available).
+                averagePrice:        intel?.average ?? null,
+                marketingAverage:    intel?.marketingAverage ?? null,
+                marketingDiscountPct: intel?.marketingDiscountPct ?? null,
                 lowestPrice:      intel?.lowest ?? null,
                 guidance:         intel?.guidance ?? null,
                 coupangUrl:       p.affiliateUrl ?? null,

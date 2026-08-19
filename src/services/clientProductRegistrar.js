@@ -11,6 +11,7 @@ import {
 } from 'firebase/firestore';
 import { db } from '../firebase/config';
 import { getCurrentUserSegment } from './saveService';
+import { recordPrice } from './priceTrackingService';
 
 function cleanName(raw) {
   return String(raw || '쿠팡 상품')
@@ -69,6 +70,11 @@ export async function registerProductFromClient(productId, details, uid) {
     checkedAt: serverTimestamp(),
     source:    'client_fetch',
   });
+
+  // Also feeds product_price_history (getPriceIntelligence's raw event log)
+  // and today's daily_prices max/min bucket (the 60-day marketing average
+  // DetailScreen's chart and the 관심상품 thumbnail discount badges use).
+  await recordPrice(productGroupId, price, 'client_fetch').catch(() => {});
 
   console.log('[Registrar] Product doc and offer written successfully.');
 
