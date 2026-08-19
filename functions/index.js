@@ -1737,9 +1737,12 @@ exports.onPriceDropNotify = onDocumentCreated("user_product_actions/{docId}", as
     const notifyUserIds = new Set();
 
     // 1) Users who saved this product for price tracking
+    //    NOTE: user_saved_products docs always use `productGroupId`, never
+    //    `productId` — this query previously filtered on the wrong field
+    //    name and matched zero documents, ever, silently.
     const savedSnap = await firestoreDb
       .collection("user_saved_products")
-      .where("productId", "==", productGroupId)
+      .where("productGroupId", "==", productGroupId)
       .get();
     savedSnap.docs.forEach((d) => {
       const uid = d.data().userId;
