@@ -29,10 +29,13 @@ export async function registerProductFromClient(productId, details, uid) {
   const existing = await getDoc(docRef);
   const isNew    = !existing.exists();
 
-  const name     = cleanName(details.name);
-  const price    = details.price;
-  const image    = details.image ?? null;
-  const wowPrice = typeof details.wowPrice === 'number' && details.wowPrice > 0 ? details.wowPrice : null;
+  const name         = cleanName(details.name);
+  const price        = details.price;
+  const image        = details.image ?? null;
+  const wowPrice     = typeof details.wowPrice === 'number' && details.wowPrice > 0 ? details.wowPrice : null;
+  const isRocket     = details.isRocket === true;
+  const deliveryType = typeof details.deliveryType === 'string' ? details.deliveryType : 'normal';
+  const spec         = typeof details.spec === 'string' && details.spec.trim() ? details.spec.trim() : null;
 
   console.log('[Registrar] Writing product doc:', productGroupId, '| isNew:', isNew, '| price:', price, '| wowPrice:', wowPrice);
 
@@ -44,6 +47,9 @@ export async function registerProductFromClient(productId, details, uid) {
     currentPrice: price,
     ...(wowPrice != null ? { wowPrice } : {}),
     image,
+    isRocket,
+    deliveryType,
+    ...(spec != null ? { spec } : {}),
     isOutOfStock: false,
     stockStatus:  'in_stock',
     status:       'active',

@@ -102,9 +102,14 @@ const SCRAPE_SCRIPT =
     'let imgEl=document.querySelector("meta[property=\'og:image\']");' +
     'let image=imgEl?imgEl.content:"";' +
     'if(image&&image.startsWith("//"))image="https:"+image;' +
+    'let isRocket=/"isRocket"\\s*:\\s*true/.test(rawHtml)||/"rocketDelivery"\\s*:\\s*true/.test(rawHtml);' +
+    'let isFresh=/"isFresh"\\s*:\\s*true/.test(rawHtml);' +
+    'let deliveryType=isFresh?"fresh":isRocket?"rocket":"normal";' +
+    'let specMatch=name.match(/\\d+\\.?\\d*\\s*(g|ml|kg|L|리터|개|롤|매|팩|정|캡슐|포|박스)/ig);' +
+    'let spec=specMatch?Array.from(new Set(specMatch)).join(" / "):null;' +
     'if(!window.hasScraped){' +
       'window.hasScraped=true;' +
-      'window.ReactNativeWebView.postMessage(JSON.stringify({type:"SCRAPE_SUCCESS",payload:{productId:productId,name:name,price:price,wowPrice:wowPrice,image:image}}));' +
+      'window.ReactNativeWebView.postMessage(JSON.stringify({type:"SCRAPE_SUCCESS",payload:{productId:productId,name:name,price:price,wowPrice:wowPrice,image:image,isRocket:isRocket,deliveryType:deliveryType,spec:spec}}));' +
     '}' +
   '},500);' +
   'true;';

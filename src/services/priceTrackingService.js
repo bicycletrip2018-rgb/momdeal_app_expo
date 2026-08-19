@@ -171,7 +171,14 @@ export async function getPriceIntelligence(productId) {
   const lastPrice = prices.length >= 2 ? prices[1] : null;
   const lowest = Math.min(...prices);
   const highest = Math.max(...prices);
-  const average = Math.round(prices.reduce((s, p) => s + p, 0) / prices.length);
+  // Recency-weighted average, not a flat mean — a single stale/glitched price
+  // sample shouldn't swing the reference price (and downstream drop-alert
+  // threshold) as hard as a real multi-day trend does. Linear weight ramp:
+  // newest record gets weight n, oldest gets weight 1.
+  const n = prices.length;
+  const weightedSum = prices.reduce((s, p, i) => s + p * (n - i), 0);
+  const weightTotal = (n * (n + 1)) / 2;
+  const average = Math.round(weightedSum / weightTotal);
 
   const range = highest - lowest;
   const percentile = range > 0 ? Math.round(((currentPrice - lowest) / range) * 100) : 50;

@@ -180,6 +180,7 @@ export function TrackingCard({
             </View>
           )}
           <Text style={styles.name} numberOfLines={2}>{item.name || '상품'}</Text>
+          {item.spec && <Text style={styles.specText} numberOfLines={1}>{item.spec}</Text>}
           {aging.mode === 'blind' ? (
             <View>
               <Text style={styles.currentPrice}>
@@ -289,6 +290,7 @@ export function TrackingCard({
         <Text style={styles.sourceBadge}>C 쿠팡</Text>
         <DeliveryBadge deliveryType={item.deliveryType} />
         <Text style={styles.name} numberOfLines={2}>{item.name || '상품'}</Text>
+        {item.spec && <Text style={styles.specText} numberOfLines={1}>{item.spec}</Text>}
         {aging.mode === 'blind' ? (
           <View>
             <Text style={styles.currentPrice}>
@@ -426,6 +428,7 @@ const styles = StyleSheet.create({
   // Shared body typography
   sourceBadge:  { fontSize: 10, fontWeight: '700', color: '#64748b', marginBottom: 2 },
   name:         { fontSize: 13, fontWeight: '600', color: '#334155', lineHeight: 18, marginBottom: 4 },
+  specText:     { fontSize: 11, color: '#94a3b8', marginBottom: 4 },
   priceRow:     { flexDirection: 'row', alignItems: 'center', gap: 4, flexWrap: 'wrap' },
   origPrice:    { fontSize: 11, color: '#cbd5e1', textDecorationLine: 'line-through' },
   currentPrice: { fontSize: 16, fontWeight: '800', color: '#0f172a' },
