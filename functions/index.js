@@ -66,6 +66,24 @@ const cleanName  = (raw)  => String(raw || '쿠팡 상품').replace(/\[LIVE서�
 // not just the client registration path, so DetailScreen's 60-day chart and
 // getMarketingAverage() actually have data for products that were never
 // opened in-app after being tracked.
+// Server-side mirror of priceTrackingService.js's getMarketingAverage — flat
+// mean of (dailyMax+dailyMin)/2 over the last `days` days. Used to decide
+// whether a price change is actually notification-worthy (see
+// scheduledPriceUpdate), not just a noisy blip vs the last single check.
+async function getServerMarketingAverage(productGroupId, days = 60) {
+  const cutoff = new Date();
+  cutoff.setUTCDate(cutoff.getUTCDate() - days);
+  const cutoffKey = cutoff.toISOString().slice(0, 10);
+  const snap = await admin.firestore()
+    .collection("products").doc(productGroupId).collection("daily_prices")
+    .where("date", ">=", cutoffKey)
+    .get();
+  if (snap.empty) return null;
+  const rows = snap.docs.map((d) => d.data());
+  const sum = rows.reduce((acc, r) => acc + (r.maxPrice + r.minPrice) / 2, 0);
+  return Math.round(sum / rows.length);
+}
+
 async function updateDailyPriceBucket(productGroupId, price) {
   const dateKey = new Date().toISOString().slice(0, 10);
   const ref = admin.firestore().collection("products").doc(productGroupId)
@@ -1651,19 +1669,38 @@ exports.scheduledPriceUpdate = onSchedule("every 3 hours", async () => {
                 source: "scheduled",
               });
 
-              // Log price_drop_event when drop > 5%
-              if (dropPct > 0.05) {
-                await firestoreDb.collection("user_product_actions").add({
-                  productGroupId: productDoc.id,
-                  actionType: "price_drop_event",
-                  priceBefore: prevPrice,
-                  priceAfter: newPrice,
-                  dropPercent: Math.round(dropPct * 100),
-                  createdAt: admin.firestore.FieldValue.serverTimestamp(),
-                });
-                console.log(
-                  `scheduledPriceUpdate: 📉 ${Math.round(dropPct * 100)}% drop on ${productDoc.id}`
-                );
+              // ── Notification-worthy check ──────────────────────────────────────
+              // Deliberately NOT the same as the lastPriceDrop badge above (any
+              // last-check-vs-current decrease). A push/in-app notification needs
+              // a higher bar or it trains users to ignore it:
+              //   1. ≥10% below the 60-day weighted average (same bar as the
+              //      "구매 타이밍" curation folder — what earns a folder slot
+              //      also earns a ping, for consistency)
+              //   2. AND ≥₩1,000 absolute drop from that average (a 10% dip on a
+              //      ₩3,000 item is real money-wise noise, not a deal)
+              //   3. AND no notification already sent for this product in the
+              //      last 24h (price wobbling near the line shouldn't spam)
+              const marketingAverage = await getServerMarketingAverage(productDoc.id).catch(() => null);
+              if (marketingAverage && marketingAverage > 0) {
+                const avgDiscountPct = ((marketingAverage - newPrice) / marketingAverage) * 100;
+                const avgAbsDrop = marketingAverage - newPrice;
+                const lastNotifiedAt = product.lastPriceDropNotifiedAt?.toMillis?.() ?? 0;
+                const cooledDown = Date.now() - lastNotifiedAt > 24 * 60 * 60 * 1000;
+
+                if (avgDiscountPct >= 10 && avgAbsDrop >= 1000 && cooledDown) {
+                  await firestoreDb.collection("user_product_actions").add({
+                    productGroupId: productDoc.id,
+                    actionType: "price_drop_event",
+                    priceBefore: marketingAverage,
+                    priceAfter: newPrice,
+                    dropPercent: Math.round(avgDiscountPct),
+                    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+                  });
+                  updateFields.lastPriceDropNotifiedAt = admin.firestore.FieldValue.serverTimestamp();
+                  console.log(
+                    `scheduledPriceUpdate: 📉 notify — ${Math.round(avgDiscountPct)}% below 60d avg on ${productDoc.id}`
+                  );
+                }
               }
             }
 
@@ -1769,6 +1806,22 @@ exports.onPriceDropNotify = onDocumentCreated("user_product_actions/{docId}", as
     Object.entries(viewCountByUser).forEach(([uid, count]) => {
       if (count >= 2) notifyUserIds.add(uid);
     });
+
+    // 3) Drop anyone who explicitly turned OFF price alerts for this product.
+    //    Alerts default to isActive:true at save time (saveService.js), so
+    //    the only reason a price_alerts doc says isActive:false is a
+    //    deliberate opt-out — respect it.
+    if (notifyUserIds.size > 0) {
+      const alertsSnap = await firestoreDb
+        .collection("price_alerts")
+        .where("productId", "==", productGroupId)
+        .where("isActive", "==", false)
+        .get();
+      alertsSnap.docs.forEach((d) => {
+        const uid = d.data().userId;
+        if (uid) notifyUserIds.delete(uid);
+      });
+    }
 
     if (notifyUserIds.size === 0) {
       console.log(`onPriceDropNotify: no eligible users for ${productGroupId}`);

@@ -181,5 +181,19 @@ export async function toggleSavedProduct(userId, productGroupId) {
     userSegment,
     createdAt: serverTimestamp(),
   });
+
+  // Price-drop alerts default to ON at save time — saving a product implies
+  // wanting to know when its price drops, and the toggle should read as "on"
+  // immediately rather than silently defaulting to off until the user finds
+  // and flips it themselves. price_alerts.productId stores a productGroupId
+  // value (naming kept consistent with the rest of that collection).
+  await addDoc(collection(db, 'price_alerts'), {
+    userId,
+    productId: productGroupId,
+    targetType: 'drop',
+    isActive: true,
+    createdAt: serverTimestamp(),
+  });
+
   return true;
 }
