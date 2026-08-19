@@ -10,6 +10,7 @@ import {
   where,
 } from 'firebase/firestore';
 import { db } from '../firebase/config';
+import { getCurrentUserSegment } from './saveService';
 
 function cleanName(raw) {
   return String(raw || '쿠팡 상품')
@@ -83,10 +84,11 @@ export async function registerProductFromClient(productId, details, uid) {
     console.log('[Registrar] Existing linkage docs found:', savedSnap.size);
 
     if (savedSnap.empty) {
+      const userSegment = await getCurrentUserSegment(uid);
       await addDoc(collection(db, 'user_saved_products'), {
         userId:         uid,
         productGroupId: productGroupId,
-        userSegment:    'unknown_segment',
+        userSegment,
         createdAt:      serverTimestamp(),
       });
       console.log('[Registrar] Linkage doc successfully created in user_saved_products for UID:', uid);

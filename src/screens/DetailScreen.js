@@ -27,7 +27,7 @@ import Svg, {
 } from 'react-native-svg';
 
 import { Bell, BellRing, CheckCircle, ExternalLink, Info, Share2, Sparkles, Users } from 'lucide-react-native';
-import { collection, doc, getDoc, getCountFromServer, query, setDoc, where } from 'firebase/firestore';
+import { collection, doc, getDoc, getDocs, getCountFromServer, query, setDoc, updateDoc, where } from 'firebase/firestore';
 import { useUser } from '../context/UserContext';
 import { scrapeRealCoupangImage } from '../utils/scrapeProductImage';
 import { auth, db } from '../firebase/config';
@@ -762,10 +762,38 @@ export default function DetailScreen({ route, navigation }) {
       { merge: true }
     );
 
-    const nowSaved = await toggleSavedProduct(uid, productGroupId, childBirthDate, userType);
+    const nowSaved = await toggleSavedProduct(uid, productGroupId);
     setIsSaved(nowSaved);
     if (nowSaved) showToast('관심 상품에 추가되었어요!');
   }, [displayItem, childBirthDate, userType, showToast]);
+
+  // Persists the 목표가(target price) modal's input onto this item's
+  // user_saved_products linkage doc — previously the "설정 완료" button
+  // just closed the modal and showed a success alert without saving anything.
+  const handleSubmitTargetPrice = useCallback(async () => {
+    const uid   = auth.currentUser?.uid;
+    const rawId = displayItem?.productGroupId || displayItem?.productId;
+    const val   = Number(targetPriceInput.replace(/[^0-9]/g, ''));
+    if (!uid || !rawId || !val || val <= 0) return;
+
+    const productGroupId = rawId.startsWith('coupang_') ? rawId : `coupang_${rawId}`;
+
+    if (!isSaved) await handleToggleSave();
+
+    const linkSnap = await getDocs(
+      query(
+        collection(db, 'user_saved_products'),
+        where('userId', '==', uid),
+        where('productGroupId', '==', productGroupId),
+      )
+    );
+    if (!linkSnap.empty) {
+      await updateDoc(doc(db, 'user_saved_products', linkSnap.docs[0].id), { targetPrice: val });
+    }
+
+    setIsAlertModalVisible(false);
+    showToast('목표가가 설정되었어요!');
+  }, [displayItem, targetPriceInput, isSaved, handleToggleSave, showToast]);
 
   const handleShare = () =>
     Share.share({
@@ -1346,10 +1374,7 @@ export default function DetailScreen({ route, navigation }) {
             <TouchableOpacity
               style={styles.alertSubmitBtn}
               activeOpacity={0.82}
-              onPress={() => {
-                setIsAlertModalVisible(false);
-                Alert.alert('알림 등록 완료', '알림이 등록되었습니다.');
-              }}
+              onPress={handleSubmitTargetPrice}
             >
               <Text style={styles.alertSubmitBtnText}>설정 완료</Text>
             </TouchableOpacity>

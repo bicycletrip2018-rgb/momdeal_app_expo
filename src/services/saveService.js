@@ -3,12 +3,14 @@ import {
   collection,
   deleteDoc,
   doc,
+  getDoc,
   getDocs,
   query,
   serverTimestamp,
   where,
 } from 'firebase/firestore';
 import { db } from '../firebase/config';
+import { getChildrenByUserId } from './firestore/childrenRepository';
 
 // ─── RULE-12: Sliding Window Segment Derivation ───────────────────────────────
 //
@@ -69,6 +71,74 @@ export function deriveSegmentFromBirthDate(birthDate, userType) {
   return `${stage}_${bucket}`;
 }
 
+// ─── getCurrentUserSegment ─────────────────────────────────────────────────────
+//
+// Single source of truth for "which segment is this user in right now" —
+// mirrors the selectedChildId → children[0] fallback pattern used in
+// DetailScreen.js's peer-count query, so every write path (save button,
+// share-registration, etc.) derives the segment the same way instead of
+// each screen re-implementing (or skipping) the lookup.
+
+export async function getCurrentUserSegment(userId) {
+  if (!userId) return 'unknown_segment';
+  try {
+    const userSnap = await getDoc(doc(db, 'users', userId));
+    const selectedChildId = userSnap.exists() ? userSnap.data().selectedChildId ?? null : null;
+    const children = await getChildrenByUserId(userId);
+    const child = (selectedChildId ? children.find((c) => c.id === selectedChildId) : null) ?? children[0] ?? null;
+    if (!child) return 'unknown_segment';
+    return deriveSegmentFromBirthDate(child.birthDate, child.type);
+  } catch (_) {
+    return 'unknown_segment';
+  }
+}
+
+// ─── getPeerPopularityMap ───────────────────────────────────────────────────────
+//
+// Counts how many *other* users in the given segment have saved each product —
+// feeds the "또래 추천" curation box. 'unknown_segment' never counts as a real
+// peer group (it's the "no child profile yet" bucket, not a comparable cohort),
+// so it always returns empty rather than a meaningless match.
+
+export async function getPeerPopularityMap(userSegment, excludeUserId) {
+  if (!userSegment || userSegment === 'unknown_segment') return {};
+  const snap = await getDocs(
+    query(collection(db, 'user_saved_products'), where('userSegment', '==', userSegment))
+  );
+  const counts = {};
+  snap.docs.forEach((d) => {
+    const data = d.data();
+    if (excludeUserId && data.userId === excludeUserId) return;
+    if (!data.productGroupId) return;
+    counts[data.productGroupId] = (counts[data.productGroupId] || 0) + 1;
+  });
+  return counts;
+}
+
+// ─── getPurchaseFrequencyMap ─────────────────────────────────────────────────────
+//
+// Counts this user's own *approved* reward_claims per product — feeds "자주
+// 산 상품". Only approved claims count as a real purchase; 'pending'/rejected
+// claims aren't verified yet and shouldn't be presented as purchase history.
+
+export async function getPurchaseFrequencyMap(userId) {
+  if (!userId) return {};
+  const snap = await getDocs(
+    query(
+      collection(db, 'reward_claims'),
+      where('userId', '==', userId),
+      where('status', '==', 'approved'),
+    )
+  );
+  const counts = {};
+  snap.docs.forEach((d) => {
+    const data = d.data();
+    if (!data.productGroupId) return;
+    counts[data.productGroupId] = (counts[data.productGroupId] || 0) + 1;
+  });
+  return counts;
+}
+
 // ─── getSavedProducts ─────────────────────────────────────────────────────────
 
 export async function getSavedProducts(userId) {
@@ -86,10 +156,8 @@ export async function getSavedProducts(userId) {
 //
 // @param {string}  userId
 // @param {string}  productGroupId
-// @param {object}  [childBirthDate]  Firestore Timestamp | JS Date | null
-// @param {string}  [userType]        'child' | 'pregnancy' | 'planning'
 
-export async function toggleSavedProduct(userId, productGroupId, childBirthDate = null, userType = 'child') {
+export async function toggleSavedProduct(userId, productGroupId) {
   if (!userId || !productGroupId) return false;
 
   const existing = await getDocs(
@@ -105,7 +173,7 @@ export async function toggleSavedProduct(userId, productGroupId, childBirthDate 
     return false;
   }
 
-  const userSegment = deriveSegmentFromBirthDate(childBirthDate, userType);
+  const userSegment = await getCurrentUserSegment(userId);
 
   await addDoc(collection(db, 'user_saved_products'), {
     userId,

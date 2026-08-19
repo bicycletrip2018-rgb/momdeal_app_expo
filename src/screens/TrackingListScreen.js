@@ -22,15 +22,17 @@ import { collection, doc, getDoc, getDocs, onSnapshot, query, updateDoc, where }
 import { db, auth } from '../firebase/config';
 import { Ionicons } from '@expo/vector-icons';
 import { useTracking } from '../context/TrackingContext';
-import * as Clipboard from 'expo-clipboard';
 import * as IntentLauncher from 'expo-intent-launcher';
 import { registerCoupangProduct } from '../utils/registerCoupangProduct';
-import { toggleSavedProduct } from '../services/saveService';
+import { toggleSavedProduct, getCurrentUserSegment, getPeerPopularityMap, getPurchaseFrequencyMap } from '../services/saveService';
 import { getPriceIntelligence } from '../services/priceTrackingService';
 import { togglePriceAlert } from '../services/priceAlertService';
 import { setExpectingCoupangReturn } from '../utils/coupangIntentFlag';
 import { TrackingCard } from '../components/TrackingCard';
 import { COLORS } from '../constants/theme';
+import { useUser } from '../context/UserContext';
+import { resolveAgingPriceDisplay } from '../utils/priceDisplay';
+import { applyCurationFilter } from '../utils/curationFilters';
 
 // ─── Curation categories ──────────────────────────────────────────────────────
 
@@ -43,12 +45,6 @@ const CURATION_CATEGORIES = [
 
 const SORT_OPTIONS = ['최신순', '할인율순', '오래된순', '낮은가격순', '즐겨찾기순'];
 
-// Returns items that match a curation filter. Mock logic: only 'lowest' applies a real predicate.
-function applyCurationFilter(items, curationId) {
-  if (!curationId) return items;
-  if (curationId === 'lowest') return items.filter((i) => (i.priceDrop || 0) > 5000);
-  return items; // timing / peers / frequent — no mock rule yet, show all
-}
 
 // ─── Curation card ────────────────────────────────────────────────────────────
 
@@ -103,6 +99,7 @@ const demoStyles = StyleSheet.create({
 
 export default function TrackingListScreen({ navigation }) {
   const { globalTrackedItems, addTrackedItem, removeTrackedItem, updateTrackedItems, setTrackedItems } = useTracking();
+  const { isWowMember } = useUser();
 
   // ─── Firestore real-time listener ────────────────────────────────────────────
   // Populates globalTrackedItems from user_saved_products + products docs.
@@ -130,7 +127,14 @@ export default function TrackingListScreen({ navigation }) {
         if (snapshot.empty) { setTrackedItems([]); return; }
 
         try {
-          const linkages = snapshot.docs.map((d) => ({ savedId: d.id, ...d.data() }));
+          // Sort newest-first here (not via Firestore orderBy) — a composite
+          // index on (userId, createdAt) doesn't exist yet, and this query
+          // already fetches the whole list, so sorting client-side avoids an
+          // index-build wait. "최신순"/"오래된순" in the sort menu below both
+          // depend on this actually being creation order.
+          const linkages = snapshot.docs
+            .map((d) => ({ savedId: d.id, ...d.data() }))
+            .sort((a, b) => (b.createdAt?.toMillis?.() ?? 0) - (a.createdAt?.toMillis?.() ?? 0));
           console.log('[TrackingList] productGroupIds:', linkages.map((l) => l.productGroupId));
 
           // Batch-fetch this user's price alerts once so per-item lookup is O(1),
@@ -172,7 +176,7 @@ export default function TrackingListScreen({ navigation }) {
                 coupangUrl:       p.affiliateUrl ?? null,
                 deliveryType:     p.deliveryType ?? (p.isRocket ? 'rocket' : 'normal'),
                 spec:             p.spec ?? null,
-                targetPrice:      undefined,
+                targetPrice:      link.targetPrice ?? undefined,
                 isPriceAlertOn:   alertActiveByProductId[link.productGroupId] ?? false,
                 isRestockAlertOn: link.isRestockAlertOn ?? false,
                 isFavorite:       link.isFavorite ?? false,
@@ -193,6 +197,35 @@ export default function TrackingListScreen({ navigation }) {
 
     return () => { unsubAuth(); if (unsubSnapshot) unsubSnapshot(); };
   }, [setTrackedItems]);
+
+  // ─── Curation signals: peer popularity + purchase frequency ─────────────────
+  // Both need async aggregation queries the (synchronous) curation filter
+  // can't do inline, so they're fetched once here and passed down as plain
+  // maps. Re-fetched whenever the tracked list changes (new/removed item can
+  // change which products are even worth counting).
+  const [peerCounts,     setPeerCounts]     = useState({});
+  const [purchaseCounts, setPurchaseCounts] = useState({});
+
+  useEffect(() => {
+    const uid = auth.currentUser?.uid;
+    if (!uid || globalTrackedItems.length === 0) {
+      setPeerCounts({});
+      setPurchaseCounts({});
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      const [segment, purchaseMap] = await Promise.all([
+        getCurrentUserSegment(uid),
+        getPurchaseFrequencyMap(uid),
+      ]);
+      const peerMap = await getPeerPopularityMap(segment, uid);
+      if (cancelled) return;
+      setPeerCounts(peerMap);
+      setPurchaseCounts(purchaseMap);
+    })();
+    return () => { cancelled = true; };
+  }, [globalTrackedItems.length]);
 
   const [isEditMode,        setIsEditMode]        = useState(false);
   const [selectedIds,       setSelectedIds]       = useState([]);
@@ -220,9 +253,12 @@ export default function TrackingListScreen({ navigation }) {
       case '오래된순':
         return arr.reverse();
       case '할인율순':
+        // Same weighted-average-vs-current metric the card badge shows
+        // (resolveAgingPriceDisplay) — sorting by a different metric than
+        // what's on screen would make the order look wrong to the user.
         return arr.sort((a, b) => {
-          const pctA = a.priceDrop ? a.priceDrop / ((a.currentPrice || 0) + a.priceDrop) : 0;
-          const pctB = b.priceDrop ? b.priceDrop / ((b.currentPrice || 0) + b.priceDrop) : 0;
+          const pctA = resolveAgingPriceDisplay(a, isWowMember).discountPct ?? 0;
+          const pctB = resolveAgingPriceDisplay(b, isWowMember).discountPct ?? 0;
           return pctB - pctA;
         });
       case '낮은가격순':
@@ -232,7 +268,7 @@ export default function TrackingListScreen({ navigation }) {
       default: // 최신순 — context prepends newest, so insertion order = newest first
         return arr;
     }
-  }, [listData, sortOption]);
+  }, [listData, sortOption, isWowMember]);
 
 
 
@@ -366,10 +402,9 @@ export default function TrackingListScreen({ navigation }) {
         contentContainerStyle={styles.curationRow}
       >
         {CURATION_CATEGORIES.map((cat) => {
-          const matchCount = applyCurationFilter(globalTrackedItems, cat.id).length;
-          const previewImages = applyCurationFilter(globalTrackedItems, cat.id)
-            .slice(0, 4)
-            .map((i) => i.image ?? null);
+          const matched = applyCurationFilter(globalTrackedItems, cat.id, peerCounts, purchaseCounts, isWowMember);
+          const matchCount = matched.length;
+          const previewImages = matched.slice(0, 4).map((i) => i.image ?? null);
           return (
             <CurationCard
               key={cat.id}
@@ -486,29 +521,6 @@ export default function TrackingListScreen({ navigation }) {
           : 'https://apps.apple.com/app/id476266412';
         Linking.openURL(webStoreUrl).catch(() => {});
       }
-    }
-  };
-
-  const handlePasteLink = async () => {
-    try {
-      const hasString = await Clipboard.hasStringAsync();
-      if (!hasString) {
-        Alert.alert('알림', '클립보드에 복사된 텍스트가 없습니다.');
-        return;
-      }
-      const copiedText = await Clipboard.getStringAsync();
-      console.log('Copied Text: ', copiedText);
-
-      if (!copiedText.includes('coupang.com')) {
-        Alert.alert('알림', '유효한 쿠팡 상품 링크가 아닙니다.\n복사된 내용: ' + copiedText.substring(0, 20) + '...');
-        return;
-      }
-
-      Alert.alert('성공', '쿠팡 링크를 확인했습니다! (API 연동 대기중)\n' + copiedText);
-      setShowModal(false);
-    } catch (error) {
-      console.error('Clipboard Error: ', error);
-      Alert.alert('에러 발생', '클립보드를 읽는 중 문제가 발생했습니다.');
     }
   };
 

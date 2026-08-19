@@ -1,69 +1,11 @@
 import React, { createContext, useCallback, useContext, useState } from 'react';
 
-// ─── Initial seed ─────────────────────────────────────────────────────────────
-// Mirrors the SearchScreen mock `sr1` so My Page isn't empty on first load.
-// All items are stored in the MyPageScreen savedItem shape so both screens can
-// consume the context without per-screen normalization in the renderers.
-
 // Default status flags applied to every tracked item.
 const DEFAULT_STATUS = {
   isPriceAlertOn:   true,
   isRestockAlertOn: false,
   isFavorite:       false,
 };
-
-const INITIAL_TRACKED = [
-  {
-    productId:    'sr1',
-    savedId:      'sr1',
-    name:         '팸퍼스 하이드로케어 기저귀 특대형 5단계 88매',
-    image:        'https://picsum.photos/seed/saveroo1/200/200',
-    currentPrice: 31900,
-    priceDrop:    15000,
-    targetPrice:  28000,
-    coupangUrl:   'https://coupa.ng/blE0dT',
-    deliveryType: 'rocket',
-    ...DEFAULT_STATUS,
-  },
-  {
-    productId:    'sr2',
-    savedId:      'sr2',
-    name:         '하기스 맥스드라이 팬티형 3단계 108매',
-    image:        'https://picsum.photos/seed/saveroo2/200/200',
-    currentPrice: 29900,
-    priceDrop:    7000,
-    targetPrice:  29900, // already reached
-    coupangUrl:   null,
-    deliveryType: 'rocket',
-    ...DEFAULT_STATUS,
-    isFavorite: true,
-  },
-  {
-    productId:    'sr3',
-    savedId:      'sr3',
-    name:         '마미포코 오가닉 밴드형 신생아 72매',
-    image:        'https://picsum.photos/seed/saveroo3/200/200',
-    currentPrice: 18500,
-    priceDrop:    3500,
-    targetPrice:  undefined, // no target set
-    coupangUrl:   null,
-    deliveryType: 'fresh',
-    ...DEFAULT_STATUS,
-  },
-  {
-    productId:    'sr4',
-    savedId:      'sr4',
-    name:         '보솜이 프리미엄 기저귀 밴드형 2단계 84매',
-    image:        'https://picsum.photos/seed/saveroo4/200/200',
-    currentPrice: 22000,
-    priceDrop:    5000,
-    targetPrice:  20000,
-    coupangUrl:   null,
-    deliveryType: 'rocket',
-    ...DEFAULT_STATUS,
-    isPriceAlertOn: false,
-  },
-];
 
 // ─── Context ──────────────────────────────────────────────────────────────────
 

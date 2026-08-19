@@ -23,6 +23,11 @@ import {
   fetchBestCategoryProducts,
   fetchPersonalizedDeals,
 } from '../services/coupangApiService';
+import { auth } from '../firebase/config';
+import { useUser } from '../context/UserContext';
+import { resolveAgingPriceDisplay } from '../utils/priceDisplay';
+import { applyCurationFilter } from '../utils/curationFilters';
+import { getCurrentUserSegment, getPeerPopularityMap, getPurchaseFrequencyMap } from '../services/saveService';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -34,12 +39,6 @@ const CURATION_DESCRIPTIONS = {
   peers:    '비슷한 또래 아이를 키우는 맘들이 가장 많이 관심 가진 상품이에요.',
   frequent: '자주 재구매하는 소모품 중심으로 모아봤어요.',
 };
-
-function applyCurationFilter(items, curationId) {
-  if (!curationId) return items;
-  if (curationId === 'lowest') return items.filter((i) => (i.priceDrop || 0) > 5000);
-  return items;
-}
 
 // ─── Product Card (2-col grid) ────────────────────────────────────────────────
 
@@ -180,6 +179,32 @@ function ProductCard({ item, navigation, viewMode = 'grid', rank }) {
 export default function CurationDetailScreen({ route, navigation }) {
   const { curationId, type, stage } = route.params ?? {};
   const { globalTrackedItems } = useTracking();
+  const { isWowMember } = useUser();
+
+  // Same async curation signals as TrackingListScreen's dashboard — see
+  // src/utils/curationFilters.js for why these can't be computed inline.
+  const [peerCounts,     setPeerCounts]     = useState({});
+  const [purchaseCounts, setPurchaseCounts] = useState({});
+  useEffect(() => {
+    const uid = auth.currentUser?.uid;
+    if (!uid || globalTrackedItems.length === 0) {
+      setPeerCounts({});
+      setPurchaseCounts({});
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      const [segment, purchaseMap] = await Promise.all([
+        getCurrentUserSegment(uid),
+        getPurchaseFrequencyMap(uid),
+      ]);
+      const peerMap = await getPeerPopularityMap(segment, uid);
+      if (cancelled) return;
+      setPeerCounts(peerMap);
+      setPurchaseCounts(purchaseMap);
+    })();
+    return () => { cancelled = true; };
+  }, [globalTrackedItems.length]);
 
   // goldbox / mamtem / pl_deals / personalized all use the product-list layout
   const isProductList = type === 'goldbox' || type === 'mamtem' || type === 'pl_deals' || type === 'personalized';
@@ -241,14 +266,17 @@ export default function CurationDetailScreen({ route, navigation }) {
   const [sortOption,         setSortOption]         = useState('할인율순');
   const [isSortModalVisible, setIsSortModalVisible] = useState(false);
 
-  const filteredItems = applyCurationFilter(globalTrackedItems, curationId);
+  const filteredItems = applyCurationFilter(globalTrackedItems, curationId, peerCounts, purchaseCounts, isWowMember);
   const sortedItems = useMemo(() => {
     const arr = [...filteredItems];
     switch (sortOption) {
       case '할인율순':
+        // Same weighted-average-vs-current metric the card badge shows —
+        // see TrackingListScreen's sort for why this replaced the old
+        // priceDrop-based (last-check-only) comparison.
         return arr.sort((a, b) => {
-          const pctA = a.priceDrop ? a.priceDrop / ((a.currentPrice || 0) + a.priceDrop) : 0;
-          const pctB = b.priceDrop ? b.priceDrop / ((b.currentPrice || 0) + b.priceDrop) : 0;
+          const pctA = resolveAgingPriceDisplay(a, isWowMember).discountPct ?? 0;
+          const pctB = resolveAgingPriceDisplay(b, isWowMember).discountPct ?? 0;
           return pctB - pctA;
         });
       case '낮은가격순':
@@ -258,7 +286,7 @@ export default function CurationDetailScreen({ route, navigation }) {
       default:
         return arr;
     }
-  }, [filteredItems, sortOption]);
+  }, [filteredItems, sortOption, isWowMember]);
 
   const description = CURATION_DESCRIPTIONS[curationId] ?? '';
 
