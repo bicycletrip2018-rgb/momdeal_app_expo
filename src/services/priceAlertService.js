@@ -95,62 +95,6 @@ export async function togglePriceAlert(userId, productId) {
   return newIsActive;
 }
 
-// ─── Alert check ──────────────────────────────────────────────────────────────
-
-// Checks price conditions for a product and mock-notifies all matching active alerts.
-// Intended to be called fire-and-forget after a price is recorded.
-// Conditions:
-//   targetType='drop'     → fires when priceDrop > 0
-//   targetType='goodDeal' → fires when guidance === '지금 구매 추천'
-//   Either type fires when isGoodDeal (strongest buy signal)
-export async function checkPriceAlerts(productId) {
-  if (!productId) return;
-
-  const intel = await getPriceIntelligence(productId);
-  if (!intel) return;
-
-  const hasDrop = intel.priceDrop > 0;
-  const isGoodDeal = intel.guidance === '지금 구매 추천';
-
-  if (!hasDrop && !isGoodDeal) return;
-
-  const snap = await getDocs(
-    query(
-      collection(db, 'price_alerts'),
-      where('productId', '==', productId),
-      where('isActive', '==', true)
-    )
-  );
-  if (snap.empty) return;
-
-  snap.docs.forEach((alertDoc) => {
-    const { userId, targetType } = alertDoc.data();
-    const shouldNotify =
-      isGoodDeal ||
-      (targetType === 'drop' && hasDrop) ||
-      (targetType === 'goodDeal' && isGoodDeal);
-
-    if (shouldNotify) {
-      _mockNotify({
-        userId,
-        productId,
-        priceDrop: intel.priceDrop,
-        currentPrice: intel.currentPrice,
-        guidance: intel.guidance,
-      });
-    }
-  });
-}
-
-function _mockNotify({ userId, productId, priceDrop, currentPrice, guidance }) {
-  const priceStr = currentPrice != null ? `₩${currentPrice.toLocaleString('ko-KR')}` : '정보 없음';
-  const message =
-    priceDrop > 0
-      ? `가격 ₩${priceDrop.toLocaleString('ko-KR')} 하락 | 현재가 ${priceStr}`
-      : `${guidance} | 현재가 ${priceStr}`;
-  console.log(`[PRICE ALERT] userId=${userId} | productId=${productId} | ${message}`);
-}
-
 // ─── Enriched saved products ──────────────────────────────────────────────────
 
 // Loads saved products enriched with price intelligence and alert status.

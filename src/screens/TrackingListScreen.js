@@ -23,7 +23,6 @@ import { db, auth } from '../firebase/config';
 import { Ionicons } from '@expo/vector-icons';
 import { useTracking } from '../context/TrackingContext';
 import * as IntentLauncher from 'expo-intent-launcher';
-import { registerCoupangProduct } from '../utils/registerCoupangProduct';
 import { toggleSavedProduct, getCurrentUserSegment, getPeerPopularityMap, getPurchaseFrequencyMap } from '../services/saveService';
 import { getPriceIntelligence } from '../services/priceTrackingService';
 import { togglePriceAlert } from '../services/priceAlertService';

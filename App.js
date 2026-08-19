@@ -7,11 +7,8 @@ import { NavigationContainer } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 
-import Tab1_ProductList from './src/screens/Tab1_ProductList';
 import HomeScreen from './src/screens/HomeScreen';
 import ProductDetail from './src/screens/ProductDetail';
-import ProductRegister from './src/screens/ProductRegister';
-import ProductListScreen from './src/screens/ProductListScreen';
 import RankingScreen from './src/screens/RankingScreen';
 import CategoryDetailScreen from './src/screens/CategoryDetailScreen';
 
@@ -172,11 +169,6 @@ function ProductStack() {
         name="ProductList"
         component={RankingScreen}
         options={{ headerShown: false }}
-      />
-      <Stack.Screen
-        name="ProductRegister"
-        component={ProductRegister}
-        options={{ title: '상품 등록' }}
       />
       <Stack.Screen
         name="Detail"

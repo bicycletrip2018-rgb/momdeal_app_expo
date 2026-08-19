@@ -153,12 +153,6 @@ service cloud.firestore {
       }
     }
 
-    match /product_price_history/{docId} {
-      allow read:   if true;
-      allow create: if isSignedIn();
-      allow update, delete: if false;
-    }
-
     // Anything not explicitly matched above is closed by default (no
     // implicit allow-all fallback).
   }

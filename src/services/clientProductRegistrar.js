@@ -64,17 +64,15 @@ export async function registerProductFromClient(productId, details, uid) {
     await setDoc(docRef, baseFields, { merge: true });
   }
 
-  await addDoc(collection(docRef, 'offers'), {
+  // Records the price observation in products/{id}/offers AND today's
+  // daily_prices max/min bucket (the 60-day marketing average DetailScreen's
+  // chart and the 관심상품 thumbnail discount badges use) in one call.
+  await recordPrice(
+    productGroupId,
     price,
-    ...(wowPrice != null ? { wowPrice } : {}),
-    checkedAt: serverTimestamp(),
-    source:    'client_fetch',
-  });
-
-  // Also feeds product_price_history (getPriceIntelligence's raw event log)
-  // and today's daily_prices max/min bucket (the 60-day marketing average
-  // DetailScreen's chart and the 관심상품 thumbnail discount badges use).
-  await recordPrice(productGroupId, price, 'client_fetch').catch(() => {});
+    'client_fetch',
+    wowPrice != null ? { wowPrice } : {},
+  ).catch(() => {});
 
   console.log('[Registrar] Product doc and offer written successfully.');
 

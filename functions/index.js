@@ -1622,16 +1622,13 @@ exports.scheduledPriceUpdate = onSchedule("every 3 hours", async () => {
 
             const newPrice = details.price;
 
-            // Always write to product_price_history (feeds priceIntel bar chart)
-            await firestoreDb.collection("product_price_history").add({
-              productId: productDoc.id,
-              price: newPrice,
-              source: "scheduled",
-              checkedAt: admin.firestore.FieldValue.serverTimestamp(),
-            });
-            // Also roll into today's daily max/min bucket (feeds the 60-day
-            // marketing average — DetailScreen's chart and, via
+            // Roll into today's daily max/min bucket on every check (feeds the
+            // 60-day marketing average — DetailScreen's chart and, via
             // getPriceIntelligence, the 관심상품 thumbnail discount badges).
+            // The per-check raw log lives in products/{id}/offers, written
+            // below only when the price actually changes — getPriceIntelligence
+            // reads that subcollection now (was a separate flat
+            // product_price_history collection only this one reader used).
             await updateDailyPriceBucket(productDoc.id, newPrice).catch(() => {});
 
             const prevPrice =
@@ -2133,29 +2130,14 @@ exports.handleShareLink = functions.https.onRequest(async (req, res) => {
   const fallbackUrl = `https://www.coupang.com/vp/products/${encodeURIComponent(productGroupId)}`;
 
   try {
-    // 1. Try offers sub-collection (written by scheduledPriceUpdate — most up-to-date)
-    const offersSnap = await firestoreDb
-      .collection("products")
-      .doc(productGroupId)
-      .collection("offers")
-      .orderBy("checkedAt", "desc")
-      .limit(1)
-      .get();
-
+    // 1. product doc's affiliateUrl field (set by registration/deeplink flows)
     let affiliateUrl = null;
-    if (!offersSnap.empty) {
-      affiliateUrl = offersSnap.docs[0].data().affiliateUrl ?? null;
+    const productSnap = await firestoreDb.collection("products").doc(productGroupId).get();
+    if (productSnap.exists) {
+      affiliateUrl = productSnap.data().affiliateUrl ?? null;
     }
 
-    // 2. Fallback: product doc affiliateUrl field
-    if (!affiliateUrl) {
-      const productSnap = await firestoreDb.collection("products").doc(productGroupId).get();
-      if (productSnap.exists) {
-        affiliateUrl = productSnap.data().affiliateUrl ?? null;
-      }
-    }
-
-    // 3. Fallback: bare Coupang product URL (no affiliate token — still monetizable via Partners)
+    // 2. Fallback: bare Coupang product URL (no affiliate token — still monetizable via Partners)
     if (!affiliateUrl) {
       affiliateUrl = fallbackUrl;
     }

@@ -84,15 +84,19 @@ export function calcMarketingDiscountPct(marketingAverage, currentPrice) {
   return Math.round(pct * 10) / 10; // 1 decimal place
 }
 
-// Records a price observation for a product.
-// Also updates the daily max/min record for today.
+// Records a price observation for a product, in products/{id}/offers — the
+// same subcollection ProductDetail.js, recommendationService.js and every
+// Cloud Function registration/refresh path already write/read. This used to
+// write a separate flat product_price_history collection instead, which
+// only this service actually read — two collections holding the same kind
+// of record, kept in sync by hand. Also updates today's daily_prices bucket.
 // Does nothing if price is missing or 0.
-export async function recordPrice(productId, price, source) {
+export async function recordPrice(productId, price, source, extraFields = {}) {
   if (!productId || typeof price !== 'number' || price <= 0) return;
 
   await Promise.all([
-    addDoc(collection(db, 'product_price_history'), {
-      productId,
+    addDoc(collection(db, 'products', productId, 'offers'), {
+      ...extraFields,
       price,
       source: source || 'unknown',
       checkedAt: serverTimestamp(),
@@ -101,14 +105,13 @@ export async function recordPrice(productId, price, source) {
   ]);
 }
 
-// Returns all price history records for a product, newest first.
-// Shape: [{ historyId, productId, price, source, checkedAt }]
+// Returns all recorded offers for a product, newest first.
+// Shape: [{ historyId, price, source, checkedAt }]
 export async function getPriceHistory(productId) {
   if (!productId) return [];
   const snap = await getDocs(
     query(
-      collection(db, 'product_price_history'),
-      where('productId', '==', productId),
+      collection(db, 'products', productId, 'offers'),
       orderBy('checkedAt', 'desc')
     )
   );
@@ -153,8 +156,7 @@ export async function getPriceIntelligence(productId) {
 
   const snap = await getDocs(
     query(
-      collection(db, 'product_price_history'),
-      where('productId', '==', productId),
+      collection(db, 'products', productId, 'offers'),
       orderBy('checkedAt', 'desc'),
       limit(30)
     )
