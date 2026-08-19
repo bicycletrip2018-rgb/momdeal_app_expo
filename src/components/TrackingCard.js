@@ -112,6 +112,14 @@ function DeliveryBadge({ deliveryType }) {
   if (deliveryType === 'fresh') {
     return <Text style={[styles.deliveryBadge, { color: '#16a34a' }]}>🌿 로켓프레시</Text>;
   }
+  if (deliveryType === 'normal') {
+    // Confirmed NOT rocket-fulfilled — seller ships via a regular courier
+    // (e.g. 롯데택배) after order confirmation, not from a Coupang warehouse.
+    // Shown explicitly rather than left blank, so "확인했더니 일반배송"
+    // reads differently from "배송정보를 아직 확인 못함" (deliveryType
+    // missing entirely — see TrackingListScreen's mapping).
+    return <Text style={[styles.deliveryBadge, { color: '#94a3b8' }]}>📦 판매자배송</Text>;
+  }
   return null;
 }
 

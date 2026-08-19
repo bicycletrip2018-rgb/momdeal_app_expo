@@ -180,7 +180,13 @@ export default function TrackingListScreen({ navigation }) {
                 lowestPrice:      intel?.lowest ?? null,
                 guidance:         intel?.guidance ?? null,
                 coupangUrl:       p.affiliateUrl ?? null,
-                deliveryType:     p.deliveryType ?? (p.isRocket ? 'rocket' : 'normal'),
+                // null (not 'normal') when the field was never captured —
+                // e.g. products registered before delivery-type extraction
+                // existed. 'normal' now means "checked, confirmed non-rocket"
+                // and renders an explicit 판매자배송 badge, so defaulting
+                // absent data to 'normal' would misreport "확인 안 됨" as
+                // "일반배송으로 확인됨".
+                deliveryType:     p.deliveryType ?? null,
                 spec:             p.spec ?? null,
                 targetPrice:      link.targetPrice ?? undefined,
                 isPriceAlertOn:   alertActiveByProductId[link.productGroupId] ?? false,
