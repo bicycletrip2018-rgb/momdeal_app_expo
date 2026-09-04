@@ -26,11 +26,12 @@ import Svg, {
   Text as SvgText,
 } from 'react-native-svg';
 
-import { Bell, BellRing, CheckCircle, ExternalLink, Info, Share2, Sparkles, Users } from 'lucide-react-native';
-import { collection, doc, getDoc, getDocs, getCountFromServer, query, setDoc, updateDoc, where } from 'firebase/firestore';
+import { Bell, BellRing, CheckCircle, ChevronRight, ExternalLink, Info, Share2, Sparkles, Users } from 'lucide-react-native';
+import { addDoc, collection, doc, getDoc, getDocs, getCountFromServer, query, serverTimestamp, setDoc, updateDoc, where } from 'firebase/firestore';
 import { useUser } from '../context/UserContext';
 import { scrapeRealCoupangImage } from '../utils/scrapeProductImage';
-import { auth, db } from '../firebase/config';
+import { httpsCallable } from 'firebase/functions';
+import { auth, db, functions } from '../firebase/config';
 import { getChildrenByUserId } from '../services/firestore/childrenRepository';
 import { getMarketingAverage } from '../services/priceTrackingService';
 import { deriveSegmentFromBirthDate, toggleSavedProduct } from '../services/saveService';
@@ -98,16 +99,6 @@ const TIME_TABS = [
   { key: '1M', label: '1개월' },
   { key: '2M', label: '2개월' },
   { key: '3M', label: '3개월' },
-];
-
-// ─── Mock options (different counts/sizes of the same product) ─────────────────
-
-const MOCK_OPTIONS = [
-  { id: '1', title: '1단계 80매 (4~8kg)',   price: 24900, origPrice: 31900, unitType: '1개', unitPriceValue: '311원', discountPct: 22, imageUrl: 'https://picsum.photos/seed/opt1/100' },
-  { id: '2', title: '2단계 100매 (6~10kg)', price: 29900, origPrice: 38000, unitType: '1개', unitPriceValue: '299원', discountPct: 21, imageUrl: 'https://picsum.photos/seed/opt2/100' },
-  { id: '3', title: '3단계 120매 (8~14kg)', price: 33500, origPrice: 43000, unitType: '1개', unitPriceValue: '279원', discountPct: 22, imageUrl: 'https://picsum.photos/seed/opt3/100' },
-  { id: '4', title: '4단계 90매 (10~16kg)', price: 27900, origPrice: 35500, unitType: '1개', unitPriceValue: '310원', discountPct: 21, imageUrl: 'https://picsum.photos/seed/opt4/100' },
-  { id: '5', title: '5단계 72매 (12~17kg)', price: 23500, origPrice: 30000, unitType: '1개', unitPriceValue: '326원', discountPct: 22, imageUrl: 'https://picsum.photos/seed/opt5/100' },
 ];
 
 const OPTIONS_PREVIEW_COUNT = 3; // show 3 by default, rest behind "더 보기"
@@ -389,51 +380,48 @@ function PriceChart({ data, currentPrice, width, activeIdx, onActiveIdxChange, a
 }
 
 // ─── Option Row ────────────────────────────────────────────────────────────────
+// Renders one OTHER real option (color/size/quantity) of the SAME parent
+// product — never a different product. baseItem supplies shared display
+// fields (name/brand/image/spec) so tapping through opens that option's own
+// Detail screen (its own price/chart, scoped by optionId).
 
-function OptionRow({ option, isLast, navigation, onShowToast }) {
-  const [isTracking, setIsTracking] = useState(false);
-  const mockOptionItem = { name: option.title, currentPrice: option.price };
+function OptionRow({ option, isLast, navigation, baseItem }) {
+  const price = typeof option.lastPrice === 'number' ? option.lastPrice : null;
 
-  const handleTrackingPress = () => {
-    const next = !isTracking;
-    setIsTracking(next);
-    onShowToast(next ? '관심상품 등록 완료 (가격 추적 시작)' : '관심상품 등록 취소', next);
+  const handlePress = () => {
+    navigation.push('Detail', {
+      item: {
+        ...baseItem,
+        optionId: option.optionId,
+        vendorItemId: option.vendorItemId ?? null,
+        currentPrice: price ?? baseItem?.currentPrice,
+      },
+    });
   };
 
   return (
-    <View style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 12, paddingHorizontal: 16, borderBottomWidth: isLast ? 0 : 1, borderColor: '#F3F4F6' }}>
-      {/* Thumbnail + text — tappable, navigates to option PDP */}
-      <TouchableOpacity
-        activeOpacity={0.75}
-        onPress={() => navigation.push('Detail', { item: mockOptionItem })}
-        style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}
-      >
-        <Image
-          source={{ uri: option.imageUrl }}
-          style={{ width: 60, height: 60, borderRadius: 8, backgroundColor: '#F3F4F6', marginRight: 16 }}
-        />
-        <View style={{ flex: 1 }}>
-          <Text style={{ fontSize: 13, fontWeight: '600', color: '#374151', marginBottom: 2 }} numberOfLines={1}>
-            {option.title}
-          </Text>
-          <Text style={{ fontSize: 14, fontWeight: '700', color: '#111827' }}>
-            {option.price.toLocaleString('ko-KR')}원
-          </Text>
-          <Text style={{ fontSize: 12, fontWeight: '700', color: '#2E6FF2', marginTop: 1 }}>
-            {option.unitType}당 {option.unitPriceValue}
-          </Text>
-        </View>
-      </TouchableOpacity>
-
-      {/* Tracking toggle button */}
-      <TouchableOpacity
-        activeOpacity={0.75}
-        onPress={handleTrackingPress}
-        style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: isTracking ? '#EFF6FF' : '#F3F4F6', alignItems: 'center', justifyContent: 'center', marginLeft: 10 }}
-      >
-        {isTracking ? <BellRing size={18} color="#2E6FF2" /> : <Bell size={18} color="#9CA3AF" />}
-      </TouchableOpacity>
-    </View>
+    <TouchableOpacity
+      activeOpacity={0.75}
+      onPress={handlePress}
+      style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 12, paddingHorizontal: 16, borderBottomWidth: isLast ? 0 : 1, borderColor: '#F3F4F6' }}
+    >
+      <Image
+        source={{ uri: baseItem?.image }}
+        style={{ width: 60, height: 60, borderRadius: 8, backgroundColor: '#F3F4F6', marginRight: 16 }}
+      />
+      <View style={{ flex: 1 }}>
+        <Text style={{ fontSize: 13, fontWeight: '600', color: '#374151', marginBottom: 2 }} numberOfLines={1}>
+          {option.optionLabel || '옵션 정보 확인 중'}
+        </Text>
+        <Text style={{ fontSize: 14, fontWeight: '700', color: '#111827' }}>
+          {price != null ? `${price.toLocaleString('ko-KR')}원` : '가격 확인 중'}
+        </Text>
+        {option.isOutOfStock && (
+          <Text style={{ fontSize: 11, fontWeight: '700', color: '#ef4444', marginTop: 1 }}>품절</Text>
+        )}
+      </View>
+      <ChevronRight size={18} color="#CBD5E1" />
+    </TouchableOpacity>
   );
 }
 
@@ -663,6 +651,49 @@ export default function DetailScreen({ route, navigation }) {
     scrapeRealCoupangImage(url).then((img) => { if (img) setScrapedImage(img); });
   }, [displayItem?.image, displayItem?.productUrl, displayItem?.coupangUrl]);
 
+  // Human-readable option name (e.g. "3단계 56매") — resolved server-side by
+  // the price scheduler via Coupang's v4 PDP API and cached on
+  // products/{parent}/trackedOptions/{optionId}. Stays null until captured;
+  // the UI never fabricates a guessed label for it.
+  const [optionLabel, setOptionLabel] = useState(null);
+  useEffect(() => {
+    const rawId = displayItem?.productGroupId || displayItem?.productId;
+    const optionId = displayItem?.optionId;
+    if (!rawId || !optionId) { setOptionLabel(null); return; }
+    const productGroupId = rawId.startsWith('coupang_') ? rawId : `coupang_${rawId}`;
+    getDoc(doc(db, 'products', productGroupId, 'trackedOptions', optionId))
+      .then((snap) => setOptionLabel(snap.exists() ? (snap.data().optionLabel ?? null) : null))
+      .catch(() => setOptionLabel(null));
+  }, [displayItem?.productGroupId, displayItem?.productId, displayItem?.optionId]);
+
+  // Other options of THIS SAME parent product — real ones only, sourced from
+  // trackedOptions (see functions/index.js onSavedProductCreate/scheduledPriceUpdate),
+  // never a hardcoded placeholder list. A parent nobody has captured a second
+  // option for simply shows nothing here — that's correct, not a bug.
+  const [otherOptions, setOtherOptions] = useState([]);
+  useEffect(() => {
+    const rawId = displayItem?.productGroupId || displayItem?.productId;
+    if (!rawId) { setOtherOptions([]); return; }
+    const productGroupId = rawId.startsWith('coupang_') ? rawId : `coupang_${rawId}`;
+    const currentOptionId = displayItem?.optionId ?? null;
+    let cancelled = false;
+    (async () => {
+      try {
+        const snap = await getDocs(
+          query(collection(db, 'products', productGroupId, 'trackedOptions'), where('trackingCount', '>', 0))
+        );
+        if (cancelled) return;
+        const opts = snap.docs
+          .map((d) => ({ id: d.id, ...d.data() }))
+          .filter((o) => o.optionId !== currentOptionId);
+        setOtherOptions(opts);
+      } catch (_) {
+        if (!cancelled) setOtherOptions([]);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [displayItem?.productGroupId, displayItem?.productId, displayItem?.optionId]);
+
   // Real price data from Firebase daily_prices subcollection.
   // Stored newest-first (raw from Firestore); reversed to chronological when used.
   const [rawDailyPrices, setRawDailyPrices] = useState(null); // null = not yet loaded
@@ -672,7 +703,10 @@ export default function DetailScreen({ route, navigation }) {
     if (!pid) return;
     try {
       // Fetch up to 1 year so all time-range tabs can slice from one request.
-      const result = await getMarketingAverage(pid, 365);
+      // optionId scopes this to the exact option the user tracked (color/
+      // size/quantity) when captured — otherwise a parent with multiple
+      // options would show a chart mixing all of their prices together.
+      const result = await getMarketingAverage(pid, 365, displayItem?.optionId ?? null);
       if (result?.dailyPrices?.length > 0) {
         // dailyPrices is newest-first from Firestore; reverse to oldest-first for chart.
         setRawDailyPrices([...result.dailyPrices].reverse());
@@ -680,11 +714,12 @@ export default function DetailScreen({ route, navigation }) {
     } catch (e) {
       console.log('[DetailScreen] daily prices fetch failed:', e);
     }
-  }, [displayItem?.productId]);
+  }, [displayItem?.productId, displayItem?.optionId]);
 
   useEffect(() => { loadDailyPrices(); }, [loadDailyPrices]);
 
   const [isInjecting, setIsInjecting] = useState(false);
+  const [isLinking, setIsLinking] = useState(false);
 
   const injectMockData = useCallback(async () => {
     const pid = displayItem?.productId;
@@ -802,7 +837,24 @@ export default function DetailScreen({ route, navigation }) {
     });
 
   useLayoutEffect(() => {
-    navigation.setOptions({ title: '상품 상세' });
+    // headerTitleContainerStyle's marginStart is ignored by the Android
+    // native-stack header (backed by a native Toolbar, not a JS-styled
+    // view), so the back-button-to-title gap can't be closed from the
+    // title side — shrinking the back button's own right-side hit area
+    // is what actually pulls the title in.
+    navigation.setOptions({
+      title: '상품 상세',
+      headerTitleAlign: 'left',
+      headerLeft: () => (
+        <TouchableOpacity
+          onPress={() => navigation.goBack()}
+          hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+          style={{ marginEnd: -2 }}
+        >
+          <Ionicons name="chevron-back" size={26} color="#0f172a" />
+        </TouchableOpacity>
+      ),
+    });
   }, [navigation]);
 
   const currentPrice  = displayItem?.currentPrice || displayItem?.price || 0;
@@ -936,6 +988,17 @@ export default function DetailScreen({ route, navigation }) {
                   <Text style={{ fontSize: 14, color: '#475569' }}>
                     {displayItem?.spec || fullText?.match(/\d+\.?\d*\s*(g|ml|kg|L|리터|개|롤|매|팩|정|캡슐|포|박스)/ig)?.join(' / ') || '상세 규격 없음'}
                   </Text>
+                  {optionLabel && (
+                    // Real captured option name (via Coupang's v4 PDP API,
+                    // resolved by the price scheduler) — shown only when we
+                    // actually have it, never guessed, since this is the
+                    // exact option the user is tracking, distinct from the
+                    // regex-guessed spec text above which just approximates
+                    // from the product title.
+                    <Text style={{ fontSize: 13, color: '#2E6FF2', fontWeight: '700', marginTop: 4 }}>
+                      선택 옵션: {optionLabel}
+                    </Text>
+                  )}
                 </View>
               </View>
 
@@ -1126,36 +1189,43 @@ export default function DetailScreen({ route, navigation }) {
           </View>
         </View>
 
-        <View style={styles.sectionDivider} />
-
-        {/* ── Accordion Options ── */}
-        <View style={styles.sectionWrap}>
-          <Text style={styles.sectionTitle}>다른 옵션 보기</Text>
-          <View style={styles.optionList}>
-            {(showAllOptions ? MOCK_OPTIONS : MOCK_OPTIONS.slice(0, OPTIONS_PREVIEW_COUNT)).map(
-              (opt, i, arr) => (
-                <OptionRow key={opt.id} option={opt} isLast={i === arr.length - 1} navigation={navigation} onShowToast={showToast} />
-              )
-            )}
-          </View>
-          {MOCK_OPTIONS.length > OPTIONS_PREVIEW_COUNT && (
-            <TouchableOpacity
-              style={styles.optionShowMoreBtn}
-              onPress={() => setShowAllOptions((v) => !v)}
-              activeOpacity={0.7}
-            >
-              <Text style={styles.optionShowMoreText}>
-                {showAllOptions
-                  ? '접기'
-                  : `${MOCK_OPTIONS.length}개의 모든 옵션 보기`}
-              </Text>
-              <Ionicons
-                name={showAllOptions ? 'chevron-up' : 'chevron-down'}
-                size={14} color="#3b82f6"
-              />
-            </TouchableOpacity>
-          )}
-        </View>
+        {/* ── Other options of this same parent product — real data only ── */}
+        {/* No divider/section at all when there are no other tracked
+            options (see otherOptions effect above) — a "다른 옵션 보기"
+            header with nothing real under it would be worse than omitting
+            it entirely. */}
+        {otherOptions.length > 0 && (
+          <>
+            <View style={styles.sectionDivider} />
+            <View style={styles.sectionWrap}>
+              <Text style={styles.sectionTitle}>다른 옵션 보기</Text>
+              <View style={styles.optionList}>
+                {(showAllOptions ? otherOptions : otherOptions.slice(0, OPTIONS_PREVIEW_COUNT)).map(
+                  (opt, i, arr) => (
+                    <OptionRow key={opt.id} option={opt} isLast={i === arr.length - 1} navigation={navigation} baseItem={displayItem} />
+                  )
+                )}
+              </View>
+              {otherOptions.length > OPTIONS_PREVIEW_COUNT && (
+                <TouchableOpacity
+                  style={styles.optionShowMoreBtn}
+                  onPress={() => setShowAllOptions((v) => !v)}
+                  activeOpacity={0.7}
+                >
+                  <Text style={styles.optionShowMoreText}>
+                    {showAllOptions
+                      ? '접기'
+                      : `${otherOptions.length}개의 모든 옵션 보기`}
+                  </Text>
+                  <Ionicons
+                    name={showAllOptions ? 'chevron-up' : 'chevron-down'}
+                    size={14} color="#3b82f6"
+                  />
+                </TouchableOpacity>
+              )}
+            </View>
+          </>
+        )}
 
         <View style={styles.sectionDivider} />
 
@@ -1243,37 +1313,68 @@ export default function DetailScreen({ route, navigation }) {
 
       <View style={{ paddingTop: 12, paddingHorizontal: 16, paddingBottom: insets.bottom || 16, borderTopWidth: 1, borderColor: '#e2e8f0', backgroundColor: '#fff' }}>
         <TouchableOpacity
-          style={{ backgroundColor: '#f97316', paddingVertical: 14, borderRadius: 8, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 }}
-          onPress={() => {
-            let pid = displayItem?.pageKey || displayItem?.productId || '';
-            let vid = displayItem?.vendorItemId || '';
-            const affiliateUrl = displayItem?.affiliateUrl || '';
+          style={{ backgroundColor: '#f97316', paddingVertical: 14, borderRadius: 8, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, opacity: isLinking ? 0.7 : 1 }}
+          disabled={isLinking}
+          onPress={async () => {
+            // Strip our internal "coupang_" prefix — Coupang's own product ID
+            // is purely numeric. Passing the prefixed form here was the root
+            // cause of this button landing on "찾을 수 없는 페이지": both the
+            // old custom coupang:// deep link and its web fallback embedded
+            // that wrong ID.
+            const originalId = String(displayItem?.originalId || displayItem?.productId || '').replace(/^coupang_/, '');
+            const vendorItemId = displayItem?.vendorItemId || null;
 
-            if (!pid && affiliateUrl) {
-              const pMatch = affiliateUrl.match(/pageKey=(\d+)/);
-              if (pMatch) pid = pMatch[1];
-            }
-            if (!vid && affiliateUrl) {
-              const vMatch = affiliateUrl.match(/vendorItemId=(\d+)/);
-              if (vMatch) vid = vMatch[1];
+            if (!originalId) {
+              setExpectingCoupangReturn();
+              Linking.openURL('https://m.coupang.com').catch(() => {});
+              return;
             }
 
-            const webFallback = affiliateUrl || (pid ? `https://m.coupang.com/vm/products/${pid}` : 'https://m.coupang.com');
+            const productUrl = `https://www.coupang.com/vp/products/${originalId}${vendorItemId ? `?vendorItemId=${vendorItemId}` : ''}`;
+
+            setIsLinking(true);
+            let targetUrl = productUrl;
+            try {
+              // RULE-13: must go through the official Partners deeplink API
+              // to embed 세이브루's tracking code — opening a bare coupang.com
+              // URL (or a hand-built coupang:// scheme) carries no affiliate
+              // tag and earns zero commission. The returned shortUrl is a
+              // real Coupang universal link: opening it routes to the
+              // installed app automatically (or the web if not installed)
+              // while keeping the tracking tag either way, so no separate
+              // custom deep-link scheme is needed on our side at all.
+              const generateDeeplink = httpsCallable(functions, 'generateDeeplink');
+              const res = await generateDeeplink({ urls: [productUrl] });
+              const shortUrl = res?.data?.links?.[0]?.shortUrl;
+              if (shortUrl) targetUrl = shortUrl;
+            } catch (e) {
+              console.log('[DetailScreen] generateDeeplink failed, opening direct URL instead:', e?.message);
+            } finally {
+              setIsLinking(false);
+            }
+
+            const uid = auth.currentUser?.uid;
+            const rawId = displayItem?.productGroupId || displayItem?.productId;
+            if (uid && rawId) {
+              const productGroupId = rawId.startsWith('coupang_') ? rawId : `coupang_${rawId}`;
+              addDoc(collection(db, 'user_product_actions'), {
+                userId: uid,
+                productGroupId,
+                actionType: 'product_purchase_click',
+                stage: null,
+                metadata: { optionId: displayItem?.optionId ?? null },
+                createdAt: serverTimestamp(),
+              }).catch(() => {});
+            }
+
             setExpectingCoupangReturn();
-            if (pid) {
-              const deepLink = `coupang://vp/products/${pid}${vid ? `?vendorItemId=${vid}` : ''}`;
-              Linking.canOpenURL(deepLink)
-                .then((supported) =>
-                  supported ? Linking.openURL(deepLink) : Linking.openURL(webFallback)
-                )
-                .catch(() => Linking.openURL(webFallback));
-            } else {
-              Linking.openURL(webFallback);
-            }
+            Linking.openURL(targetUrl).catch(() => {});
           }}
         >
           <ExternalLink color="#FFFFFF" size={18} />
-          <Text style={{ color: '#fff', fontSize: 16, fontWeight: 'bold' }}>쿠팡에서 최저가 확인하기</Text>
+          <Text style={{ color: '#fff', fontSize: 16, fontWeight: 'bold' }}>
+            {isLinking ? '연결 중...' : '쿠팡에서 최저가 확인하기'}
+          </Text>
         </TouchableOpacity>
       </View>
 

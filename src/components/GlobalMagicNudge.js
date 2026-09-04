@@ -11,7 +11,8 @@ import {
 } from 'react-native';
 import { WebView } from 'react-native-webview';
 import * as Clipboard from 'expo-clipboard';
-import { auth } from '../firebase/config';
+import { addDoc, collection, serverTimestamp } from 'firebase/firestore';
+import { auth, db } from '../firebase/config';
 import { consumeExpectingCoupangReturn } from '../utils/coupangIntentFlag';
 import { useTutorial } from '../context/TutorialContext';
 import { registerProductFromClient } from '../services/clientProductRegistrar';
@@ -67,12 +68,24 @@ const SCRAPE_SCRIPT =
     'attempts++;' +
     'if(attempts>20){clearInterval(scrapeInterval);return;}' +
     'if(window.location.href==="about:blank"||window.location.href.indexOf("coupang.com")===-1)return;' +
-    'let pidMatch=window.location.href.match(/products\\/(\\d+)/)||window.location.href.match(/itemId=(\\d+)/);' +
+    'let pathMatch=window.location.href.match(/products\\/(\\d+)/);' +
+    'let itemIdMatch=window.location.href.match(/itemId=(\\d+)/);' +
+    'let pidMatch=pathMatch||itemIdMatch;' +
     'if(!pidMatch)return;' +
     'let nameEl=document.querySelector("meta[property=\'og:title\']");' +
     'if(!nameEl)return;' +
     'clearInterval(scrapeInterval);' +
     'let productId=pidMatch[1];' +
+    // vendorItemId = the specific ordered option/SKU (color/size/quantity),
+    // distinct from productId (the parent page). Only trust the explicit
+    // vendorItemId= param, or itemId= when it rode alongside a real
+    // products/(\d+) path (i.e. genuinely a second, option-level id) —
+    // when itemId= was itself used as the productId fallback above there's
+    // no real parent+child pair to report. Server-side tryV4Api resolves
+    // this into a human-readable option name later (scheduledPriceUpdate),
+    // so the client only needs the raw id, never a guessed label.
+    'let vendorItemIdMatch=window.location.href.match(/vendorItemId=(\\d+)/);' +
+    'let vendorItemId=vendorItemIdMatch?vendorItemIdMatch[1]:((pathMatch&&itemIdMatch)?itemIdMatch[1]:null);' +
     'let priceStr="0";' +
     'let rawHtml=document.body.innerHTML||document.documentElement.innerHTML;' +
     'let jsonMatch=rawHtml.match(/"(?:salePrice|price|originalPrice)"\\s*:\\s*["\']?([\\d,]+)["\']?/i);' +
@@ -130,7 +143,12 @@ const SCRAPE_SCRIPT =
     '}' +
     'if(!window.hasScraped){' +
       'window.hasScraped=true;' +
-      'window.ReactNativeWebView.postMessage(JSON.stringify({type:"SCRAPE_SUCCESS",payload:{productId:productId,name:name,price:price,wowPrice:wowPrice,image:image,isRocket:isRocket,deliveryType:deliveryType,spec:spec,brand:brand}}));' +
+      // TEMP DIAGNOSTIC — remove after use. Truncated raw HTML so we can
+      // inspect (server-side, via Firestore) whether m.coupang.com's page
+      // actually embeds a full sibling-option list, before building any
+      // parsing logic against a structure we haven't verified live.
+      'let debugHtml=rawHtml.length>500000?rawHtml.slice(0,500000):rawHtml;' +
+      'window.ReactNativeWebView.postMessage(JSON.stringify({type:"SCRAPE_SUCCESS",payload:{productId:productId,vendorItemId:vendorItemId,name:name,price:price,wowPrice:wowPrice,image:image,isRocket:isRocket,deliveryType:deliveryType,spec:spec,brand:brand,debugHtml:debugHtml}}));' +
     '}' +
   '},500);' +
   'true;';
@@ -214,11 +232,25 @@ export default function GlobalMagicNudge({ navigationRef }) {
     catch { clearAll(); return; }
 
     if (data.type === 'SCRAPE_SUCCESS') {
-      console.log('[MagicNudge] Scrape success:', data.payload);
+      const { debugHtml, ...loggablePayload } = data.payload;
+      console.log('[MagicNudge] Scrape success:', loggablePayload);
+      // TEMP DIAGNOSTIC — remove after use. Saves the raw page HTML our
+      // client webview actually captured, so we can inspect (via Firestore
+      // REST API) whether m.coupang.com's page embeds a full sibling-option
+      // list before writing any parsing logic against an unverified structure.
+      if (debugHtml) {
+        addDoc(collection(db, 'debug_scrapes'), {
+          productId: data.payload.productId,
+          vendorItemId: data.payload.vendorItemId ?? null,
+          name: data.payload.name ?? null,
+          html: debugHtml,
+          createdAt: serverTimestamp(),
+        }).catch((e) => console.log('[MagicNudge] debug capture failed:', e?.message));
+      }
       try {
         await registerProductFromClient(
-          data.payload.productId,
-          data.payload,
+          loggablePayload.productId,
+          loggablePayload,
           auth.currentUser?.uid,
         );
         ToastAndroid.show('세이브루에 등록 완료!', ToastAndroid.SHORT);

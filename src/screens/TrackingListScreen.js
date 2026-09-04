@@ -23,7 +23,7 @@ import { db, auth } from '../firebase/config';
 import { Ionicons } from '@expo/vector-icons';
 import { useTracking } from '../context/TrackingContext';
 import * as IntentLauncher from 'expo-intent-launcher';
-import { toggleSavedProduct, getCurrentUserSegment, getPeerPopularityMap, getPurchaseFrequencyMap } from '../services/saveService';
+import { removeSavedProductById, getCurrentUserSegment, getPeerPopularityMap, getPurchaseFrequencyMap } from '../services/saveService';
 import { getPriceIntelligence } from '../services/priceTrackingService';
 import { togglePriceAlert } from '../services/priceAlertService';
 import { setExpectingCoupangReturn } from '../utils/coupangIntentFlag';
@@ -43,6 +43,55 @@ const CURATION_CATEGORIES = [
 ];
 
 const SORT_OPTIONS = ['최신순', '할인율순', '오래된순', '낮은가격순', '즐겨찾기순'];
+
+// ─── Filter (관심상품 필터) ────────────────────────────────────────────────────
+// Only dimensions backed by real, currently-collected data — no 카테고리
+// (products don't carry a category field) and no 쇼핑몰 (single-source: 쿠팡
+// 공식 파트너스 API only). Faking either would repeat the exact
+// "looks like it works but does nothing" problem already fixed elsewhere.
+
+const DEFAULT_FILTERS = { deliveryType: 'all', excludeOutOfStock: false, priceRange: null };
+
+const DELIVERY_FILTER_OPTIONS = [
+  { value: 'all',          label: '전체' },
+  { value: 'rocket',       label: '🚀 로켓배송' },
+  { value: 'fresh',        label: '🌿 로켓프레시' },
+  { value: 'rocketSeller', label: '🚀 판매자로켓' },
+  { value: 'normal',       label: '📦 판매자배송' },
+];
+
+// [min, max] — max:null means "이상" (no upper bound)
+const PRICE_FILTER_OPTIONS = [
+  { label: '전체',       range: null },
+  { label: '1만원 이하',  range: [0, 10000] },
+  { label: '1~3만원',    range: [10000, 30000] },
+  { label: '3~5만원',    range: [30000, 50000] },
+  { label: '5만원 이상',  range: [50000, null] },
+];
+
+function applyProductFilters(items, filters) {
+  let arr = items;
+  if (filters.deliveryType !== 'all') {
+    arr = arr.filter((i) => i.deliveryType === filters.deliveryType);
+  }
+  if (filters.excludeOutOfStock) {
+    arr = arr.filter((i) => !i.isOutOfStock);
+  }
+  if (filters.priceRange) {
+    const [min, max] = filters.priceRange;
+    arr = arr.filter((i) => {
+      const p = i.currentPrice ?? 0;
+      return p >= min && (max == null || p <= max);
+    });
+  }
+  return arr;
+}
+
+function isSameRange(a, b) {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  return a[0] === b[0] && a[1] === b[1];
+}
 
 
 // ─── Curation card ────────────────────────────────────────────────────────────
@@ -154,7 +203,7 @@ export default function TrackingListScreen({ navigation }) {
               }
               const [productSnap, intel] = await Promise.all([
                 getDoc(doc(db, 'products', link.productGroupId)),
-                getPriceIntelligence(link.productGroupId),
+                getPriceIntelligence(link.productGroupId, link.optionId ?? null),
               ]);
               if (!productSnap.exists()) {
                 console.error('[TrackingList] Product doc not found:', link.productGroupId);
@@ -164,6 +213,9 @@ export default function TrackingListScreen({ navigation }) {
               return {
                 productId:        link.productGroupId,
                 savedId:          link.savedId,
+                originalId:       p.originalId ?? null,
+                optionId:         link.optionId ?? null,
+                vendorItemId:     link.vendorItemId ?? null,
                 name:             p.name         ?? '상품',
                 brand:            p.brand        ?? null,
                 image:            p.image        ?? null,
@@ -178,8 +230,10 @@ export default function TrackingListScreen({ navigation }) {
                 marketingAverage:    intel?.marketingAverage ?? null,
                 marketingDiscountPct: intel?.marketingDiscountPct ?? null,
                 lowestPrice:      intel?.lowest ?? null,
+                priceTrackedDays: intel?.priceTrackedDays ?? 0,
                 guidance:         intel?.guidance ?? null,
                 coupangUrl:       p.affiliateUrl ?? null,
+                isOutOfStock:     p.isOutOfStock ?? false,
                 // null (not 'normal') when the field was never captured —
                 // e.g. products registered before delivery-type extraction
                 // existed. 'normal' now means "checked, confirmed non-rocket"
@@ -247,16 +301,35 @@ export default function TrackingListScreen({ navigation }) {
   const [sortOption,         setSortOption]         = useState('최신순');
   const [isSortModalVisible,   setIsSortModalVisible]   = useState(false);
   const [isFilterModalVisible, setIsFilterModalVisible] = useState(false);
+  const [filters,      setFilters]      = useState(DEFAULT_FILTERS);
+  const [draftFilters, setDraftFilters] = useState(DEFAULT_FILTERS);
+  const isFilterActive = filters.deliveryType !== 'all' || filters.excludeOutOfStock || filters.priceRange != null;
+
+  const openFilterModal = useCallback(() => {
+    setDraftFilters(filters);
+    setIsFilterModalVisible(true);
+  }, [filters]);
+
+  // Preview count must respect the 즐겨찾기 toggle too — otherwise opening
+  // the filter modal while "즐겨찾기만 보기" is on shows a count that
+  // ignores it, so "N개 상품 보기" promises more than applying actually shows.
+  const draftFilteredCount = useMemo(() => {
+    const base = showOnlyFavorites ? globalTrackedItems.filter((i) => i.isFavorite) : globalTrackedItems;
+    return applyProductFilters(base, draftFilters).length;
+  }, [globalTrackedItems, showOnlyFavorites, draftFilters]);
 
   // Custom modals (RULE-9.4: no native Alert)
   const [clipConfirmUrl,    setClipConfirmUrl]    = useState(null);   // truthy = show confirm modal
   const [successModal,      setSuccessModal]      = useState(null);   // { title, body }
   const [pendingClipAction, setPendingClipAction] = useState(null);   // async fn to run on confirm
 
-  // Items shown in the FlatList — favorites filter applied when active.
-  const listData = showOnlyFavorites
-    ? globalTrackedItems.filter((i) => i.isFavorite)
-    : globalTrackedItems;
+  // Items shown in the FlatList — favorites toggle + 필터 modal both applied.
+  const listData = useMemo(() => {
+    const base = showOnlyFavorites
+      ? globalTrackedItems.filter((i) => i.isFavorite)
+      : globalTrackedItems;
+    return applyProductFilters(base, filters);
+  }, [globalTrackedItems, showOnlyFavorites, filters]);
 
   // Apply sort on top of the filtered list.
   const sortedData = useMemo(() => {
@@ -305,7 +378,9 @@ export default function TrackingListScreen({ navigation }) {
   const allSelected = sortedData.length > 0 && selectedIds.length === sortedData.length;
 
   const handleSelectAll = useCallback(() => {
-    setSelectedIds(allSelected ? [] : sortedData.map((i) => i.productId ?? i.savedId));
+    // savedId first — always unique per tracked link, unlike productId which
+    // repeats when the same parent is tracked under multiple options.
+    setSelectedIds(allSelected ? [] : sortedData.map((i) => i.savedId ?? i.productId));
   }, [allSelected, sortedData]);
 
   const handleDeleteSelected = useCallback(() => {
@@ -321,10 +396,12 @@ export default function TrackingListScreen({ navigation }) {
             // reconcile shortly after with the authoritative deleted state.
             selectedIds.forEach((id) => removeTrackedItem(id));
             exitEditMode();
-            const uid = auth.currentUser?.uid;
-            if (!uid) return;
+            // Direct delete-by-id (selectedIds are savedId values) — not
+            // toggleSavedProduct's query-by-productGroupId, which could
+            // delete the WRONG option's link if this parent has more than
+            // one tracked option.
             await Promise.all(
-              selectedIds.map((productId) => toggleSavedProduct(uid, productId).catch(() => {}))
+              selectedIds.map((savedId) => removeSavedProductById(savedId).catch(() => {}))
             );
           },
         },
@@ -336,7 +413,7 @@ export default function TrackingListScreen({ navigation }) {
   // If majority (≥50%) of selected items have the flag ON, turn all OFF; else ON.
   const handleToggleFlag = useCallback((flag) => {
     if (selectedIds.length === 0) return;
-    const selected = globalTrackedItems.filter((i) => selectedIds.includes(i.productId));
+    const selected = globalTrackedItems.filter((i) => selectedIds.includes(i.savedId ?? i.productId));
     const onCount  = selected.filter((i) => i[flag]).length;
     const nextVal  = onCount < selected.length; // flip to ON unless all already ON
     updateTrackedItems(selectedIds, { [flag]: nextVal });
@@ -358,7 +435,7 @@ export default function TrackingListScreen({ navigation }) {
   }, [selectedIds, globalTrackedItems, updateTrackedItems]);
 
   // Derive "active" state of each toggle button from selected items for visual feedback
-  const selectedItems     = globalTrackedItems.filter((i) => selectedIds.includes(i.productId));
+  const selectedItems     = globalTrackedItems.filter((i) => selectedIds.includes(i.savedId ?? i.productId));
   const allPriceAlertOn   = selectedItems.length > 0 && selectedItems.every((i) => i.isPriceAlertOn);
   const allRestockAlertOn = selectedItems.length > 0 && selectedItems.every((i) => i.isRestockAlertOn);
   const allFavorite       = selectedItems.length > 0 && selectedItems.every((i) => i.isFavorite);
@@ -431,18 +508,11 @@ export default function TrackingListScreen({ navigation }) {
       {/* Section divider */}
       <View style={styles.curationDivider} />
 
-
-      {/* Empty state — shown inside list when favorites filter yields nothing */}
-      {sortedData.length === 0 && showOnlyFavorites && (
-        <View style={styles.emptyState}>
-          <Text style={styles.emptyIcon}>📭</Text>
-          <Text style={styles.emptySub}>
-            {'즐겨찾기 상품이 없습니다.\n특정 상품을 즐겨찾기로 관리하세요.'}
-          </Text>
-        </View>
-      )}
-
-      {/* ── Control bar — always visible ── */}
+      {/* ── Control bar — always visible, directly under the curation
+          dashboard. Must render before the empty state below so 필터/정렬
+          never appear to "belong" under a "조건에 맞는 상품이 없어요"
+          message — the controls are what produced that result, so they
+          stay above it, not below. ── */}
       <View style={styles.controlBar}>
         {/* Left: sort order */}
         <TouchableOpacity
@@ -458,11 +528,12 @@ export default function TrackingListScreen({ navigation }) {
         <View style={styles.controlRight}>
           <TouchableOpacity
             style={styles.controlIconBtn}
-            onPress={isEditMode ? undefined : () => setIsFilterModalVisible(true)}
+            onPress={isEditMode ? undefined : openFilterModal}
             activeOpacity={0.7}
           >
-            <Ionicons name="funnel-outline" size={16} color="#64748b" />
-            <Text style={styles.controlIconText}>필터</Text>
+            <Ionicons name="funnel-outline" size={16} color={isFilterActive ? '#3b82f6' : '#64748b'} />
+            <Text style={[styles.controlIconText, isFilterActive && { color: '#3b82f6', fontWeight: '700' }]}>필터</Text>
+            {isFilterActive && <View style={styles.filterActiveDot} />}
           </TouchableOpacity>
 
           <TouchableOpacity
@@ -498,6 +569,30 @@ export default function TrackingListScreen({ navigation }) {
           </TouchableOpacity>
         </View>
       </View>
+
+      {/* Empty state — shown below the control bar when 즐겨찾기 and/or 필터
+          yields nothing (only when the user actually has tracked items —
+          the separate zero-state screen already handles a genuinely empty
+          list) */}
+      {sortedData.length === 0 && globalTrackedItems.length > 0 && (showOnlyFavorites || isFilterActive) && (
+        <View style={styles.emptyState}>
+          <Text style={styles.emptyIcon}>📭</Text>
+          <Text style={styles.emptySub}>
+            {showOnlyFavorites && isFilterActive
+              ? '즐겨찾기 + 필터 조건에 맞는 상품이 없어요.'
+              : showOnlyFavorites
+              ? '즐겨찾기 상품이 없습니다.\n특정 상품을 즐겨찾기로 관리하세요.'
+              : '필터 조건에 맞는 상품이 없어요.'}
+          </Text>
+          <TouchableOpacity
+            style={styles.emptyResetBtn}
+            onPress={() => { setShowOnlyFavorites(false); setFilters(DEFAULT_FILTERS); }}
+            activeOpacity={0.75}
+          >
+            <Text style={styles.emptyResetText}>조건 초기화</Text>
+          </TouchableOpacity>
+        </View>
+      )}
     </View>
   );
 
@@ -536,8 +631,13 @@ export default function TrackingListScreen({ navigation }) {
     }
   };
 
-  // Skeleton add card appended at the end (only when items exist)
-  const listDataWithAdd = isEmpty ? [] : [...sortedData, { isAddPlaceholder: true }];
+  // Skeleton add card appended at the end — only when the current view
+  // actually has items to append after. sortedData can be empty even when
+  // globalTrackedItems isn't (필터/즐겨찾기 조건에 안 맞는 경우), and in
+  // that case the dashed "상품 추가하기" card would render as the sole
+  // list item sitting right below the empty-state message, which reads as
+  // a broken duplicate CTA rather than a natural list continuation.
+  const listDataWithAdd = (isEmpty || sortedData.length === 0) ? [] : [...sortedData, { isAddPlaceholder: true }];
 
   return (
     <SafeAreaView edges={['bottom']} style={styles.container}>
@@ -584,7 +684,7 @@ export default function TrackingListScreen({ navigation }) {
       <FlatList
         key={viewMode}
         data={listDataWithAdd}
-        keyExtractor={(item) => item.isAddPlaceholder ? '__add__' : String(item.productId ?? item.savedId)}
+        keyExtractor={(item) => item.isAddPlaceholder ? '__add__' : String(item.savedId ?? item.productId)}
         numColumns={numColumns}
         columnWrapperStyle={viewMode !== 'list' ? (viewMode === 'grid3' ? styles.columnWrapperCompact : styles.columnWrapper) : undefined}
         ListHeaderComponent={SummaryBar}
@@ -593,7 +693,7 @@ export default function TrackingListScreen({ navigation }) {
           isEditMode && { paddingBottom: 180 },
         ]}
         showsVerticalScrollIndicator={false}
-        extraData={{ isEditMode, selectedIds, viewMode, showOnlyFavorites, sortOption, globalTrackedItems }}
+        extraData={{ isEditMode, selectedIds, viewMode, showOnlyFavorites, sortOption, filters, globalTrackedItems }}
         renderItem={({ item }) => {
           if (item.isAddPlaceholder) {
             if (viewMode === 'grid2') {
@@ -635,7 +735,7 @@ export default function TrackingListScreen({ navigation }) {
             <TrackingCard
               item={item}
               isEditMode={isEditMode}
-              isSelected={selectedIds.includes(item.productId ?? item.savedId)}
+              isSelected={selectedIds.includes(item.savedId ?? item.productId)}
               viewMode={viewMode}
               onRemove={removeTrackedItem}
               onToggleSelect={toggleSelect}
@@ -654,7 +754,7 @@ export default function TrackingListScreen({ navigation }) {
           <View style={styles.tooltipBox}>
             <View style={styles.tooltipArrow} />
             <Text style={styles.tooltipText}>
-              비슷한 환경에 있는 육아맘들의 관심 상품과 할인율이 높은 상품, 구매 할 때가 된 상품을 묶어서 보여드려요!
+              {'① 구매 타이밍 — 60일 평균가보다 10%↑ 저렴한 상품\n② 역대 최저가 — 지금까지 최저가를 기록 중인 상품\n③ 또래 추천 — 나 외에 비슷한 또래 맘 2명↑이 담은 상품\n④ 자주 산 상품 — 회원님이 2회↑ 구매하신 상품'}
             </Text>
           </View>
         </Pressable>
@@ -706,7 +806,73 @@ export default function TrackingListScreen({ navigation }) {
                 <Ionicons name="close" size={22} color="#334155" />
               </TouchableOpacity>
             </View>
-            <Text style={styles.modalPlaceholder}>필터 옵션이 곧 추가될 예정입니다.</Text>
+
+            <ScrollView style={{ maxHeight: 420 }} showsVerticalScrollIndicator={false}>
+              <Text style={styles.filterSectionTitle}>배송 유형</Text>
+              <View style={styles.filterChipRow}>
+                {DELIVERY_FILTER_OPTIONS.map((opt) => {
+                  const active = draftFilters.deliveryType === opt.value;
+                  return (
+                    <TouchableOpacity
+                      key={opt.value}
+                      style={[styles.filterChip, active && styles.filterChipActive]}
+                      onPress={() => setDraftFilters((f) => ({ ...f, deliveryType: opt.value }))}
+                      activeOpacity={0.75}
+                    >
+                      <Text style={[styles.filterChipText, active && styles.filterChipTextActive]}>{opt.label}</Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+
+              <Text style={styles.filterSectionTitle}>상품 상태</Text>
+              <View style={styles.filterChipRow}>
+                <TouchableOpacity
+                  style={[styles.filterChip, draftFilters.excludeOutOfStock && styles.filterChipActive]}
+                  onPress={() => setDraftFilters((f) => ({ ...f, excludeOutOfStock: !f.excludeOutOfStock }))}
+                  activeOpacity={0.75}
+                >
+                  <Text style={[styles.filterChipText, draftFilters.excludeOutOfStock && styles.filterChipTextActive]}>
+                    품절상품 제외
+                  </Text>
+                </TouchableOpacity>
+              </View>
+
+              <Text style={styles.filterSectionTitle}>가격대</Text>
+              <View style={styles.filterChipRow}>
+                {PRICE_FILTER_OPTIONS.map((opt) => {
+                  const active = isSameRange(draftFilters.priceRange, opt.range);
+                  return (
+                    <TouchableOpacity
+                      key={opt.label}
+                      style={[styles.filterChip, active && styles.filterChipActive]}
+                      onPress={() => setDraftFilters((f) => ({ ...f, priceRange: opt.range }))}
+                      activeOpacity={0.75}
+                    >
+                      <Text style={[styles.filterChipText, active && styles.filterChipTextActive]}>{opt.label}</Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            </ScrollView>
+
+            <View style={styles.filterFooter}>
+              <TouchableOpacity
+                style={styles.filterResetBtn}
+                onPress={() => setDraftFilters(DEFAULT_FILTERS)}
+                activeOpacity={0.75}
+              >
+                <Ionicons name="refresh" size={16} color="#64748b" />
+                <Text style={styles.filterResetText}>초기화</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.filterApplyBtn}
+                onPress={() => { setFilters(draftFilters); setIsFilterModalVisible(false); }}
+                activeOpacity={0.85}
+              >
+                <Text style={styles.filterApplyText}>{draftFilteredCount}개 상품 보기</Text>
+              </TouchableOpacity>
+            </View>
           </View>
         </View>
       </Modal>
@@ -951,6 +1117,11 @@ const styles = StyleSheet.create({
   emptyIcon:  { fontSize: 52, marginBottom: 16 },
   emptyTitle: { fontSize: 16, fontWeight: '700', color: '#334155', marginBottom: 8 },
   emptySub:   { fontSize: 14, color: '#94a3b8', textAlign: 'center', paddingHorizontal: 32, lineHeight: 21 },
+  emptyResetBtn: {
+    marginTop: 14, paddingHorizontal: 16, paddingVertical: 8,
+    borderRadius: 20, borderWidth: 1, borderColor: '#cbd5e1',
+  },
+  emptyResetText: { fontSize: 13, fontWeight: '700', color: '#475569' },
 
   // Curation dashboard
   curationRow: {
@@ -994,6 +1165,7 @@ const styles = StyleSheet.create({
   controlRight:    { flexDirection: 'row', gap: 12, alignItems: 'center' },
   controlIconBtn:  { flexDirection: 'row', alignItems: 'center', gap: 4 },
   controlIconText: { fontSize: 13, color: '#64748b' },
+  filterActiveDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: '#3b82f6' },
 
   // Divider below curation ScrollView
   curationDivider: { height: 8, backgroundColor: '#f1f5f9', width: '100%', marginBottom: 0 },
@@ -1060,7 +1232,32 @@ const styles = StyleSheet.create({
     borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: '#f1f5f9',
   },
   sortOptionText: { fontSize: 15, fontWeight: '500', color: '#334155' },
-  modalPlaceholder: { fontSize: 14, color: '#94a3b8', textAlign: 'center', marginTop: 24, marginBottom: 8 },
+
+  // Filter modal
+  filterSectionTitle: { fontSize: 13, fontWeight: '700', color: '#64748b', marginTop: 16, marginBottom: 8 },
+  filterChipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  filterChip: {
+    paddingHorizontal: 14, paddingVertical: 8,
+    borderRadius: 18, borderWidth: 1, borderColor: '#e2e8f0',
+    backgroundColor: '#f8fafc',
+  },
+  filterChipActive:     { backgroundColor: '#eff6ff', borderColor: '#3b82f6' },
+  filterChipText:       { fontSize: 13, fontWeight: '600', color: '#64748b' },
+  filterChipTextActive: { color: '#3b82f6', fontWeight: '800' },
+  filterFooter: {
+    flexDirection: 'row', gap: 10, marginTop: 20,
+  },
+  filterResetBtn: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4,
+    paddingHorizontal: 16, borderRadius: 12,
+    borderWidth: 1, borderColor: '#e2e8f0',
+  },
+  filterResetText: { fontSize: 14, fontWeight: '700', color: '#64748b' },
+  filterApplyBtn: {
+    flex: 1, paddingVertical: 15, borderRadius: 12,
+    backgroundColor: '#3b82f6', alignItems: 'center',
+  },
+  filterApplyText: { fontSize: 15, fontWeight: '800', color: '#fff' },
 
   // Tutorial modal
   tutorialSheet: {

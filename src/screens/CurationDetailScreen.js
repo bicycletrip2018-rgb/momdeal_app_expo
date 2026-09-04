@@ -26,18 +26,32 @@ import {
 import { auth } from '../firebase/config';
 import { useUser } from '../context/UserContext';
 import { resolveAgingPriceDisplay } from '../utils/priceDisplay';
-import { applyCurationFilter } from '../utils/curationFilters';
+import { applyCurationFilter, MIN_TRACKED_DAYS_FOR_LOWEST } from '../utils/curationFilters';
 import { getCurrentUserSegment, getPeerPopularityMap, getPurchaseFrequencyMap } from '../services/saveService';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-const SORT_OPTIONS = ['할인율순', '낮은가격순', '판매량순'];
+// goldbox/mamtem/pl_deals come straight from Coupang's own API order, where
+// "판매량순" (their default) is a real, API-provided ranking.
+const PRODUCT_LIST_SORT_OPTIONS = ['할인율순', '낮은가격순', '판매량순'];
+
+// Tracked items don't carry a reviewCount/salesRank field at all — a
+// "판매량순" option here would silently do nothing when tapped, so it's
+// excluded rather than offered as a non-functional choice.
+const TRACKED_SORT_OPTIONS = ['할인율순', '낮은가격순'];
 
 const CURATION_DESCRIPTIONS = {
-  timing:   '구매 적기가 다가온 상품들을 모았어요! 지금이 바로 살 때입니다.',
-  lowest:   '과거 가격 대비 하락 폭이 가장 큰 꿀템 모음입니다!',
-  peers:    '비슷한 또래 아이를 키우는 맘들이 가장 많이 관심 가진 상품이에요.',
-  frequent: '자주 재구매하는 소모품 중심으로 모아봤어요.',
+  timing:   '60일 평균가보다 10% 이상 저렴하게 나온 상품이에요. (역대 최저가 상품은 제외)',
+  lowest:   `지금까지 추적한 가격 중 가장 낮은 가격으로 판매되고 있는 상품이에요. (${MIN_TRACKED_DAYS_FOR_LOWEST}일 이상 추적된 상품만 표시)`,
+  peers:    '나 외에 비슷한 또래 아이를 키우는 맘 2명 이상이 함께 관심상품으로 등록한 상품이에요.',
+  frequent: '회원님이 2회 이상 구매하신 적 있는 재구매 상품이에요.',
+};
+
+const EMPTY_STATE_COPY = {
+  timing:   { title: '아직 할인 타이밍인 상품이 없어요',   sub: '60일 평균가보다 10% 이상 저렴해지면 이곳에 모아드릴게요.' },
+  lowest:   { title: '아직 역대 최저가 상품이 없어요',     sub: `${MIN_TRACKED_DAYS_FOR_LOWEST}일 이상 가격을 추적하면 역대 최저가 여부를 알려드려요.` },
+  peers:    { title: '아직 또래 맘 추천 상품이 없어요',     sub: '나 외에 비슷한 또래를 키우는 맘 2명 이상이 등록하면 이곳에 모여요.' },
+  frequent: { title: '아직 자주 산 상품이 없어요',         sub: '같은 상품을 2회 이상 구매하시면 이곳에 모아드릴게요.' },
 };
 
 // ─── Product Card (2-col grid) ────────────────────────────────────────────────
@@ -281,8 +295,6 @@ export default function CurationDetailScreen({ route, navigation }) {
         });
       case '낮은가격순':
         return arr.sort((a, b) => (a.currentPrice || 0) - (b.currentPrice || 0));
-      case '판매량순':
-        return arr.sort((a, b) => (b.reviewCount || b.salesRank || 0) - (a.reviewCount || a.salesRank || 0));
       default:
         return arr;
     }
@@ -398,7 +410,7 @@ export default function CurationDetailScreen({ route, navigation }) {
             <View style={styles.modalSheet}>
               <View style={styles.modalHandle} />
               <Text style={styles.modalTitle}>정렬</Text>
-              {SORT_OPTIONS.map((opt) => (
+              {PRODUCT_LIST_SORT_OPTIONS.map((opt) => (
                 <TouchableOpacity
                   key={opt}
                   style={[styles.sortOption, opt === productSortOption && styles.sortOptionActive]}
@@ -463,8 +475,8 @@ export default function CurationDetailScreen({ route, navigation }) {
         ListEmptyComponent={
           <View style={styles.emptyState}>
             <TrendingDown size={48} color="#94A3B8" />
-            <Text style={styles.emptyTitle}>해당 조건의 상품이 없습니다</Text>
-            <Text style={styles.emptySub}>다른 카테고리를 확인해보세요!</Text>
+            <Text style={styles.emptyTitle}>{EMPTY_STATE_COPY[curationId]?.title ?? '해당 조건의 상품이 없습니다'}</Text>
+            <Text style={styles.emptySub}>{EMPTY_STATE_COPY[curationId]?.sub ?? ''}</Text>
           </View>
         }
       />
@@ -480,7 +492,7 @@ export default function CurationDetailScreen({ route, navigation }) {
           <View style={styles.modalSheet}>
             <View style={styles.modalHandle} />
             <Text style={styles.modalTitle}>정렬</Text>
-            {SORT_OPTIONS.map((opt) => (
+            {TRACKED_SORT_OPTIONS.map((opt) => (
               <TouchableOpacity
                 key={opt}
                 style={[styles.sortOption, opt === sortOption && styles.sortOptionActive]}

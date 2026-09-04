@@ -20,11 +20,18 @@ function todayKey() {
 }
 
 // Updates (or creates) the daily max/min record for a product under
-// products/{productId}/daily_prices/{YYYY-MM-DD}.
+// products/{productId}/daily_prices/{YYYY-MM-DD}, or
+// products/{productId}/daily_prices/{YYYY-MM-DD}_{optionId} when optionId is
+// given — different options (colors/sizes/quantities) of the same parent
+// product can sell at very different prices, so mixing them into one bucket
+// would make the 60일 평균/차트 mean nothing specific. optionId omitted keeps
+// the original parent-level bucket exactly as before (legacy items with no
+// captured option keep working unchanged).
 // Called automatically by recordPrice whenever a valid price is observed.
-async function _updateDailyPrice(productId, price) {
+async function _updateDailyPrice(productId, price, optionId = null) {
   const dateKey = todayKey();
-  const ref = doc(db, 'products', productId, 'daily_prices', dateKey);
+  const docId = optionId ? `${dateKey}_${optionId}` : dateKey;
+  const ref = doc(db, 'products', productId, 'daily_prices', docId);
   // Use setDoc with merge so we only overwrite max/min if the new price beats them.
   // Firestore doesn't support conditional field updates in a single write without
   // a transaction, so we fetch first then write — acceptable for low-frequency calls.
@@ -35,10 +42,10 @@ async function _updateDailyPrice(productId, price) {
     const newMax = Math.max(existing.maxPrice, price);
     const newMin = Math.min(existing.minPrice, price);
     if (newMax !== existing.maxPrice || newMin !== existing.minPrice) {
-      await setDoc(ref, { maxPrice: newMax, minPrice: newMin, date: dateKey }, { merge: true });
+      await setDoc(ref, { maxPrice: newMax, minPrice: newMin, date: dateKey, ...(optionId ? { optionId } : {}) }, { merge: true });
     }
   } else {
-    await setDoc(ref, { maxPrice: price, minPrice: price, date: dateKey });
+    await setDoc(ref, { maxPrice: price, minPrice: price, date: dateKey, ...(optionId ? { optionId } : {}) });
   }
 }
 
@@ -49,7 +56,12 @@ async function _updateDailyPrice(productId, price) {
 //   Σ (dailyMax + dailyMin) / 2  ÷  number_of_valid_days
 //
 // Returns { marketingAverage, validDays, dailyPrices } or null if no data.
-export async function getMarketingAverage(productId, days = 60) {
+// optionId: when given, only that option's daily buckets count; when
+// omitted, only legacy parent-level buckets (no optionId field) count —
+// filtered client-side after a single date-range fetch rather than via a
+// second `where('optionId', ...)` clause, which would need a new composite
+// index (date range + optionId equality) on top of what's already deployed.
+export async function getMarketingAverage(productId, days = 60, optionId = null) {
   if (!productId) return null;
 
   // Compute cutoff date string (YYYY-MM-DD) without external libs.
@@ -67,7 +79,12 @@ export async function getMarketingAverage(productId, days = 60) {
 
   if (snap.empty) return null;
 
-  const dailyPrices = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+  const dailyPrices = snap.docs
+    .map((d) => ({ id: d.id, ...d.data() }))
+    .filter((r) => (optionId ? r.optionId === optionId : !r.optionId));
+
+  if (dailyPrices.length === 0) return null;
+
   const validDays = dailyPrices.length;
   const sum = dailyPrices.reduce((acc, r) => acc + (r.maxPrice + r.minPrice) / 2, 0);
   const marketingAverage = Math.round(sum / validDays);
@@ -91,17 +108,21 @@ export function calcMarketingDiscountPct(marketingAverage, currentPrice) {
 // only this service actually read — two collections holding the same kind
 // of record, kept in sync by hand. Also updates today's daily_prices bucket.
 // Does nothing if price is missing or 0.
-export async function recordPrice(productId, price, source, extraFields = {}) {
+// optionId: stamps the offer with which option (color/size/quantity) this
+// price belongs to, and routes the daily bucket accordingly. Omitted keeps
+// writing to the shared parent-level bucket exactly as before.
+export async function recordPrice(productId, price, source, extraFields = {}, optionId = null) {
   if (!productId || typeof price !== 'number' || price <= 0) return;
 
   await Promise.all([
     addDoc(collection(db, 'products', productId, 'offers'), {
       ...extraFields,
+      ...(optionId ? { optionId } : {}),
       price,
       source: source || 'unknown',
       checkedAt: serverTimestamp(),
     }),
-    _updateDailyPrice(productId, price),
+    _updateDailyPrice(productId, price, optionId),
   ]);
 }
 
@@ -151,20 +172,32 @@ export async function getPriceChange(productId) {
 // Includes stats (lowest/highest/average), percentile, guidance text,
 // graph data (oldest-first array for rendering), and change since last check.
 // Returns null if fewer than 1 valid price record exists.
-export async function getPriceIntelligence(productId) {
+// optionId: when given, only offers for that exact option count (see
+// recordPrice) — different options can price very differently, so mixing
+// them would make "역대 최저가"/평균 meaningless. Fetches a wider window
+// (150 vs 30) before filtering since the raw offers collection interleaves
+// every tracked option's checks in one time-ordered stream; this stays
+// index-free (single orderBy on checkedAt) rather than adding a composite
+// index for optionId+checkedAt.
+export async function getPriceIntelligence(productId, optionId = null) {
   if (!productId) return null;
 
   const snap = await getDocs(
     query(
       collection(db, 'products', productId, 'offers'),
       orderBy('checkedAt', 'desc'),
-      limit(30)
+      limit(optionId ? 150 : 30)
     )
   );
   if (snap.empty) return null;
 
-  const prices = snap.docs
-    .map((d) => d.data().price)
+  const relevantDocs = snap.docs
+    .map((d) => d.data())
+    .filter((d) => (optionId ? d.optionId === optionId : !d.optionId))
+    .slice(0, 30);
+
+  const prices = relevantDocs
+    .map((d) => d.price)
     .filter((p) => typeof p === 'number' && p > 0);
   if (prices.length === 0) return null;
 
@@ -205,11 +238,16 @@ export async function getPriceIntelligence(productId) {
   // Marketing average (Tech Spec V7) — fetched in parallel, non-blocking on failure.
   let marketingAverage = null;
   let marketingDiscountPct = null;
+  let priceTrackedDays = 0;
   try {
-    const mktData = await getMarketingAverage(productId, 60);
+    const mktData = await getMarketingAverage(productId, 60, optionId);
     if (mktData) {
       marketingAverage = mktData.marketingAverage;
       marketingDiscountPct = calcMarketingDiscountPct(mktData.marketingAverage, currentPrice);
+      // Distinct days with a daily_prices record — used to gate claims like
+      // "역대 최저가" that only mean something once there's real multi-day
+      // history (a single observation trivially equals its own min/max).
+      priceTrackedDays = mktData.validDays;
     }
   } catch (_) { /* non-fatal */ }
 
@@ -227,5 +265,6 @@ export async function getPriceIntelligence(productId) {
     recordCount: prices.length,
     marketingAverage,
     marketingDiscountPct,
+    priceTrackedDays,
   };
 }

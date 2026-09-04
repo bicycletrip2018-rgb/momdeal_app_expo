@@ -100,6 +100,22 @@ function TargetPriceBar({ currentPrice, targetPrice }) {
   );
 }
 
+// ─── OutOfStockOverlay ────────────────────────────────────────────────────────
+// Darkens the product image and stamps "품절" on it — isOutOfStock is real,
+// server-refreshed stock state (see functions/index.js scheduledPriceUpdate),
+// so a tracked item going out of stock should be obvious without needing the
+// 필터 modal's "품절상품 제외" toggle to find out.
+
+function OutOfStockOverlay() {
+  return (
+    <View style={styles.outOfStockOverlay}>
+      <View style={styles.outOfStockBadge}>
+        <Text style={styles.outOfStockText}>품절</Text>
+      </View>
+    </View>
+  );
+}
+
 // ─── DeliveryBadge ────────────────────────────────────────────────────────────
 
 function DeliveryBadge({ deliveryType }) {
@@ -139,7 +155,11 @@ export function TrackingCard({
   const pct       = resolveDiscountPct(item);
   const orig      = (item.currentPrice || 0) + (item.priceDrop || 0);
   const aging     = resolveAgingPriceDisplay(item, isWowMember);
-  const itemId    = item.productId ?? item.savedId;
+  // savedId first: it's always unique per tracked link, whereas productId
+  // repeats when the same parent product is tracked under multiple options
+  // (see optionId) — keying off productId there would make two different
+  // option-cards act as one for selection/edit-mode.
+  const itemId    = item.savedId ?? item.productId;
   const isList    = viewMode === 'list';
   const isCompact = viewMode === 'grid3';
 
@@ -153,7 +173,7 @@ export function TrackingCard({
   if (isList) {
     return (
       <TouchableOpacity
-        style={[styles.listCard, isSelected && styles.cardSelected]}
+        style={[styles.listCard, isSelected && styles.cardSelected, item.isOutOfStock && styles.cardOutOfStock]}
         onPress={handlePress}
         onLongPress={handleLongPress}
         delayLongPress={350}
@@ -167,6 +187,7 @@ export function TrackingCard({
               <Text style={{ fontSize: 22 }}>🛍️</Text>
             </View>
           )}
+          {item.isOutOfStock && <OutOfStockOverlay />}
           {isEditMode && (
             <View style={[styles.checkbox, isSelected && styles.checkboxSelected]}>
               {isSelected && <Text style={styles.checkboxMark}>✓</Text>}
@@ -227,7 +248,7 @@ export function TrackingCard({
   if (isCompact) {
     return (
       <TouchableOpacity
-        style={[styles.compactCard, isSelected && styles.cardSelected]}
+        style={[styles.compactCard, isSelected && styles.cardSelected, item.isOutOfStock && styles.cardOutOfStock]}
         onPress={handlePress}
         onLongPress={handleLongPress}
         delayLongPress={350}
@@ -241,6 +262,7 @@ export function TrackingCard({
               <Text style={{ fontSize: 20 }}>🛍️</Text>
             </View>
           )}
+          {item.isOutOfStock && <OutOfStockOverlay />}
           {/* Discount badge — bottom-left; hidden during blind mode */}
           {aging.mode === 'active' && aging.discountPct != null && aging.discountPct > 0 && (
             <View style={styles.compactDiscountBadge}>
@@ -279,7 +301,7 @@ export function TrackingCard({
   // Standard grid card (2-column)
   return (
     <TouchableOpacity
-      style={[styles.gridCard, isSelected && styles.cardSelected]}
+      style={[styles.gridCard, isSelected && styles.cardSelected, item.isOutOfStock && styles.cardOutOfStock]}
       onPress={handlePress}
       onLongPress={handleLongPress}
       delayLongPress={350}
@@ -293,6 +315,7 @@ export function TrackingCard({
             <Text style={{ fontSize: 32 }}>🛍️</Text>
           </View>
         )}
+        {item.isOutOfStock && <OutOfStockOverlay />}
         <GridStatusOverlay item={item} />
         {isEditMode && (
           <View style={[styles.checkbox, isSelected && styles.checkboxSelected]}>
@@ -370,6 +393,20 @@ const styles = StyleSheet.create({
   listStatusRow: { flexDirection: 'row', gap: 4, flexWrap: 'wrap', marginBottom: 2 },
 
   cardSelected: { borderColor: '#3b82f6', borderWidth: 2, opacity: 0.92 },
+  cardOutOfStock: { opacity: 0.6 },
+
+  // Out-of-stock image overlay
+  outOfStockOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(15,23,42,0.4)',
+    alignItems: 'center', justifyContent: 'center',
+    zIndex: 4,
+  },
+  outOfStockBadge: {
+    backgroundColor: 'rgba(15,23,42,0.85)',
+    paddingHorizontal: 10, paddingVertical: 4, borderRadius: 6,
+  },
+  outOfStockText: { fontSize: 12, fontWeight: '800', color: '#fff', letterSpacing: 1 },
 
   // StatusBadge: grid circular variant
   statusCircle: {

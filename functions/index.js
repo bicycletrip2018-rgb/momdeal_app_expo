@@ -70,7 +70,21 @@ const cleanName  = (raw)  => String(raw || '쿠팡 상품').replace(/\[LIVE서�
 // mean of (dailyMax+dailyMin)/2 over the last `days` days. Used to decide
 // whether a price change is actually notification-worthy (see
 // scheduledPriceUpdate), not just a noisy blip vs the last single check.
-async function getServerMarketingAverage(productGroupId, days = 60) {
+// Turns a raw option name (e.g. "3단계 56매(특대형)") into a stable key safe
+// for use inside a Firestore document ID — RULE-08 requires optionId to be
+// a normalized, human-readable key, never Coupang's raw numeric itemId,
+// specifically so two sellers listing the same real option under different
+// vendorItemIds still collapse into one shared price history instead of
+// fragmenting it per-listing.
+function normalizeOptionId(optionLabel) {
+  if (!optionLabel || typeof optionLabel !== "string") return null;
+  const cleaned = optionLabel.trim().replace(/[\s/]+/g, "_").replace(/[^\p{L}\p{N}_-]/gu, "");
+  return cleaned || null;
+}
+
+// optionId: when given, only that option's daily buckets/rows count — see
+// updateDailyPriceBucket below for why options can't share one bucket.
+async function getServerMarketingAverage(productGroupId, days = 60, optionId = null) {
   const cutoff = new Date();
   cutoff.setUTCDate(cutoff.getUTCDate() - days);
   const cutoffKey = cutoff.toISOString().slice(0, 10);
@@ -79,25 +93,32 @@ async function getServerMarketingAverage(productGroupId, days = 60) {
     .where("date", ">=", cutoffKey)
     .get();
   if (snap.empty) return null;
-  const rows = snap.docs.map((d) => d.data());
+  const rows = snap.docs.map((d) => d.data()).filter((r) => (optionId ? r.optionId === optionId : !r.optionId));
+  if (rows.length === 0) return null;
   const sum = rows.reduce((acc, r) => acc + (r.maxPrice + r.minPrice) / 2, 0);
   return Math.round(sum / rows.length);
 }
 
-async function updateDailyPriceBucket(productGroupId, price) {
+// optionId: routes to products/{id}/daily_prices/{date}_{optionId} instead
+// of the shared {date} bucket — different options of the same parent can
+// price very differently (color/size/quantity), so mixing them would make
+// the 60일 평균/할인율 meaningless. Omitted keeps writing to the original
+// parent-level bucket exactly as before (legacy items unaffected).
+async function updateDailyPriceBucket(productGroupId, price, optionId = null) {
   const dateKey = new Date().toISOString().slice(0, 10);
+  const docId = optionId ? `${dateKey}_${optionId}` : dateKey;
   const ref = admin.firestore().collection("products").doc(productGroupId)
-    .collection("daily_prices").doc(dateKey);
+    .collection("daily_prices").doc(docId);
   const snap = await ref.get();
   if (snap.exists) {
     const existing = snap.data();
     const newMax = Math.max(existing.maxPrice, price);
     const newMin = Math.min(existing.minPrice, price);
     if (newMax !== existing.maxPrice || newMin !== existing.minPrice) {
-      await ref.set({ maxPrice: newMax, minPrice: newMin, date: dateKey }, { merge: true });
+      await ref.set({ maxPrice: newMax, minPrice: newMin, date: dateKey, ...(optionId ? { optionId } : {}) }, { merge: true });
     }
   } else {
-    await ref.set({ maxPrice: price, minPrice: price, date: dateKey });
+    await ref.set({ maxPrice: price, minPrice: price, date: dateKey, ...(optionId ? { optionId } : {}) });
   }
 }
 
@@ -1083,7 +1104,13 @@ const parseProductFromUrl = (url) => {
  * Coupang: Partners API → v4 JSON API → placeholder fallback.
  * Add new market cases here (naver, 11st, …) without touching other code.
  */
-const fetchProductDetailsByMarket = async (market, originalId) => {
+// vendorItemId: when given, this is a request for ONE specific option's
+// price/name, not the parent page's default. Only tryV4Api supports
+// pricing a specific option (Partners API only ever prices the parent's
+// default option), so v4's result takes priority over Partners' in that
+// case — Partners still contributes whatever it can (image) either way.
+// Omitting vendorItemId preserves the exact original parent-level behavior.
+const fetchProductDetailsByMarket = async (market, originalId, vendorItemId = null) => {
   switch (market) {
     case "coupang": {
       const accessKey = process.env.COUPANG_ACCESS_KEY;
@@ -1092,31 +1119,42 @@ const fetchProductDetailsByMarket = async (market, originalId) => {
       if (accessKey && secretKey) {
         const [pRes, v4Res] = await Promise.allSettled([
           tryPartnersApi(originalId, accessKey, secretKey),
-          tryV4Api(originalId, null),
+          tryV4Api(originalId, vendorItemId),
         ]);
         const partners = pRes.status === "fulfilled" ? pRes.value : null;
         const v4 = v4Res.status === "fulfilled" ? v4Res.value : null;
 
+        if (vendorItemId && v4) {
+          return {
+            name: v4.name,
+            price: v4.price,
+            image: partners?.image ?? null,
+            isOutOfStock: v4.isOutOfStock,
+            optionName: v4.optionName,
+          };
+        }
         if (partners) {
           return {
             name: partners.name,
             price: partners.price,
             image: partners.image,
             isOutOfStock: v4?.isOutOfStock ?? false,
+            optionName: v4?.optionName ?? null,
           };
         }
         if (v4) {
-          return { name: v4.name, price: v4.price, image: null, isOutOfStock: v4.isOutOfStock };
+          return { name: v4.name, price: v4.price, image: null, isOutOfStock: v4.isOutOfStock, optionName: v4.optionName ?? null };
         }
       }
 
       // Keys not configured or both failed — try v4 alone
-      const v4Result = await tryV4Api(originalId, null);
+      const v4Result = await tryV4Api(originalId, vendorItemId);
       if (v4Result) {
-        return { name: v4Result.name, price: v4Result.price, image: null, isOutOfStock: v4Result.isOutOfStock };
+        return { name: v4Result.name, price: v4Result.price, image: null, isOutOfStock: v4Result.isOutOfStock, optionName: v4Result.optionName ?? null };
       }
 
-      // Last resort: HTML scraping with cheerio-backed selectors
+      // Last resort: HTML scraping with cheerio-backed selectors (parent
+      // page only — no option-level signal available from raw HTML)
       try {
         console.log(`[fetchProductDetailsByMarket] HTML scraping fallback for productId=${originalId}`);
         const htmlRes = await axios.get(`https://www.coupang.com/vp/products/${originalId}`, {
@@ -1133,17 +1171,18 @@ const fetchProductDetailsByMarket = async (market, originalId) => {
               price: scraped.price,
               image: scraped.image ?? null,
               isOutOfStock: scraped.isOutOfStock,
+              optionName: null,
             };
           }
         }
       } catch (_) {}
 
-      return { name: "쿠팡 상품", price: null, image: null, isOutOfStock: false };
+      return { name: "쿠팡 상품", price: null, image: null, isOutOfStock: false, optionName: null };
     }
     // Future: case "naver": ...
     // Future: case "11st": ...
     default:
-      return { name: "상품", price: null, image: null, isOutOfStock: false };
+      return { name: "상품", price: null, image: null, isOutOfStock: false, optionName: null };
   }
 };
 
@@ -1521,6 +1560,154 @@ exports.registerProductFromHtml = functions.https.onCall(async (request) => {
 // Rate-limit strategy: 10 products per batch, 1-second delay between batches.
 // ---------------------------------------------------------------------------
 
+// Refreshes ONE price point for a product — either the parent's default
+// option (option = null, the original single-price-per-product behavior)
+// or one specific tracked option (color/size/quantity). Splitting this out
+// lets a parent with N tracked options fetch and record all N independently
+// instead of the pre-option-aware code's single fetch that could only ever
+// reflect whichever option Coupang's default page happened to show.
+//
+// Notification cooldown/state lives on the trackedOptions doc for the
+// option path (not the shared parent doc) so one option's price-drop ping
+// doesn't silence a different option's ping for 24h. Known gap:
+// onPriceDropNotify (the fan-out to users) currently matches only on
+// productGroupId, so users tracking a DIFFERENT option of this same parent
+// may still get pinged for an option they don't have — acceptable
+// over-notification, not a correctness/data-loss risk, flagged here as a
+// follow-up rather than solved in this pass.
+async function refreshOneOffer(firestoreDb, productDoc, product, market, originalId, option) {
+  const vendorItemId = option?.vendorItemId ?? null;
+  const optionId = option?.optionId ?? null;
+  const details = await fetchProductDetailsByMarket(market, originalId, vendorItemId);
+
+  const oosNow = details.isOutOfStock === true;
+
+  if (details.price == null || details.price <= 0) {
+    // Out-of-stock state is only meaningful to persist on the shared parent
+    // doc for the no-option path — an option-specific OOS state belongs on
+    // its own trackedOptions doc, not the parent's single isOutOfStock field.
+    if (!option) {
+      const wasOos = product.isOutOfStock === true;
+      if (oosNow !== wasOos) {
+        await productDoc.ref.update({
+          isOutOfStock: oosNow,
+          priceLastUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        });
+      }
+    } else if (oosNow !== (option.isOutOfStock === true)) {
+      await productDoc.ref.collection("trackedOptions").doc(option.id).set(
+        { isOutOfStock: oosNow }, { merge: true }
+      ).catch(() => {});
+    }
+    return;
+  }
+
+  const newPrice = details.price;
+
+  // Roll into today's daily max/min bucket on every check (feeds the
+  // 60-day marketing average — DetailScreen's chart and, via
+  // getPriceIntelligence, the 관심상품 thumbnail discount badges).
+  await updateDailyPriceBucket(productDoc.id, newPrice, optionId).catch(() => {});
+
+  // Cache a human-readable option label once Coupang's v4 API resolves one
+  // (e.g. "3단계 56매") — never changes optionId itself, which stays the
+  // stable vendorItemId-derived key; this is display text only.
+  if (option && details.optionName && details.optionName !== option.optionLabel) {
+    await productDoc.ref.collection("trackedOptions").doc(option.id).set(
+      { optionLabel: details.optionName }, { merge: true }
+    ).catch(() => {});
+  }
+
+  const prevPrice = option
+    ? (typeof option.lastPrice === "number" && option.lastPrice > 0 ? option.lastPrice : null)
+    : (typeof product.currentPrice === "number" && product.currentPrice > 0 ? product.currentPrice : null);
+  const dropPct = prevPrice !== null && newPrice < prevPrice ? (prevPrice - newPrice) / prevPrice : 0;
+  const priceChanged = newPrice !== prevPrice;
+
+  if (priceChanged) {
+    // Snapshot in offers sub-collection (powers ProductDetail recent list)
+    await productDoc.ref.collection("offers").add({
+      price: newPrice,
+      checkedAt: admin.firestore.FieldValue.serverTimestamp(),
+      source: "scheduled",
+      ...(optionId ? { optionId } : {}),
+    });
+  }
+
+  // ── Notification-worthy check ────────────────────────────────────────────
+  // Deliberately NOT the same as the lastPriceDrop badge (any
+  // last-check-vs-current decrease). A push/in-app notification needs a
+  // higher bar or it trains users to ignore it:
+  //   1. ≥10% below the 60-day weighted average (same bar as the
+  //      "구매 타이밍" curation folder — what earns a folder slot also
+  //      earns a ping, for consistency)
+  //   2. AND ≥₩1,000 absolute drop from that average (a 10% dip on a
+  //      ₩3,000 item is real money-wise noise, not a deal)
+  //   3. AND no notification already sent for this option in the last 24h
+  async function checkNotifyWorthy(lastNotifiedAtField) {
+    if (!priceChanged) return null;
+    const marketingAverage = await getServerMarketingAverage(productDoc.id, 60, optionId).catch(() => null);
+    if (!marketingAverage || marketingAverage <= 0) return null;
+    const avgDiscountPct = ((marketingAverage - newPrice) / marketingAverage) * 100;
+    const avgAbsDrop = marketingAverage - newPrice;
+    const lastNotifiedAt = lastNotifiedAtField?.toMillis?.() ?? 0;
+    const cooledDown = Date.now() - lastNotifiedAt > 24 * 60 * 60 * 1000;
+    if (avgDiscountPct >= 10 && avgAbsDrop >= 1000 && cooledDown) {
+      await firestoreDb.collection("user_product_actions").add({
+        productGroupId: productDoc.id,
+        actionType: "price_drop_event",
+        ...(optionId ? { optionId } : {}),
+        priceBefore: marketingAverage,
+        priceAfter: newPrice,
+        dropPercent: Math.round(avgDiscountPct),
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+      console.log(
+        `scheduledPriceUpdate: 📉 notify — ${Math.round(avgDiscountPct)}% below 60d avg on ${productDoc.id}${optionId ? `/${optionId}` : ""}`
+      );
+      return admin.firestore.FieldValue.serverTimestamp();
+    }
+    return null;
+  }
+
+  if (!option) {
+    // ── parent-level path — identical to the original single-price behavior ──
+    const updateFields = {
+      priceLastUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      isOutOfStock: oosNow,
+    };
+    if (priceChanged) {
+      updateFields.currentPrice = newPrice;
+      if (dropPct > 0.05) {
+        updateFields.lastPriceDrop = prevPrice - newPrice;
+        updateFields.lastPriceDropPct = Math.round(dropPct * 100);
+      } else if (prevPrice !== null && newPrice > prevPrice) {
+        updateFields.lastPriceDrop = 0;
+        updateFields.lastPriceDropPct = 0;
+      }
+      const notifiedAt = await checkNotifyWorthy(product.lastPriceDropNotifiedAt);
+      if (notifiedAt) updateFields.lastPriceDropNotifiedAt = notifiedAt;
+    }
+    await productDoc.ref.update(updateFields);
+    return;
+  }
+
+  // ── option-level path — state lives on the trackedOptions doc ──
+  const optFields = { lastPrice: newPrice, lastCheckedAt: admin.firestore.FieldValue.serverTimestamp(), isOutOfStock: oosNow };
+  if (priceChanged) {
+    if (dropPct > 0.05) {
+      optFields.lastPriceDrop = prevPrice - newPrice;
+      optFields.lastPriceDropPct = Math.round(dropPct * 100);
+    } else if (prevPrice !== null && newPrice > prevPrice) {
+      optFields.lastPriceDrop = 0;
+      optFields.lastPriceDropPct = 0;
+    }
+    const notifiedAt = await checkNotifyWorthy(option.lastPriceDropNotifiedAt);
+    if (notifiedAt) optFields.lastPriceDropNotifiedAt = notifiedAt;
+  }
+  await productDoc.ref.collection("trackedOptions").doc(option.id).set(optFields, { merge: true }).catch(() => {});
+}
+
 exports.scheduledPriceUpdate = onSchedule("every 3 hours", async () => {
     const firestoreDb = admin.firestore();
     const now = Date.now();
@@ -1599,109 +1786,39 @@ exports.scheduledPriceUpdate = onSchedule("every 3 hours", async () => {
       await Promise.all(
         batch.map(async (productDoc) => {
           const product = productDoc.data();
-          const { market, originalId, currentPrice } = product;
+          const { market, originalId } = product;
 
           if (!market || !originalId) return;
 
           try {
-            const details = await fetchProductDetailsByMarket(market, originalId);
+            // Enumerate actively-tracked options for this parent — cheap
+            // (small per-parent subcollection maintained by
+            // onSavedProductCreate/Delete), avoids a full
+            // user_saved_products scan every 3 hours. Empty for
+            // legacy/never-option-captured parents, which fall through to
+            // the exact original parent-level refresh below.
+            const optionsSnap = await productDoc.ref
+              .collection("trackedOptions")
+              .where("trackingCount", ">", 0)
+              .get();
+            const options = optionsSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
 
-            // Always persist OOS state when explicitly detected, even if price unavailable
-            const oosNow = details.isOutOfStock === true;
-            const wasOos = product.isOutOfStock === true;
-
-            if (details.price == null || details.price <= 0) {
-              if (oosNow !== wasOos) {
-                await productDoc.ref.update({
-                  isOutOfStock: oosNow,
-                  priceLastUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
-                });
-              }
-              return;
+            if (options.length === 0) {
+              await refreshOneOffer(firestoreDb, productDoc, product, market, originalId, null);
+            } else {
+              await Promise.all(
+                options.map((opt) => refreshOneOffer(firestoreDb, productDoc, product, market, originalId, opt))
+              );
+              // Options path skips the parent-doc update inside
+              // refreshOneOffer (that write only means something for the
+              // no-option/legacy case) — still touch priceLastUpdatedAt so
+              // Tier B's 24h staleness check doesn't think this parent was
+              // never checked and keeps re-adding it every run.
+              await productDoc.ref.set(
+                { priceLastUpdatedAt: admin.firestore.FieldValue.serverTimestamp() },
+                { merge: true }
+              );
             }
-
-            const newPrice = details.price;
-
-            // Roll into today's daily max/min bucket on every check (feeds the
-            // 60-day marketing average — DetailScreen's chart and, via
-            // getPriceIntelligence, the 관심상품 thumbnail discount badges).
-            // The per-check raw log lives in products/{id}/offers, written
-            // below only when the price actually changes — getPriceIntelligence
-            // reads that subcollection now (was a separate flat
-            // product_price_history collection only this one reader used).
-            await updateDailyPriceBucket(productDoc.id, newPrice).catch(() => {});
-
-            const prevPrice =
-              typeof currentPrice === "number" && currentPrice > 0
-                ? currentPrice
-                : null;
-            const dropPct =
-              prevPrice !== null && newPrice < prevPrice
-                ? (prevPrice - newPrice) / prevPrice
-                : 0;
-
-            // Always update priceLastUpdatedAt; sync OOS state; update currentPrice if changed
-            const updateFields = {
-              priceLastUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
-              isOutOfStock: oosNow,
-            };
-
-            if (newPrice !== currentPrice) {
-              updateFields.currentPrice = newPrice;
-
-              if (dropPct > 0.05) {
-                // Persist drop signal on doc for MyPage badge — no extra query needed
-                updateFields.lastPriceDrop = prevPrice - newPrice;
-                updateFields.lastPriceDropPct = Math.round(dropPct * 100);
-              } else if (prevPrice !== null && newPrice > prevPrice) {
-                // Price rose — clear stale drop badge
-                updateFields.lastPriceDrop = 0;
-                updateFields.lastPriceDropPct = 0;
-              }
-
-              // Snapshot in offers sub-collection (powers ProductDetail recent list)
-              await productDoc.ref.collection("offers").add({
-                price: newPrice,
-                checkedAt: admin.firestore.FieldValue.serverTimestamp(),
-                source: "scheduled",
-              });
-
-              // ── Notification-worthy check ──────────────────────────────────────
-              // Deliberately NOT the same as the lastPriceDrop badge above (any
-              // last-check-vs-current decrease). A push/in-app notification needs
-              // a higher bar or it trains users to ignore it:
-              //   1. ≥10% below the 60-day weighted average (same bar as the
-              //      "구매 타이밍" curation folder — what earns a folder slot
-              //      also earns a ping, for consistency)
-              //   2. AND ≥₩1,000 absolute drop from that average (a 10% dip on a
-              //      ₩3,000 item is real money-wise noise, not a deal)
-              //   3. AND no notification already sent for this product in the
-              //      last 24h (price wobbling near the line shouldn't spam)
-              const marketingAverage = await getServerMarketingAverage(productDoc.id).catch(() => null);
-              if (marketingAverage && marketingAverage > 0) {
-                const avgDiscountPct = ((marketingAverage - newPrice) / marketingAverage) * 100;
-                const avgAbsDrop = marketingAverage - newPrice;
-                const lastNotifiedAt = product.lastPriceDropNotifiedAt?.toMillis?.() ?? 0;
-                const cooledDown = Date.now() - lastNotifiedAt > 24 * 60 * 60 * 1000;
-
-                if (avgDiscountPct >= 10 && avgAbsDrop >= 1000 && cooledDown) {
-                  await firestoreDb.collection("user_product_actions").add({
-                    productGroupId: productDoc.id,
-                    actionType: "price_drop_event",
-                    priceBefore: marketingAverage,
-                    priceAfter: newPrice,
-                    dropPercent: Math.round(avgDiscountPct),
-                    createdAt: admin.firestore.FieldValue.serverTimestamp(),
-                  });
-                  updateFields.lastPriceDropNotifiedAt = admin.firestore.FieldValue.serverTimestamp();
-                  console.log(
-                    `scheduledPriceUpdate: 📉 notify — ${Math.round(avgDiscountPct)}% below 60d avg on ${productDoc.id}`
-                  );
-                }
-              }
-            }
-
-            await productDoc.ref.update(updateFields);
           } catch (err) {
             console.error(
               `scheduledPriceUpdate: failed for ${productDoc.id}: ${err.message}`
@@ -2136,7 +2253,7 @@ exports.scheduledDailyPriceCheck = onSchedule({ schedule: "0 17 * * *", timeZone
 
 exports.onSavedProductCreate = onDocumentCreated("user_saved_products/{docId}", async (event) => {
   const data = event.data?.data();
-  const { productGroupId, userSegment } = data || {};
+  const { productGroupId, userSegment, optionId, vendorItemId } = data || {};
   if (!productGroupId) return null;
 
   const firestoreDb = admin.firestore();
@@ -2154,13 +2271,29 @@ exports.onSavedProductCreate = onDocumentCreated("user_saved_products/{docId}", 
       )
     );
   }
+  // Denormalized registry of which options of this parent are actually
+  // being tracked — lets scheduledPriceUpdate enumerate them without a
+  // full user_saved_products scan every 3 hours (same reasoning as
+  // savedCount/segment_popularity above).
+  if (optionId) {
+    writes.push(
+      firestoreDb.collection("products").doc(productGroupId).collection("trackedOptions").doc(optionId).set(
+        {
+          optionId,
+          vendorItemId: vendorItemId ?? null,
+          trackingCount: admin.firestore.FieldValue.increment(1),
+        },
+        { merge: true }
+      )
+    );
+  }
   await Promise.all(writes).catch((err) => console.error("onSavedProductCreate:", err.message));
   return null;
 });
 
 exports.onSavedProductDelete = onDocumentDeleted("user_saved_products/{docId}", async (event) => {
   const data = event.data?.data();
-  const { productGroupId, userSegment } = data || {};
+  const { productGroupId, userSegment, optionId } = data || {};
   if (!productGroupId) return null;
 
   const firestoreDb = admin.firestore();
@@ -2174,6 +2307,14 @@ exports.onSavedProductDelete = onDocumentDeleted("user_saved_products/{docId}", 
     writes.push(
       firestoreDb.collection("segment_popularity").doc(`${userSegment}_${productGroupId}`).set(
         { segment: userSegment, productGroupId, count: admin.firestore.FieldValue.increment(-1) },
+        { merge: true }
+      )
+    );
+  }
+  if (optionId) {
+    writes.push(
+      firestoreDb.collection("products").doc(productGroupId).collection("trackedOptions").doc(optionId).set(
+        { trackingCount: admin.firestore.FieldValue.increment(-1) },
         { merge: true }
       )
     );

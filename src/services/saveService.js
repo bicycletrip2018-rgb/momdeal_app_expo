@@ -106,8 +106,8 @@ export async function getCurrentUserSegment(userId) {
 // segment's popularity data doesn't grow with total saves, just distinct
 // products, so this stays cheap as the user base grows. Trade-off: the count
 // includes the requesting user's own save (no per-user exclusion in a
-// pre-aggregated counter) — negligible at the ≥2 threshold curationFilters.js
-// applies.
+// pre-aggregated counter) — curationFilters.js's 'peers' branch subtracts 1
+// before comparing against its ≥2-peers threshold to correct for this.
 
 export async function getPeerPopularityMap(userSegment) {
   if (!userSegment || userSegment === 'unknown_segment') return {};
@@ -204,4 +204,19 @@ export async function toggleSavedProduct(userId, productGroupId) {
   });
 
   return true;
+}
+
+// ─── removeSavedProductById ───────────────────────────────────────────────────
+//
+// Deletes one specific user_saved_products link by its own document ID.
+// Needed once a single parent product can have multiple tracked options
+// (see optionId) — a query-then-delete-first-match by productGroupId alone
+// (like toggleSavedProduct above) would risk deleting the WRONG option's
+// link when the same parent has more than one. Callers that already have
+// the exact savedId (e.g. deleting a selected card from 관심상품) should use
+// this instead of toggleSavedProduct.
+
+export async function removeSavedProductById(savedId) {
+  if (!savedId) return;
+  await deleteDoc(doc(db, 'user_saved_products', savedId));
 }

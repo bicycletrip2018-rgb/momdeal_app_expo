@@ -47,6 +47,14 @@ export async function registerProductFromClient(productId, details, uid) {
   const brand        = (typeof details.brand === 'string' && details.brand.trim())
     ? details.brand.trim()
     : (name.split(' ')[0] || null);
+  const vendorItemId = typeof details.vendorItemId === 'string' && details.vendorItemId ? details.vendorItemId : null;
+  // optionId starts as a placeholder equal to the raw vendorItemId — the next
+  // scheduled price check resolves a human-readable option name via the
+  // server's tryV4Api (Coupang v4 PDP API) and normalizes optionId properly
+  // (see scheduledPriceUpdate in functions/index.js). Using the raw id now
+  // keeps this option distinguishable from other options of the same parent
+  // immediately, instead of showing nothing until the first backend refresh.
+  const optionId     = vendorItemId;
 
   console.log('[Registrar] Writing product doc:', productGroupId, '| isNew:', isNew, '| price:', price, '| wowPrice:', wowPrice);
 
@@ -77,23 +85,32 @@ export async function registerProductFromClient(productId, details, uid) {
   // Records the price observation in products/{id}/offers AND today's
   // daily_prices max/min bucket (the 60-day marketing average DetailScreen's
   // chart and the 관심상품 thumbnail discount badges use) in one call.
+  // Stamped with optionId when captured so this option's price history
+  // never mixes with a different option of the same parent product.
   await recordPrice(
     productGroupId,
     price,
     'client_fetch',
     wowPrice != null ? { wowPrice } : {},
+    optionId,
   ).catch(() => {});
 
   console.log('[Registrar] Product doc and offer written successfully.');
 
   if (uid) {
-    const savedSnap = await getDocs(
-      query(
-        collection(db, 'user_saved_products'),
-        where('userId',         '==', uid),
-        where('productGroupId', '==', productGroupId),
-      )
-    );
+    // Dedup on (userId, productGroupId) always, plus optionId when we
+    // actually captured one — otherwise a second share of a different
+    // option (e.g. the 6-pack after already tracking the 3-pack) would be
+    // silently treated as "already saved" and dropped. When optionId is
+    // null (no vendorItemId in the URL), this matches today's exact
+    // behavior: any existing link for this parent counts as a duplicate.
+    const dedupClauses = [
+      where('userId',         '==', uid),
+      where('productGroupId', '==', productGroupId),
+    ];
+    if (optionId) dedupClauses.push(where('optionId', '==', optionId));
+
+    const savedSnap = await getDocs(query(collection(db, 'user_saved_products'), ...dedupClauses));
 
     console.log('[Registrar] Existing linkage docs found:', savedSnap.size);
 
@@ -103,6 +120,7 @@ export async function registerProductFromClient(productId, details, uid) {
         userId:         uid,
         productGroupId: productGroupId,
         userSegment,
+        ...(optionId != null ? { optionId, vendorItemId } : {}),
         createdAt:      serverTimestamp(),
       });
       console.log('[Registrar] Linkage doc successfully created in user_saved_products for UID:', uid);
@@ -111,5 +129,5 @@ export async function registerProductFromClient(productId, details, uid) {
     }
   }
 
-  return { productGroupId, name, price, wowPrice, image, isNew };
+  return { productGroupId, name, price, wowPrice, image, isNew, optionId, vendorItemId };
 }

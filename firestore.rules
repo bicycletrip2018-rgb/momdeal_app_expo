@@ -151,6 +151,16 @@ service cloud.firestore {
         allow create, update: if isSignedIn();
         allow delete: if isAdmin();
       }
+
+      // Denormalized registry of which options (color/size/quantity) of
+      // this parent are actively tracked — written only by
+      // onSavedProductCreate/Delete and scheduledPriceUpdate (Admin SDK
+      // bypasses rules entirely), read by DetailScreen to show the option
+      // label and by the price scheduler to enumerate what to check.
+      match /trackedOptions/{optionId} {
+        allow read: if true;
+        allow write: if false;
+      }
     }
 
     // Denormalized per-segment save counters (또래 추천) — written only by
@@ -159,6 +169,15 @@ service cloud.firestore {
     match /segment_popularity/{docId} {
       allow read: if true;
       allow write: if false;
+    }
+
+    // TEMP DIAGNOSTIC — remove after use (see GlobalMagicNudge.js). Lets a
+    // signed-in client save the raw HTML it captured for option-list
+    // investigation; nobody can read/update/delete from the client, only
+    // the developer via the Admin SDK / REST API with owner credentials.
+    match /debug_scrapes/{docId} {
+      allow create: if isSignedIn();
+      allow read, update, delete: if false;
     }
 
     // Anything not explicitly matched above is closed by default (no
