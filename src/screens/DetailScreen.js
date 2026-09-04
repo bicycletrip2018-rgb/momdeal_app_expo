@@ -784,26 +784,82 @@ export default function DetailScreen({ route, navigation }) {
 
     // RULE-08: singleton product doc keyed by coupang_{productId}
     const productGroupId = rawId.startsWith('coupang_') ? rawId : `coupang_${rawId}`;
+    const optionId       = displayItem?.optionId ?? null;
 
-    // Upsert product document — setDoc + merge guarantees no duplicates
+    // Upsert product document — setDoc + merge guarantees no duplicates.
+    // Only overwrite the SHARED parent doc's name/brand/image when there's
+    // no optionId — same reasoning as clientProductRegistrar.js: this doc is
+    // shared across every option of the parent, so writing one option's
+    // values here would flip every other tracked option's card to show
+    // this option's name (the exact bug already fixed in the registrar,
+    // reintroduced here if left unguarded).
     await setDoc(
       doc(db, 'products', productGroupId),
-      {
-        productGroupId,
-        name:         displayItem?.name         || '',
-        brand:        displayItem?.brand        || '',
-        image:        displayItem?.image        || '',
-        currentPrice: displayItem?.currentPrice || 0,
-        market:       'coupang',
-        updatedAt:    new Date(),
-      },
+      optionId
+        ? { productGroupId, currentPrice: displayItem?.currentPrice || 0, market: 'coupang', updatedAt: new Date() }
+        : {
+            productGroupId,
+            name:         displayItem?.name         || '',
+            brand:        displayItem?.brand        || '',
+            image:        displayItem?.image        || '',
+            currentPrice: displayItem?.currentPrice || 0,
+            market:       'coupang',
+            updatedAt:    new Date(),
+          },
       { merge: true }
     );
 
-    const nowSaved = await toggleSavedProduct(uid, productGroupId);
+    // capturedName/Spec/Image/Brand stamped on the link doc (not the shared
+    // parent doc) so this specific option's card always shows what THIS
+    // option actually is — mirrors clientProductRegistrar.js.
+    const extraFields = optionId
+      ? {
+          optionId,
+          vendorItemId: displayItem?.vendorItemId ?? null,
+          capturedName:  displayItem?.name  || null,
+          capturedSpec:  displayItem?.spec  || null,
+          capturedImage: displayItem?.image || null,
+          capturedBrand: displayItem?.brand || null,
+        }
+      : {};
+
+    const nowSaved = await toggleSavedProduct(uid, productGroupId, optionId, extraFields);
     setIsSaved(nowSaved);
     if (nowSaved) showToast('관심 상품에 추가되었어요!');
   }, [displayItem, childBirthDate, userType, showToast]);
+
+  // isSaved previously only ever changed via handleToggleSave — it always
+  // started false on mount, even when navigated here from 관심상품 itself
+  // (an item that is, by definition, already saved). That made the
+  // "최저가 알림"/목표가 UI misrepresent already-tracked items as unsaved,
+  // and meant tapping the (mislabeled) save button on a multi-option parent
+  // could silently delete a DIFFERENT already-tracked option's link —
+  // toggleSavedProduct matches on productGroupId (+ optionId now, see
+  // saveService.js) and toggles whatever it finds. Checking real state on
+  // mount fixes both.
+  useEffect(() => {
+    const uid   = auth.currentUser?.uid;
+    const rawId = displayItem?.productGroupId || displayItem?.productId;
+    if (!uid || !rawId) { setIsSaved(false); return; }
+    const productGroupId = rawId.startsWith('coupang_') ? rawId : `coupang_${rawId}`;
+    const optionId = displayItem?.optionId ?? null;
+
+    let cancelled = false;
+    (async () => {
+      try {
+        const clauses = [
+          where('userId', '==', uid),
+          where('productGroupId', '==', productGroupId),
+        ];
+        if (optionId) clauses.push(where('optionId', '==', optionId));
+        const snap = await getDocs(query(collection(db, 'user_saved_products'), ...clauses));
+        if (!cancelled) setIsSaved(!snap.empty);
+      } catch (_) {
+        if (!cancelled) setIsSaved(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [displayItem?.productGroupId, displayItem?.productId, displayItem?.optionId]);
 
   // Persists the 목표가(target price) modal's input onto this item's
   // user_saved_products linkage doc — previously the "설정 완료" button
@@ -818,12 +874,19 @@ export default function DetailScreen({ route, navigation }) {
 
     if (!isSaved) await handleToggleSave();
 
+    // optionId included when present — without it, a parent with more than
+    // one tracked option (see clientProductRegistrar.js) could have its
+    // target price written onto whichever sibling link happens to match
+    // first, not necessarily the option actually being viewed.
+    const optionId = displayItem?.optionId ?? null;
+    const linkClauses = [
+      where('userId', '==', uid),
+      where('productGroupId', '==', productGroupId),
+    ];
+    if (optionId) linkClauses.push(where('optionId', '==', optionId));
+
     const linkSnap = await getDocs(
-      query(
-        collection(db, 'user_saved_products'),
-        where('userId', '==', uid),
-        where('productGroupId', '==', productGroupId),
-      )
+      query(collection(db, 'user_saved_products'), ...linkClauses)
     );
     if (!linkSnap.empty) {
       await updateDoc(doc(db, 'user_saved_products', linkSnap.docs[0].id), { targetPrice: val });
@@ -1294,6 +1357,31 @@ export default function DetailScreen({ route, navigation }) {
           : <Info size={18} color="#FFFFFF" style={{ marginRight: 8 }} />}
         <Text style={{ color: '#FFFFFF', fontSize: 14, fontWeight: '700' }}>{toastMsg}</Text>
       </Animated.View>
+
+      {/* Target-price modal entry point — previously unreachable: nothing in
+          the screen ever called setIsAlertModalVisible(true), so the fully
+          built "가격 알림 설정" modal (quick-pick pills, direct input,
+          handleSubmitTargetPrice) and TrackingCard's TargetPriceBar could
+          never actually be used. Only shown once the item is saved — setting
+          a target price for something not being tracked doesn't mean
+          anything yet. */}
+      {isSaved && (
+        <TouchableOpacity
+          onPress={() => setIsAlertModalVisible(true)}
+          style={{
+            position: 'absolute', bottom: 158, right: 20, zIndex: 10,
+            flexDirection: 'row', alignItems: 'center', gap: 6,
+            paddingVertical: 8, paddingHorizontal: 14, borderRadius: 20,
+            backgroundColor: '#fff',
+            borderWidth: 1, borderColor: '#e2e8f0',
+            shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.12, shadowRadius: 4, elevation: 4,
+          }}
+        >
+          <Text style={{ fontSize: 13, fontWeight: '700', color: '#334155' }}>
+            🎯 목표가 설정
+          </Text>
+        </TouchableOpacity>
+      )}
 
       <TouchableOpacity
         onPress={handleToggleSave}

@@ -149,11 +149,23 @@ export default function TrackingListScreen({ navigation }) {
   const { globalTrackedItems, addTrackedItem, removeTrackedItem, updateTrackedItems, setTrackedItems } = useTracking();
   const { isWowMember } = useUser();
 
+  // isLoading distinguishes "still loading" from "genuinely empty" — without
+  // it, globalTrackedItems starts as [] on every mount (context default),
+  // so the zero-state ("관심상품이 텅 비어있어요!") flashes for a full
+  // beat even for users with items, until the snapshot + enrichment
+  // resolves. loadError surfaces onSnapshot failures (permission/offline)
+  // instead of leaving the screen silently stuck.
+  const [isLoading, setIsLoading] = useState(true);
+  const [loadError, setLoadError] = useState(null);
+  const [retryKey, setRetryKey] = useState(0);
+
   // ─── Firestore real-time listener ────────────────────────────────────────────
   // Populates globalTrackedItems from user_saved_products + products docs.
   // Fires immediately on auth resolution and on every Firestore change thereafter.
   useEffect(() => {
     let unsubSnapshot = null;
+    setLoadError(null);
+    setIsLoading(true);
 
     const unsubAuth = onAuthStateChanged(auth, (user) => {
       console.log('[TrackingList] Auth state changed. User:', user?.uid);
@@ -162,6 +174,7 @@ export default function TrackingListScreen({ navigation }) {
 
       if (!user) {
         setTrackedItems([]);
+        setIsLoading(false);
         return;
       }
 
@@ -172,7 +185,7 @@ export default function TrackingListScreen({ navigation }) {
 
       unsubSnapshot = onSnapshot(q, async (snapshot) => {
         console.log('[TrackingList] Snapshot docs count:', snapshot.size);
-        if (snapshot.empty) { setTrackedItems([]); return; }
+        if (snapshot.empty) { setTrackedItems([]); setIsLoading(false); return; }
 
         try {
           // Sort newest-first here (not via Firestore orderBy) — a composite
@@ -259,16 +272,22 @@ export default function TrackingListScreen({ navigation }) {
           const valid = enriched.filter(Boolean);
           console.log('[TrackingList] Enriched valid count:', valid.length);
           setTrackedItems(valid);
+          setLoadError(null);
         } catch (err) {
           console.error('[TrackingList] Enrichment error:', err);
+          setLoadError(err);
+        } finally {
+          setIsLoading(false);
         }
       }, (err) => {
         console.error('[TrackingList] onSnapshot error:', err);
+        setLoadError(err);
+        setIsLoading(false);
       });
     });
 
     return () => { unsubAuth(); if (unsubSnapshot) unsubSnapshot(); };
-  }, [setTrackedItems]);
+  }, [setTrackedItems, retryKey]);
 
   // ─── Curation signals: peer popularity + purchase frequency ─────────────────
   // Both need async aggregation queries the (synchronous) curation filter
@@ -400,15 +419,28 @@ export default function TrackingListScreen({ navigation }) {
           onPress: async () => {
             // Optimistic local removal — the Firestore onSnapshot listener will
             // reconcile shortly after with the authoritative deleted state.
-            selectedIds.forEach((id) => removeTrackedItem(id));
+            // If a delete actually fails server-side, that item was never
+            // removed from Firestore, so the next onSnapshot fire quietly
+            // re-adds it — but the user should be told it failed rather than
+            // just seeing an item reappear with no explanation.
+            const idsToDelete = selectedIds;
+            idsToDelete.forEach((id) => removeTrackedItem(id));
             exitEditMode();
             // Direct delete-by-id (selectedIds are savedId values) — not
             // toggleSavedProduct's query-by-productGroupId, which could
             // delete the WRONG option's link if this parent has more than
             // one tracked option.
-            await Promise.all(
-              selectedIds.map((savedId) => removeSavedProductById(savedId).catch(() => {}))
+            const results = await Promise.allSettled(
+              idsToDelete.map((savedId) => removeSavedProductById(savedId))
             );
+            const failedCount = results.filter((r) => r.status === 'rejected').length;
+            if (failedCount > 0) {
+              console.error('[TrackingList] Delete failed for', failedCount, 'item(s)');
+              setSuccessModal({
+                title: '삭제 실패',
+                body: `${failedCount}개 상품을 삭제하지 못했어요. 목록에 다시 표시됩니다.\n네트워크 상태를 확인한 뒤 다시 시도해주세요.`,
+              });
+            }
           },
         },
       ]
@@ -417,7 +449,7 @@ export default function TrackingListScreen({ navigation }) {
 
   // ── Toggle helpers: compute majority state across selected items, then flip ──
   // If majority (≥50%) of selected items have the flag ON, turn all OFF; else ON.
-  const handleToggleFlag = useCallback((flag) => {
+  const handleToggleFlag = useCallback(async (flag) => {
     if (selectedIds.length === 0) return;
     const selected = globalTrackedItems.filter((i) => selectedIds.includes(i.savedId ?? i.productId));
     const onCount  = selected.filter((i) => i[flag]).length;
@@ -426,16 +458,36 @@ export default function TrackingListScreen({ navigation }) {
 
     const uid = auth.currentUser?.uid;
     if (!uid) return;
+
+    // Each write tagged with the id updateTrackedItems needs to revert just
+    // that item on failure — isFavorite/isRestockAlertOn reconcile via the
+    // user_saved_products onSnapshot listener automatically once a write
+    // SUCCEEDS, but a write that fails never fires a snapshot event at all,
+    // so the optimistic flip above would otherwise stay wrong indefinitely
+    // (isPriceAlertOn doubly so — it's derived from a separate price_alerts
+    // query that only re-runs when *something else* changes the list).
+    let writes = [];
     if (flag === 'isPriceAlertOn') {
       // togglePriceAlert flips whatever the current server state is — only call
       // it for items that actually need to change to reach nextVal.
-      selected
+      writes = selected
         .filter((i) => Boolean(i.isPriceAlertOn) !== nextVal)
-        .forEach((i) => togglePriceAlert(uid, i.productId).catch(() => {}));
+        .map((i) => ({ id: i.savedId ?? i.productId, promise: togglePriceAlert(uid, i.productId) }));
     } else if (flag === 'isFavorite' || flag === 'isRestockAlertOn') {
-      selected.forEach((i) => {
-        if (!i.savedId) return;
-        updateDoc(doc(db, 'user_saved_products', i.savedId), { [flag]: nextVal }).catch(() => {});
+      writes = selected
+        .filter((i) => !!i.savedId)
+        .map((i) => ({ id: i.savedId, promise: updateDoc(doc(db, 'user_saved_products', i.savedId), { [flag]: nextVal }) }));
+    }
+    if (writes.length === 0) return;
+
+    const results = await Promise.allSettled(writes.map((w) => w.promise));
+    const failedIds = writes.filter((_, idx) => results[idx].status === 'rejected').map((w) => w.id);
+    if (failedIds.length > 0) {
+      console.error('[TrackingList] Toggle failed for', failedIds.length, 'item(s):', flag);
+      updateTrackedItems(failedIds, { [flag]: !nextVal });
+      setSuccessModal({
+        title: '변경 실패',
+        body: `${failedIds.length}개 상품에서 설정을 변경하지 못했어요.\n네트워크 상태를 확인한 뒤 다시 시도해주세요.`,
       });
     }
   }, [selectedIds, globalTrackedItems, updateTrackedItems]);
@@ -525,6 +577,8 @@ export default function TrackingListScreen({ navigation }) {
           style={styles.controlSortBtn}
           onPress={isEditMode ? undefined : () => setIsSortModalVisible(true)}
           activeOpacity={0.7}
+          accessibilityRole="button"
+          accessibilityLabel={`정렬: ${sortOption}. 탭하여 변경`}
         >
           <Text style={styles.controlSortText}>{sortOption}</Text>
           <Ionicons name="chevron-down" size={14} color="#334155" />
@@ -536,6 +590,9 @@ export default function TrackingListScreen({ navigation }) {
             style={styles.controlIconBtn}
             onPress={isEditMode ? undefined : openFilterModal}
             activeOpacity={0.7}
+            accessibilityRole="button"
+            accessibilityLabel="필터"
+            accessibilityState={{ selected: isFilterActive }}
           >
             <Ionicons name="funnel-outline" size={16} color={isFilterActive ? '#3b82f6' : '#64748b'} />
             <Text style={[styles.controlIconText, isFilterActive && { color: '#3b82f6', fontWeight: '700' }]}>필터</Text>
@@ -546,6 +603,8 @@ export default function TrackingListScreen({ navigation }) {
             style={styles.controlIconBtn}
             onPress={() => setIsEditMode(true)}
             activeOpacity={0.7}
+            accessibilityRole="button"
+            accessibilityLabel="편집"
           >
             <Ionicons name="checkbox-outline" size={16} color={isEditMode ? '#3b82f6' : '#64748b'} />
             <Text style={[styles.controlIconText, isEditMode && { color: '#3b82f6' }]}>편집</Text>
@@ -555,6 +614,12 @@ export default function TrackingListScreen({ navigation }) {
             onPress={() => setViewMode((v) => v === 'list' ? 'grid2' : v === 'grid2' ? 'grid3' : 'list')}
             hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
             activeOpacity={0.7}
+            accessibilityRole="button"
+            accessibilityLabel={
+              viewMode === 'list' ? '목록 보기 방식: 리스트형. 탭하여 그리드형으로 전환'
+                : viewMode === 'grid2' ? '목록 보기 방식: 그리드형. 탭하여 촘촘한 그리드형으로 전환'
+                : '목록 보기 방식: 촘촘한 그리드형. 탭하여 리스트형으로 전환'
+            }
           >
             <Ionicons
               name={viewMode === 'list' ? 'list-outline' : viewMode === 'grid2' ? 'grid-outline' : 'apps-outline'}
@@ -566,6 +631,9 @@ export default function TrackingListScreen({ navigation }) {
             onPress={() => setShowOnlyFavorites((v) => !v)}
             hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
             activeOpacity={0.7}
+            accessibilityRole="button"
+            accessibilityLabel="즐겨찾기만 보기"
+            accessibilityState={{ selected: showOnlyFavorites }}
           >
             <Ionicons
               name={showOnlyFavorites ? 'star' : 'star-outline'}
@@ -604,6 +672,13 @@ export default function TrackingListScreen({ navigation }) {
 
   const numColumns = viewMode === 'list' ? 1 : viewMode === 'grid2' ? 2 : 3;
   const isEmpty    = globalTrackedItems.length === 0;
+  // Only take over the whole screen for loading/error UI while there's
+  // nothing else to show — a transient error after items already loaded
+  // once (e.g. a brief offline blip) shouldn't blank out valid, still-good
+  // data the user is looking at.
+  const showLoadingSkeleton = isLoading && isEmpty;
+  const showLoadError       = !isLoading && !!loadError && isEmpty;
+  const showZeroState       = !isLoading && !loadError && isEmpty;
 
   const openCoupang = async () => {
     setExpectingCoupangReturn();
@@ -648,8 +723,44 @@ export default function TrackingListScreen({ navigation }) {
   return (
     <SafeAreaView edges={['bottom']} style={styles.container}>
 
+      {/* ── Loading skeleton — first paint before the initial snapshot +
+          enrichment resolves. Without this, an empty globalTrackedItems
+          (the context's default before data arrives) is indistinguishable
+          from a genuinely empty list, so the zero-state guidebook would
+          flash for a moment on every app open even for users with items. ── */}
+      {showLoadingSkeleton && (
+        <View style={styles.skeletonWrap}>
+          {[0, 1, 2, 3].map((i) => (
+            <View key={i} style={styles.skeletonRow}>
+              <View style={styles.skeletonThumb} />
+              <View style={{ flex: 1, gap: 8 }}>
+                <View style={[styles.skeletonBar, { width: '70%' }]} />
+                <View style={[styles.skeletonBar, { width: '40%' }]} />
+                <View style={[styles.skeletonBar, { width: '55%', height: 18 }]} />
+              </View>
+            </View>
+          ))}
+        </View>
+      )}
+
+      {/* ── Load error — onSnapshot failed (offline, permission) and there's
+          no cached data to fall back to showing. ── */}
+      {showLoadError && (
+        <View style={styles.errorState}>
+          <Text style={styles.emptyIcon}>⚠️</Text>
+          <Text style={styles.emptySub}>관심상품을 불러오지 못했어요.{'\n'}네트워크 연결을 확인해주세요.</Text>
+          <TouchableOpacity
+            style={styles.emptyResetBtn}
+            onPress={() => setRetryKey((k) => k + 1)}
+            activeOpacity={0.75}
+          >
+            <Text style={styles.emptyResetText}>다시 시도</Text>
+          </TouchableOpacity>
+        </View>
+      )}
+
       {/* ── Zero-state: visual guidebook ── */}
-      {isEmpty ? (
+      {!showLoadingSkeleton && !showLoadError && (showZeroState ? (
         <View style={{ flex: 1 }}>
           <View style={[styles.zeroState, { paddingBottom: 100 }]}>
             <Text style={styles.zeroStateTitle}>
@@ -751,7 +862,7 @@ export default function TrackingListScreen({ navigation }) {
           );
         }}
       />
-      )}
+      ))}
 
 
       {/* ── Tooltip overlay ── */}
@@ -889,6 +1000,8 @@ export default function TrackingListScreen({ navigation }) {
           style={styles.fab}
           onPress={openCoupang}
           activeOpacity={0.85}
+          accessibilityRole="button"
+          accessibilityLabel="쿠팡 앱에서 상품 추가하기"
         >
           <Text style={{ color: '#ffffff', fontWeight: 'bold', fontSize: 15 }}>+ 상품 추가</Text>
         </TouchableOpacity>
@@ -1117,6 +1230,15 @@ const styles = StyleSheet.create({
     aspectRatio: 1,
   },
   addCardTextCompact: { fontSize: 11, fontWeight: '600', color: '#94a3b8' },
+
+  // Loading skeleton (first paint, before snapshot + enrichment resolves)
+  skeletonWrap: { flex: 1, paddingTop: 16, paddingHorizontal: 16 },
+  skeletonRow:  { flexDirection: 'row', gap: 12, marginBottom: 24 },
+  skeletonThumb: { width: 80, height: 80, borderRadius: 10, backgroundColor: '#f1f5f9' },
+  skeletonBar:  { height: 12, borderRadius: 6, backgroundColor: '#f1f5f9' },
+
+  // Load error (onSnapshot failed, nothing cached to show instead)
+  errorState: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 32 },
 
   // Empty state
   emptyState: { alignItems: 'center', paddingTop: 80 },

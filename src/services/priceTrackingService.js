@@ -124,6 +124,8 @@ export async function recordPrice(productId, price, source, extraFields = {}, op
     }),
     _updateDailyPrice(productId, price, optionId),
   ]);
+
+  intelCache.delete(intelCacheKey(productId, optionId));
 }
 
 // Returns all recorded offers for a product, newest first.
@@ -168,6 +170,20 @@ export async function getPriceChange(productId) {
   return { currentPrice, lowestPrice, lastPrice, priceDrop, priceRise };
 }
 
+// Short-TTL cache for getPriceIntelligence — TrackingListScreen re-enriches
+// its ENTIRE tracked list on every user_saved_products snapshot fire, which
+// includes changes with nothing to do with price (e.g. toggling a single
+// item's 즐겨찾기). Without this, that one toggle re-reads every tracked
+// item's price history from Firestore. A 60s TTL is short enough that a
+// genuine price change (checked at most every 3h by the scheduler) is never
+// meaningfully stale, but long enough to absorb bursts of unrelated writes.
+const INTEL_CACHE_TTL_MS = 60_000;
+const intelCache = new Map(); // key -> { value, expiresAt }
+
+function intelCacheKey(productId, optionId) {
+  return `${productId}::${optionId ?? ''}`;
+}
+
 // Returns full price intelligence for ProductDetail — last 30 records.
 // Includes stats (lowest/highest/average), percentile, guidance text,
 // graph data (oldest-first array for rendering), and change since last check.
@@ -182,6 +198,10 @@ export async function getPriceChange(productId) {
 export async function getPriceIntelligence(productId, optionId = null) {
   if (!productId) return null;
 
+  const cacheKey = intelCacheKey(productId, optionId);
+  const cached = intelCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) return cached.value;
+
   const snap = await getDocs(
     query(
       collection(db, 'products', productId, 'offers'),
@@ -189,7 +209,12 @@ export async function getPriceIntelligence(productId, optionId = null) {
       limit(optionId ? 150 : 30)
     )
   );
-  if (snap.empty) return null;
+  const setCache = (value) => {
+    intelCache.set(cacheKey, { value, expiresAt: Date.now() + INTEL_CACHE_TTL_MS });
+    return value;
+  };
+
+  if (snap.empty) return setCache(null);
 
   const relevantDocs = snap.docs
     .map((d) => d.data())
@@ -199,7 +224,7 @@ export async function getPriceIntelligence(productId, optionId = null) {
   const prices = relevantDocs
     .map((d) => d.price)
     .filter((p) => typeof p === 'number' && p > 0);
-  if (prices.length === 0) return null;
+  if (prices.length === 0) return setCache(null);
 
   // prices[0] = most recent (newest-first)
   const currentPrice = prices[0];
@@ -251,7 +276,7 @@ export async function getPriceIntelligence(productId, optionId = null) {
     }
   } catch (_) { /* non-fatal */ }
 
-  return {
+  return setCache({
     graphData,
     currentPrice,
     lastPrice,
@@ -266,5 +291,12 @@ export async function getPriceIntelligence(productId, optionId = null) {
     marketingAverage,
     marketingDiscountPct,
     priceTrackedDays,
-  };
+  });
+}
+
+// Invalidates the cached intelligence for one product/option — call after
+// writing a fresh price observation (recordPrice) so the tracked list picks
+// it up immediately instead of waiting out the TTL.
+export function invalidatePriceIntelligenceCache(productId, optionId = null) {
+  intelCache.delete(intelCacheKey(productId, optionId));
 }

@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
   Image,
   Platform,
@@ -11,6 +11,31 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { resolveAgingPriceDisplay } from '../utils/priceDisplay';
 import { useUser } from '../context/UserContext';
+
+// ─── CardImage ────────────────────────────────────────────────────────────────
+// Falls back to the 🛍️ placeholder on load failure (expired/blocked Coupang
+// CDN thumbnail URLs are common in practice), not just when item.image is
+// missing outright — a bare <Image> with a dead URL renders blank with no
+// visual cue, which reads as broken rather than "no photo available".
+
+function CardImage({ uri, style, iconSize }) {
+  const [failed, setFailed] = useState(false);
+  if (!uri || failed) {
+    return (
+      <View style={[style, styles.imageFallback]}>
+        <Text style={{ fontSize: iconSize }}>🛍️</Text>
+      </View>
+    );
+  }
+  return (
+    <Image
+      source={{ uri }}
+      style={style}
+      resizeMode="cover"
+      onError={() => setFailed(true)}
+    />
+  );
+}
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -141,7 +166,7 @@ function DeliveryBadge({ deliveryType }) {
 
 // ─── TrackingCard ─────────────────────────────────────────────────────────────
 
-export function TrackingCard({
+export const TrackingCard = React.memo(function TrackingCard({
   item,
   isEditMode,
   isSelected,
@@ -170,6 +195,15 @@ export function TrackingCard({
     if (!isEditMode) { Vibration.vibrate(50); onLongPressActivate(itemId); }
   };
 
+  const priceLabel = aging.currentPrice != null ? `현재가 ${aging.currentPrice.toLocaleString('ko-KR')}원` : '가격 정보 없음';
+  const a11yLabel = `${item.name || '상품'}, ${priceLabel}${item.isOutOfStock ? ', 품절' : ''}`;
+  const a11yProps = {
+    accessible: true,
+    accessibilityRole: 'button',
+    accessibilityLabel: a11yLabel,
+    accessibilityState: isEditMode ? { selected: isSelected } : undefined,
+  };
+
   if (isList) {
     return (
       <TouchableOpacity
@@ -178,15 +212,10 @@ export function TrackingCard({
         onLongPress={handleLongPress}
         delayLongPress={350}
         activeOpacity={isEditMode ? 0.7 : 0.85}
+        {...a11yProps}
       >
         <View style={styles.listImageWrap}>
-          {item.image ? (
-            <Image source={{ uri: item.image }} style={styles.listImage} resizeMode="cover" />
-          ) : (
-            <View style={[styles.listImage, styles.imageFallback]}>
-              <Text style={{ fontSize: 22 }}>🛍️</Text>
-            </View>
-          )}
+          <CardImage uri={item.image} style={styles.listImage} iconSize={22} />
           {item.isOutOfStock && <OutOfStockOverlay />}
           {isEditMode && (
             <View style={[styles.checkbox, isSelected && styles.checkboxSelected]}>
@@ -239,6 +268,7 @@ export function TrackingCard({
               )}
             </View>
           )}
+          <TargetPriceBar currentPrice={item.currentPrice} targetPrice={item.targetPrice} />
         </View>
       </TouchableOpacity>
     );
@@ -253,15 +283,10 @@ export function TrackingCard({
         onLongPress={handleLongPress}
         delayLongPress={350}
         activeOpacity={isEditMode ? 0.7 : 0.85}
+        {...a11yProps}
       >
         <View style={styles.compactImageWrap}>
-          {item.image ? (
-            <Image source={{ uri: item.image }} style={styles.image} resizeMode="cover" />
-          ) : (
-            <View style={[styles.image, styles.imageFallback]}>
-              <Text style={{ fontSize: 20 }}>🛍️</Text>
-            </View>
-          )}
+          <CardImage uri={item.image} style={styles.image} iconSize={20} />
           {item.isOutOfStock && <OutOfStockOverlay />}
           {/* Discount badge — bottom-left; hidden during blind mode */}
           {aging.mode === 'active' && aging.discountPct != null && aging.discountPct > 0 && (
@@ -306,15 +331,10 @@ export function TrackingCard({
       onLongPress={handleLongPress}
       delayLongPress={350}
       activeOpacity={isEditMode ? 0.7 : 0.85}
+      {...a11yProps}
     >
       <View style={styles.imageWrap}>
-        {item.image ? (
-          <Image source={{ uri: item.image }} style={styles.image} resizeMode="cover" />
-        ) : (
-          <View style={[styles.image, styles.imageFallback]}>
-            <Text style={{ fontSize: 32 }}>🛍️</Text>
-          </View>
-        )}
+        <CardImage uri={item.image} style={styles.image} iconSize={32} />
         {item.isOutOfStock && <OutOfStockOverlay />}
         <GridStatusOverlay item={item} />
         {isEditMode && (
@@ -357,10 +377,11 @@ export function TrackingCard({
             )}
           </View>
         )}
+        <TargetPriceBar currentPrice={item.currentPrice} targetPrice={item.targetPrice} />
       </View>
     </TouchableOpacity>
   );
-}
+});
 
 // ─── Styles ───────────────────────────────────────────────────────────────────
 

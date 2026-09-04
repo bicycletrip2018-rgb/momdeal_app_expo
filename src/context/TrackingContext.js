@@ -41,8 +41,16 @@ export function TrackingProvider({ children }) {
     });
   }, []);
 
+  // Matches on savedId OR productId — TrackingListScreen (option-aware items,
+  // multiple tracked options can share one productId) passes savedId, while
+  // MyPageScreen/SearchScreen's lighter-weight items pass productId. Matching
+  // only productId would silently no-op TrackingListScreen's optimistic
+  // removal (the id it passes never appears in that field), leaving a
+  // deleted item visible until the next Firestore snapshot reconciles it.
   const removeTrackedItem = useCallback((itemId) => {
-    setGlobalTrackedItems((prev) => prev.filter((i) => i.productId !== itemId));
+    setGlobalTrackedItems((prev) =>
+      prev.filter((i) => i.savedId !== itemId && i.productId !== itemId)
+    );
   }, []);
 
   // Batch-replace — used by MyPageScreen when Firestore returns the full saved list
@@ -50,12 +58,13 @@ export function TrackingProvider({ children }) {
     setGlobalTrackedItems(items);
   }, []);
 
-  // Patch specific fields on a set of items by productId.
+  // Patch specific fields on a set of items, matched by savedId OR productId
+  // (see removeTrackedItem above for why both are needed).
   // updates = { isPriceAlertOn: true } etc.
   const updateTrackedItems = useCallback((itemIds, updates) => {
     setGlobalTrackedItems((prev) =>
       prev.map((i) =>
-        itemIds.includes(i.productId) ? { ...i, ...updates } : i
+        (itemIds.includes(i.savedId) || itemIds.includes(i.productId)) ? { ...i, ...updates } : i
       )
     );
   }, []);

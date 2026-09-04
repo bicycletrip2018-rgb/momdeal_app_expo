@@ -164,16 +164,31 @@ export async function getSavedProducts(userId) {
 //
 // @param {string}  userId
 // @param {string}  productGroupId
+// @param {string|null} optionId — when a parent has more than one tracked
+//   option (see optionId/vendorItemId elsewhere in this file), matching by
+//   productGroupId alone would find *some* existing link for that parent and
+//   toggle/delete it — not necessarily the option actually being viewed.
+//   Passing optionId scopes the existence check (and the new link's own
+//   fields) to that exact option. Omitted, this is byte-for-byte the
+//   original parent-only behavior (legacy callers unaffected).
+// @param {object}  extraFields — additional fields to stamp on a newly
+//   created link doc (e.g. capturedName/capturedSpec/capturedImage/
+//   capturedBrand) — same purpose as clientProductRegistrar.js's
+//   per-option display fields, so a saved option's card always shows what
+//   THIS option actually is rather than falling back to the shared parent
+//   doc's (possibly different-option) name.
 
-export async function toggleSavedProduct(userId, productGroupId) {
+export async function toggleSavedProduct(userId, productGroupId, optionId = null, extraFields = {}) {
   if (!userId || !productGroupId) return false;
 
+  const clauses = [
+    where('userId', '==', userId),
+    where('productGroupId', '==', productGroupId),
+  ];
+  if (optionId) clauses.push(where('optionId', '==', optionId));
+
   const existing = await getDocs(
-    query(
-      collection(db, 'user_saved_products'),
-      where('userId', '==', userId),
-      where('productGroupId', '==', productGroupId)
-    )
+    query(collection(db, 'user_saved_products'), ...clauses)
   );
 
   if (!existing.empty) {
@@ -186,6 +201,8 @@ export async function toggleSavedProduct(userId, productGroupId) {
   await addDoc(collection(db, 'user_saved_products'), {
     userId,
     productGroupId,
+    ...(optionId ? { optionId } : {}),
+    ...extraFields,
     userSegment,
     createdAt: serverTimestamp(),
   });
