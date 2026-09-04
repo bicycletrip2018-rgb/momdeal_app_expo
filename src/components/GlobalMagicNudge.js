@@ -10,9 +10,9 @@ import {
   View,
 } from 'react-native';
 import { WebView } from 'react-native-webview';
+import { CommonActions } from '@react-navigation/native';
 import * as Clipboard from 'expo-clipboard';
-import { addDoc, collection, serverTimestamp } from 'firebase/firestore';
-import { auth, db } from '../firebase/config';
+import { auth } from '../firebase/config';
 import { consumeExpectingCoupangReturn } from '../utils/coupangIntentFlag';
 import { useTutorial } from '../context/TutorialContext';
 import { registerProductFromClient } from '../services/clientProductRegistrar';
@@ -143,12 +143,51 @@ const SCRAPE_SCRIPT =
     '}' +
     'if(!window.hasScraped){' +
       'window.hasScraped=true;' +
-      // TEMP DIAGNOSTIC — remove after use. Truncated raw HTML so we can
-      // inspect (server-side, via Firestore) whether m.coupang.com's page
-      // actually embeds a full sibling-option list, before building any
-      // parsing logic against a structure we haven't verified live.
-      'let debugHtml=rawHtml.length>500000?rawHtml.slice(0,500000):rawHtml;' +
-      'window.ReactNativeWebView.postMessage(JSON.stringify({type:"SCRAPE_SUCCESS",payload:{productId:productId,vendorItemId:vendorItemId,name:name,price:price,wowPrice:wowPrice,image:image,isRocket:isRocket,deliveryType:deliveryType,spec:spec,brand:brand,debugHtml:debugHtml}}));' +
+      // Discover sibling options (other quantities of the same product,
+      // e.g. 1개/24개/72개/120개) by actually clicking through them one at
+      // a time and watching the URL's vendorItemId change — confirmed live
+      // that m.coupang.com renders every sibling's name+price up front in
+      // .option-table-list__option, but NOT its vendorItemId (that only
+      // shows up in the URL after a real click, since it's a Next.js SPA
+      // navigation). Slower than guessing from an embedded JSON blob, but
+      // each vendorItemId is verified against a real navigation rather
+      // than proximity-matched against unrelated price text. Scoped to the
+      // options table for whichever capacity tab (190ml/950ml/etc.) is
+      // already selected — .option-table-list__option only ever contains
+      // that tab's own quantity options, not every tab's.
+      '(async function(){' +
+        'let siblingOptions=[];' +
+        'try{' +
+          'let optionEls=Array.from(document.querySelectorAll(".option-table-list__option"));' +
+          'let selectedIdx=-1;' +
+          'for(let i=0;i<optionEls.length&&i<10;i++){' +
+            'let el=optionEls[i];' +
+            'let nameEl=el.querySelector(".option-table-list__option-name");' +
+            'let priceEl=el.querySelector(".option-table-list__option-price span");' +
+            'let label=nameEl?nameEl.textContent.trim():null;' +
+            'let priceText=priceEl?priceEl.textContent.trim():null;' +
+            'if((el.className||"").indexOf("--selected")!==-1)selectedIdx=i;' +
+            'siblingOptions.push({label:label,priceText:priceText,vendorItemId:null});' +
+          '}' +
+          'for(let i=0;i<siblingOptions.length;i++){' +
+            'if(i===selectedIdx){siblingOptions[i].vendorItemId=vendorItemId;continue;}' +
+            'let freshEls=document.querySelectorAll(".option-table-list__option");' +
+            'if(!freshEls[i])continue;' +
+            'freshEls[i].click();' +
+            'await new Promise(function(r){setTimeout(r,600);});' +
+            'let m=window.location.href.match(/vendorItemId=(\\d+)/);' +
+            'siblingOptions[i].vendorItemId=m?m[1]:null;' +
+          '}' +
+          'if(selectedIdx>=0){' +
+            'let restoreEls=document.querySelectorAll(".option-table-list__option");' +
+            'if(restoreEls[selectedIdx]){' +
+              'restoreEls[selectedIdx].click();' +
+              'await new Promise(function(r){setTimeout(r,300);});' +
+            '}' +
+          '}' +
+        '}catch(e){}' +
+        'window.ReactNativeWebView.postMessage(JSON.stringify({type:"SCRAPE_SUCCESS",payload:{productId:productId,vendorItemId:vendorItemId,name:name,price:price,wowPrice:wowPrice,image:image,isRocket:isRocket,deliveryType:deliveryType,spec:spec,brand:brand,siblingOptions:siblingOptions}}));' +
+      '})();' +
     '}' +
   '},500);' +
   'true;';
@@ -232,31 +271,38 @@ export default function GlobalMagicNudge({ navigationRef }) {
     catch { clearAll(); return; }
 
     if (data.type === 'SCRAPE_SUCCESS') {
-      const { debugHtml, ...loggablePayload } = data.payload;
-      console.log('[MagicNudge] Scrape success:', loggablePayload);
-      // TEMP DIAGNOSTIC — remove after use. Saves the raw page HTML our
-      // client webview actually captured, so we can inspect (via Firestore
-      // REST API) whether m.coupang.com's page embeds a full sibling-option
-      // list before writing any parsing logic against an unverified structure.
-      if (debugHtml) {
-        addDoc(collection(db, 'debug_scrapes'), {
-          productId: data.payload.productId,
-          vendorItemId: data.payload.vendorItemId ?? null,
-          name: data.payload.name ?? null,
-          html: debugHtml,
-          createdAt: serverTimestamp(),
-        }).catch((e) => console.log('[MagicNudge] debug capture failed:', e?.message));
-      }
+      console.log(
+        '[MagicNudge] Scrape success:',
+        { ...data.payload, siblingOptions: `[${data.payload.siblingOptions?.length ?? 0} options]` },
+      );
       try {
         await registerProductFromClient(
-          loggablePayload.productId,
-          loggablePayload,
+          data.payload.productId,
+          data.payload,
           auth.currentUser?.uid,
         );
         ToastAndroid.show('세이브루에 등록 완료!', ToastAndroid.SHORT);
         clearAll();
-        // Route internal UI to the saved list, then softly shift OS focus to
-        // Coupang without killing the Saveroo process (Polsent UX, no cold start).
+        // Route internal UI to the saved list's ROOT screen, then softly shift
+        // OS focus to Coupang without killing the Saveroo process (Polsent UX,
+        // no cold start). 관심상품 is itself a nested stack (TrackingListMain →
+        // CurationDetail/Detail, under MainTabs under RootStack) — navigating
+        // to just the tab name only switches tab focus and leaves that nested
+        // stack wherever it was (e.g. still on a Detail screen pushed earlier),
+        // and even navigate('관심상품', {screen:'TrackingListMain'}) was found to
+        // PUSH a fresh instance rather than pop back to the existing one,
+        // leaving the stale Detail screen one back-tap away. Explicitly reset
+        // that nested stack's own state (found via its key on the tab route)
+        // before focusing the tab, so 관심상품 always opens clean at its root.
+        const rootState = navigationRef?.current?.getRootState();
+        const mainTabsRoute = rootState?.routes?.find((r) => r.name === 'MainTabs');
+        const trackingTabRoute = mainTabsRoute?.state?.routes?.find((r) => r.name === '관심상품');
+        if (trackingTabRoute?.state?.key) {
+          navigationRef.current?.dispatch({
+            ...CommonActions.reset({ index: 0, routes: [{ name: 'TrackingListMain' }] }),
+            target: trackingTabRoute.state.key,
+          });
+        }
         navigationRef?.current?.navigate('관심상품');
         setTimeout(() => { Linking.openURL('coupang://').catch(() => {}); }, 300);
       } catch (_) {

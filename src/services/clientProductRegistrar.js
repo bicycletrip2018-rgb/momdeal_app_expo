@@ -119,6 +119,34 @@ export async function registerProductFromClient(productId, details, uid) {
 
   console.log('[Registrar] Product doc and offer written successfully.');
 
+  // Sibling options discovered by click-simulating through the page's own
+  // options table (see GlobalMagicNudge.js) — real quantities/prices Coupang
+  // actually sells, not guessed. Cached on trackedOptions WITHOUT touching
+  // trackingCount, so "다른 옵션 보기" can show the full real option list
+  // immediately while the price scheduler still only fans out to options
+  // someone has actually chosen to track (trackingCount > 0).
+  if (Array.isArray(details.siblingOptions) && details.siblingOptions.length > 0) {
+    const siblingWrites = details.siblingOptions
+      .filter((o) => o && typeof o.vendorItemId === 'string' && o.vendorItemId && o.vendorItemId !== vendorItemId)
+      .map((o) => {
+        const sibPrice = typeof o.priceText === 'string'
+          ? parseInt(o.priceText.replace(/[^0-9]/g, ''), 10)
+          : NaN;
+        return setDoc(
+          doc(db, 'products', productGroupId, 'trackedOptions', o.vendorItemId),
+          {
+            optionId:     o.vendorItemId,
+            vendorItemId: o.vendorItemId,
+            ...(typeof o.label === 'string' && o.label.trim() ? { optionLabel: o.label.trim() } : {}),
+            ...(Number.isFinite(sibPrice) && sibPrice > 0 ? { lastPrice: sibPrice } : {}),
+          },
+          { merge: true },
+        );
+      });
+    await Promise.all(siblingWrites).catch((e) => console.log('[Registrar] sibling option cache failed:', e?.message));
+    console.log('[Registrar] Cached sibling options:', siblingWrites.length);
+  }
+
   if (uid) {
     // Dedup on (userId, productGroupId) always, plus optionId when we
     // actually captured one — otherwise a second share of a different

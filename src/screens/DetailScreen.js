@@ -667,9 +667,14 @@ export default function DetailScreen({ route, navigation }) {
   }, [displayItem?.productGroupId, displayItem?.productId, displayItem?.optionId]);
 
   // Other options of THIS SAME parent product — real ones only, sourced from
-  // trackedOptions (see functions/index.js onSavedProductCreate/scheduledPriceUpdate),
-  // never a hardcoded placeholder list. A parent nobody has captured a second
-  // option for simply shows nothing here — that's correct, not a bug.
+  // trackedOptions. No trackingCount filter here: this now includes options
+  // merely DISCOVERED via click-simulation at registration time (see
+  // clientProductRegistrar.js), not just ones someone chose to track — that's
+  // the whole point (showing 1개/24개/72개/120개 etc. even though nobody is
+  // actively tracking most of them). The price scheduler still only fans out
+  // to trackingCount > 0 options; that filter lives there, not here. A
+  // parent nobody has ever registered a second option for simply shows
+  // nothing — that's correct, not a bug.
   const [otherOptions, setOtherOptions] = useState([]);
   useEffect(() => {
     const rawId = displayItem?.productGroupId || displayItem?.productId;
@@ -679,9 +684,7 @@ export default function DetailScreen({ route, navigation }) {
     let cancelled = false;
     (async () => {
       try {
-        const snap = await getDocs(
-          query(collection(db, 'products', productGroupId, 'trackedOptions'), where('trackingCount', '>', 0))
-        );
+        const snap = await getDocs(collection(db, 'products', productGroupId, 'trackedOptions'));
         if (cancelled) return;
         const opts = snap.docs
           .map((d) => ({ id: d.id, ...d.data() }))

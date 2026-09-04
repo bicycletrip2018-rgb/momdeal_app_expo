@@ -159,7 +159,18 @@ service cloud.firestore {
       // label and by the price scheduler to enumerate what to check.
       match /trackedOptions/{optionId} {
         allow read: if true;
-        allow write: if false;
+        // trackingCount is the one field only onSavedProductCreate/Delete
+        // (Admin SDK, bypasses rules) may ever move — everything else
+        // (optionId/vendorItemId/optionLabel/lastPrice) a signed-in client
+        // can create/refresh directly when it discovers a sibling option
+        // by click-simulating through the product page (see
+        // clientProductRegistrar.js). diff().affectedKeys() (not a plain
+        // "in" check) so a merge write that leaves an existing
+        // trackingCount untouched isn't rejected just for that field being
+        // present in the post-merge document.
+        allow create: if isSignedIn() && !('trackingCount' in request.resource.data);
+        allow update: if isSignedIn() && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['trackingCount']);
+        allow delete: if false;
       }
     }
 
@@ -169,15 +180,6 @@ service cloud.firestore {
     match /segment_popularity/{docId} {
       allow read: if true;
       allow write: if false;
-    }
-
-    // TEMP DIAGNOSTIC — remove after use (see GlobalMagicNudge.js). Lets a
-    // signed-in client save the raw HTML it captured for option-list
-    // investigation; nobody can read/update/delete from the client, only
-    // the developer via the Admin SDK / REST API with owner credentials.
-    match /debug_scrapes/{docId} {
-      allow create: if isSignedIn();
-      allow read, update, delete: if false;
     }
 
     // Anything not explicitly matched above is closed by default (no
