@@ -27,7 +27,7 @@ import Svg, {
 } from 'react-native-svg';
 
 import { Bell, BellRing, CheckCircle, ChevronRight, ExternalLink, Info, Share2, Sparkles, Users } from 'lucide-react-native';
-import { addDoc, collection, doc, getDoc, getDocs, getCountFromServer, query, serverTimestamp, setDoc, updateDoc, where } from 'firebase/firestore';
+import { addDoc, collection, doc, getDoc, getDocs, query, serverTimestamp, setDoc, updateDoc, where } from 'firebase/firestore';
 import { useUser } from '../context/UserContext';
 import { scrapeRealCoupangImage } from '../utils/scrapeProductImage';
 import { httpsCallable } from 'firebase/functions';
@@ -623,16 +623,17 @@ export default function DetailScreen({ route, navigation }) {
     if (userType === 'child' && !childBirthDate) return;
     const productGroupId = rawId.startsWith('coupang_') ? rawId : `coupang_${rawId}`;
     const segment = deriveSegmentFromBirthDate(childBirthDate, userType);
+    // Was a direct cross-user aggregate on user_saved_products — firestore.rules
+    // only allows reading a saved-product doc you own, so that query always
+    // failed with permission-denied and peerCount silently stayed 0 forever
+    // (confirmed live: every product showed "0명"). segment_popularity is the
+    // same publicly-readable, pre-aggregated counter TrackingListScreen's
+    // "또래 추천" curation card already reads correctly — -1 excludes this
+    // user's own save from the count, matching curationFilters.js's peers logic.
     const fetchPeerCount = async () => {
       try {
-        const snap = await getCountFromServer(
-          query(
-            collection(db, 'user_saved_products'),
-            where('productGroupId', '==', productGroupId),
-            where('userSegment', '==', segment)
-          )
-        );
-        setPeerCount(snap.data().count);
+        const snap = await getDoc(doc(db, 'segment_popularity', `${segment}_${productGroupId}`));
+        setPeerCount(snap.exists() ? Math.max(0, (snap.data().count ?? 0) - 1) : 0);
       } catch (_) {}
     };
     fetchPeerCount();

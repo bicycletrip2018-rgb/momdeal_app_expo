@@ -137,18 +137,47 @@ service cloud.firestore {
       allow create, update: if isSignedIn();
       allow delete: if isAdmin();
 
+      // Price history — write-once by design (every check adds a NEW doc via
+      // addDoc/.add(), client and server both; nothing ever updates an
+      // existing offer, confirmed by grep across the app). update is closed
+      // so a past observation can never be edited after the fact — an
+      // append-only ledger is the whole point of a price *history*. create
+      // still requires a plausible price, since this doc directly feeds the
+      // marketing-average / discount-% shown to every viewer of the product.
       match /offers/{offerId} {
         allow read: if true;
-        allow create, update: if isSignedIn();
+        allow create: if isSignedIn()
+                      && request.resource.data.price is number
+                      && request.resource.data.price > 0
+                      && request.resource.data.price < 50000000;
+        allow update: if false;
         allow delete: if isAdmin();
       }
 
       // Daily max/min price bucket — written client-side on registration
       // (priceTrackingService.recordPrice) in addition to the scheduled
-      // server-side price checks. Same residual-risk note as offers above.
+      // server-side price checks. Unlike offers this doc IS legitimately
+      // updated (today's running max/min), so it can't be append-only —
+      // instead the update rule enforces the one invariant every real write
+      // already follows (_updateDailyPrice: maxPrice = Math.max(existing,
+      // new), minPrice = Math.min(existing, new)): the range can only ever
+      // widen, never move backwards or reset.
       match /daily_prices/{dateId} {
         allow read: if true;
-        allow create, update: if isSignedIn();
+        allow create: if isSignedIn()
+                      && request.resource.data.maxPrice is number
+                      && request.resource.data.minPrice is number
+                      && request.resource.data.maxPrice > 0
+                      && request.resource.data.maxPrice < 50000000
+                      && request.resource.data.minPrice > 0
+                      && request.resource.data.minPrice <= request.resource.data.maxPrice;
+        allow update: if isSignedIn()
+                      && request.resource.data.maxPrice is number
+                      && request.resource.data.minPrice is number
+                      && request.resource.data.maxPrice >= resource.data.maxPrice
+                      && request.resource.data.minPrice <= resource.data.minPrice
+                      && request.resource.data.maxPrice < 50000000
+                      && request.resource.data.minPrice > 0;
         allow delete: if isAdmin();
       }
 
