@@ -309,6 +309,55 @@ const tryV4Api = async (productId, itemId) => {
 };
 
 // ---------------------------------------------------------------------------
+// Bright Data Web Unlocker — optionName fallback ONLY
+// tryV4Api is blocked by Akamai from GCP origins nearly 100% of the time
+// (confirmed live: HTTP 200 with content-length 0 and an _abck cookie), so
+// a tracked option's optionLabel would otherwise never get backfilled once
+// the client's own one-time click-simulation capture (see
+// clientProductRegistrar.js) didn't cover it. Bright Data's Web Unlocker
+// proxies the request through residential IPs that Akamai doesn't flag —
+// confirmed live against a real product page. Scoped deliberately narrow
+// (option label text only, not price/stock) because it's billed per call;
+// see RULE-12.
+// ---------------------------------------------------------------------------
+
+const fetchOptionNameViaBrightData = async (productId, vendorItemId) => {
+  const apiKey = process.env.BRIGHTDATA_API_KEY;
+  const zone = process.env.BRIGHTDATA_ZONE;
+  if (!apiKey || !zone || !vendorItemId) return null;
+
+  try {
+    const targetUrl = `https://www.coupang.com/vp/products/${productId}?vendorItemId=${vendorItemId}`;
+    const response = await axios.post(
+      "https://api.brightdata.com/request",
+      { zone, url: targetUrl, format: "raw" },
+      {
+        headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+        timeout: 25000,
+        validateStatus: () => true,
+      }
+    );
+    if (response.status !== 200 || typeof response.data !== "string") {
+      console.log(`[BrightData] optionName fallback failed: HTTP ${response.status}`);
+      return null;
+    }
+
+    const $ = cheerio.load(response.data);
+    const selected = $(".option-table-list__option--selected .option-table-list__option-name").first().text().trim();
+    if (selected) return selected;
+
+    // Selected-option class not found (page structure changed, or the
+    // vendorItemId didn't match any option) — fall back to the page title,
+    // which Coupang always renders as "<option-specific name> | 쿠팡".
+    const title = $("title").first().text().replace(/\s*\|\s*쿠팡\s*$/, "").trim();
+    return title || null;
+  } catch (e) {
+    console.log("[BrightData] optionName fallback error:", e?.message);
+    return null;
+  }
+};
+
+// ---------------------------------------------------------------------------
 // HTML scraping (last resort)
 // Sub-strategies: exports.sdp → JSON-LD → inline JS keys → OG meta tag
 // ---------------------------------------------------------------------------
@@ -1132,13 +1181,23 @@ const fetchProductDetailsByMarket = async (market, originalId, vendorItemId = nu
         const partners = pRes.status === "fulfilled" ? pRes.value : null;
         const v4 = v4Res.status === "fulfilled" ? v4Res.value : null;
 
+        // v4 is blocked by Akamai from GCP origins almost every time (confirmed
+        // live), so optionName commonly stays unresolved for tracked options.
+        // Bright Data Web Unlocker is the fallback — called only when an
+        // option-specific label is actually needed and still missing, to
+        // keep the (billed-per-call) usage bounded.
+        let resolvedOptionName = v4?.optionName ?? null;
+        if (vendorItemId && !resolvedOptionName) {
+          resolvedOptionName = await fetchOptionNameViaBrightData(originalId, vendorItemId);
+        }
+
         if (vendorItemId && v4) {
           return {
             name: v4.name,
             price: v4.price,
             image: partners?.image ?? null,
             isOutOfStock: v4.isOutOfStock,
-            optionName: v4.optionName,
+            optionName: resolvedOptionName,
           };
         }
         if (partners) {
@@ -1147,18 +1206,22 @@ const fetchProductDetailsByMarket = async (market, originalId, vendorItemId = nu
             price: partners.price,
             image: partners.image,
             isOutOfStock: v4?.isOutOfStock ?? false,
-            optionName: v4?.optionName ?? null,
+            optionName: resolvedOptionName,
           };
         }
         if (v4) {
-          return { name: v4.name, price: v4.price, image: null, isOutOfStock: v4.isOutOfStock, optionName: v4.optionName ?? null };
+          return { name: v4.name, price: v4.price, image: null, isOutOfStock: v4.isOutOfStock, optionName: resolvedOptionName };
         }
       }
 
       // Keys not configured or both failed — try v4 alone
       const v4Result = await tryV4Api(originalId, vendorItemId);
       if (v4Result) {
-        return { name: v4Result.name, price: v4Result.price, image: null, isOutOfStock: v4Result.isOutOfStock, optionName: v4Result.optionName ?? null };
+        let optionName = v4Result.optionName ?? null;
+        if (vendorItemId && !optionName) {
+          optionName = await fetchOptionNameViaBrightData(originalId, vendorItemId);
+        }
+        return { name: v4Result.name, price: v4Result.price, image: null, isOutOfStock: v4Result.isOutOfStock, optionName };
       }
 
       // Last resort: HTML scraping with cheerio-backed selectors (parent
