@@ -139,6 +139,8 @@ export async function registerProductFromClient(productId, details, uid) {
             vendorItemId: o.vendorItemId,
             ...(typeof o.label === 'string' && o.label.trim() ? { optionLabel: o.label.trim() } : {}),
             ...(Number.isFinite(sibPrice) && sibPrice > 0 ? { lastPrice: sibPrice } : {}),
+            // Forensic trail — see priceTrackingService.recordPrice for why.
+            ...(uid ? { submittedByUid: uid } : {}),
           },
           { merge: true },
         );

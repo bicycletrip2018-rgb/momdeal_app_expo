@@ -10,7 +10,7 @@ import {
   setDoc,
   where,
 } from 'firebase/firestore';
-import { db } from '../firebase/config';
+import { auth, db } from '../firebase/config';
 
 // ─── Daily Price Helpers ──────────────────────────────────────────────────────
 
@@ -28,7 +28,7 @@ function todayKey() {
 // the original parent-level bucket exactly as before (legacy items with no
 // captured option keep working unchanged).
 // Called automatically by recordPrice whenever a valid price is observed.
-async function _updateDailyPrice(productId, price, optionId = null) {
+async function _updateDailyPrice(productId, price, optionId = null, submittedByUid = null) {
   const dateKey = todayKey();
   const docId = optionId ? `${dateKey}_${optionId}` : dateKey;
   const ref = doc(db, 'products', productId, 'daily_prices', docId);
@@ -42,10 +42,16 @@ async function _updateDailyPrice(productId, price, optionId = null) {
     const newMax = Math.max(existing.maxPrice, price);
     const newMin = Math.min(existing.minPrice, price);
     if (newMax !== existing.maxPrice || newMin !== existing.minPrice) {
-      await setDoc(ref, { maxPrice: newMax, minPrice: newMin, date: dateKey, ...(optionId ? { optionId } : {}) }, { merge: true });
+      await setDoc(ref, {
+        maxPrice: newMax, minPrice: newMin, date: dateKey,
+        ...(optionId ? { optionId } : {}), ...(submittedByUid ? { submittedByUid } : {}),
+      }, { merge: true });
     }
   } else {
-    await setDoc(ref, { maxPrice: price, minPrice: price, date: dateKey, ...(optionId ? { optionId } : {}) });
+    await setDoc(ref, {
+      maxPrice: price, minPrice: price, date: dateKey,
+      ...(optionId ? { optionId } : {}), ...(submittedByUid ? { submittedByUid } : {}),
+    });
   }
 }
 
@@ -114,15 +120,25 @@ export function calcMarketingDiscountPct(marketingAverage, currentPrice) {
 export async function recordPrice(productId, price, source, extraFields = {}, optionId = null) {
   if (!productId || typeof price !== 'number' || price <= 0) return;
 
+  // submittedByUid: who actually wrote this observation — required by
+  // firestore.rules (must equal request.auth.uid, so it can't be spoofed to
+  // frame another user) and read back by the price-anomaly Cloud Function
+  // trigger when a jump gets flagged for review. Not a security control on
+  // its own — it's the forensic trail a real security control (App Check,
+  // manual review) needs to act on.
+  const submittedByUid = auth.currentUser?.uid ?? null;
+  if (!submittedByUid) return;
+
   await Promise.all([
     addDoc(collection(db, 'products', productId, 'offers'), {
       ...extraFields,
       ...(optionId ? { optionId } : {}),
       price,
       source: source || 'unknown',
+      submittedByUid,
       checkedAt: serverTimestamp(),
     }),
-    _updateDailyPrice(productId, price, optionId),
+    _updateDailyPrice(productId, price, optionId, submittedByUid),
   ]);
 
   intelCache.delete(intelCacheKey(productId, optionId));

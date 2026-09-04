@@ -4,7 +4,7 @@ const functions = require("firebase-functions");
 const { onCall, onRequest, HttpsError } = require("firebase-functions/v2/https");
 const corsMiddleware = require("cors")({ origin: true });
 const { onSchedule } = require("firebase-functions/v2/scheduler");
-const { onDocumentCreated, onDocumentDeleted } = require("firebase-functions/v2/firestore");
+const { onDocumentCreated, onDocumentDeleted, onDocumentWritten } = require("firebase-functions/v2/firestore");
 const admin = require("firebase-admin");
 const fetch = require("node-fetch");
 const cheerio = require("cheerio");
@@ -2393,6 +2393,81 @@ exports.onSavedProductDelete = onDocumentDeleted("user_saved_products/{docId}", 
   await Promise.all(writes).catch((err) => console.error("onSavedProductDelete:", err.message));
   return null;
 });
+
+// ---------------------------------------------------------------------------
+// Price anomaly detection — detective, not preventive. firestore.rules
+// (see the offers/daily_prices match blocks) already reject a write that
+// tries to narrow an already-recorded daily range or use an implausible raw
+// price, but a single FIRST observation of the day is still only bounded by
+// a loose ceiling (< 5천만원) — nothing stops a signed-in client's first
+// check from being a plausible-looking but fabricated number. This trigger
+// can't block that (Firestore triggers run after the write already landed),
+// but it flags anything that jumps ≥30% from the last known value into
+// price_anomaly_review for a human to look at, with the writer's uid
+// attached (see submittedByUid — un-spoofable per the rules above).
+// ---------------------------------------------------------------------------
+
+const ANOMALY_JUMP_THRESHOLD = 0.30;
+
+exports.onDailyPriceAnomaly = onDocumentWritten(
+  "products/{productId}/daily_prices/{dateId}",
+  async (event) => {
+    const before = event.data?.before?.exists ? event.data.before.data() : null;
+    const after  = event.data?.after?.exists ? event.data.after.data() : null;
+    if (!after) return null; // deleted — nothing to flag
+
+    const { productId, dateId } = event.params;
+    const firestoreDb = admin.firestore();
+
+    const pctJump = (oldVal, newVal) => {
+      if (typeof oldVal !== "number" || typeof newVal !== "number" || oldVal <= 0) return null;
+      return Math.abs(newVal - oldVal) / oldVal;
+    };
+
+    const flags = [];
+    if (before) {
+      // Normal case — compare against this same bucket's prior state. A
+      // legitimate write only ever widens the range (enforced by rules), so
+      // any jump here is real movement, not narrowing — still worth a look
+      // if it's this large in one write.
+      const maxJump = pctJump(before.maxPrice, after.maxPrice);
+      const minJump = pctJump(before.minPrice, after.minPrice);
+      if (maxJump !== null && maxJump >= ANOMALY_JUMP_THRESHOLD) {
+        flags.push({ field: "maxPrice", before: before.maxPrice, after: after.maxPrice, pct: Math.round(maxJump * 1000) / 10 });
+      }
+      if (minJump !== null && minJump >= ANOMALY_JUMP_THRESHOLD) {
+        flags.push({ field: "minPrice", before: before.minPrice, after: after.minPrice, pct: Math.round(minJump * 1000) / 10 });
+      }
+    } else {
+      // First observation of the day for this bucket — nothing in
+      // daily_prices to compare against yet, so fall back to the parent
+      // product's last known currentPrice (populated by every prior
+      // registration/scheduled check).
+      try {
+        const productSnap = await firestoreDb.doc(`products/${productId}`).get();
+        const knownPrice = productSnap.exists ? productSnap.data().currentPrice : null;
+        const jump = pctJump(knownPrice, after.maxPrice);
+        if (jump !== null && jump >= ANOMALY_JUMP_THRESHOLD) {
+          flags.push({ field: "firstObservation", before: knownPrice, after: after.maxPrice, pct: Math.round(jump * 1000) / 10 });
+        }
+      } catch (_) { /* non-fatal — skip the comparison rather than fail the trigger */ }
+    }
+
+    if (flags.length === 0) return null;
+
+    await firestoreDb.collection("price_anomaly_review").add({
+      productId,
+      dateId,
+      optionId: after.optionId ?? null,
+      flags,
+      submittedByUid: after.submittedByUid ?? null,
+      detectedAt: admin.firestore.FieldValue.serverTimestamp(),
+      status: "pending",
+    });
+    console.log(`[Anomaly] Flagged products/${productId}/daily_prices/${dateId}:`, JSON.stringify(flags));
+    return null;
+  }
+);
 
 // ---------------------------------------------------------------------------
 

@@ -146,10 +146,18 @@ service cloud.firestore {
       // marketing-average / discount-% shown to every viewer of the product.
       match /offers/{offerId} {
         allow read: if true;
+        // submittedByUid must equal the actual writer's own uid — cannot be
+        // set to spoof a different user. This isn't a preventive control by
+        // itself (a malicious user can still tamper, just under their own
+        // name), but it's the forensic trail the anomaly-review Cloud
+        // Function trigger and future manual investigation both key off —
+        // "which account wrote this" has to be un-spoofable for either to
+        // mean anything.
         allow create: if isSignedIn()
                       && request.resource.data.price is number
                       && request.resource.data.price > 0
-                      && request.resource.data.price < 50000000;
+                      && request.resource.data.price < 50000000
+                      && request.resource.data.submittedByUid == request.auth.uid;
         allow update: if false;
         allow delete: if isAdmin();
       }
@@ -164,20 +172,26 @@ service cloud.firestore {
       // widen, never move backwards or reset.
       match /daily_prices/{dateId} {
         allow read: if true;
+        // submittedByUid — see offers above for why it must be un-spoofable.
+        // Stamped on every write (not just creation) so "who touched this
+        // bucket last" survives across the day's create → update → update
+        // sequence, which is what the anomaly trigger reads.
         allow create: if isSignedIn()
                       && request.resource.data.maxPrice is number
                       && request.resource.data.minPrice is number
                       && request.resource.data.maxPrice > 0
                       && request.resource.data.maxPrice < 50000000
                       && request.resource.data.minPrice > 0
-                      && request.resource.data.minPrice <= request.resource.data.maxPrice;
+                      && request.resource.data.minPrice <= request.resource.data.maxPrice
+                      && request.resource.data.submittedByUid == request.auth.uid;
         allow update: if isSignedIn()
                       && request.resource.data.maxPrice is number
                       && request.resource.data.minPrice is number
                       && request.resource.data.maxPrice >= resource.data.maxPrice
                       && request.resource.data.minPrice <= resource.data.minPrice
                       && request.resource.data.maxPrice < 50000000
-                      && request.resource.data.minPrice > 0;
+                      && request.resource.data.minPrice > 0
+                      && request.resource.data.submittedByUid == request.auth.uid;
         allow delete: if isAdmin();
       }
 
@@ -197,8 +211,10 @@ service cloud.firestore {
         // "in" check) so a merge write that leaves an existing
         // trackingCount untouched isn't rejected just for that field being
         // present in the post-merge document.
-        allow create: if isSignedIn() && !('trackingCount' in request.resource.data);
-        allow update: if isSignedIn() && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['trackingCount']);
+        allow create: if isSignedIn() && !('trackingCount' in request.resource.data)
+                      && request.resource.data.submittedByUid == request.auth.uid;
+        allow update: if isSignedIn() && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['trackingCount'])
+                      && request.resource.data.submittedByUid == request.auth.uid;
         allow delete: if false;
       }
     }
@@ -208,6 +224,15 @@ service cloud.firestore {
     // rules entirely), never directly by clients.
     match /segment_popularity/{docId} {
       allow read: if true;
+      allow write: if false;
+    }
+
+    // Flagged by the onDailyPriceAnomaly trigger when a daily_prices write
+    // jumps ≥30% from its prior value — a detective control, not preventive:
+    // it doesn't block the write, just queues it for admin review. Admin SDK
+    // only (bypasses rules); never written or read by an ordinary client.
+    match /price_anomaly_review/{docId} {
+      allow read: if isAdmin();
       allow write: if false;
     }
 
