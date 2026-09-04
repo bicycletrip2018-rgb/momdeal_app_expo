@@ -593,7 +593,11 @@ exports.getProductDetail = functions.https.onCall(async (request) => {
       name: typeof item.productName === "string" ? item.productName : "쿠팡 상품",
       price: typeof item.productPrice === "number" ? item.productPrice : null,
       image: typeof item.productImage === "string" ? item.productImage : null,
-      affiliateUrl: typeof item.shortUrl === "string" ? item.shortUrl : null,
+      // Coupang Partners' deeplink API returns the tracked short link under
+      // "shortenUrl", not "shortUrl" — this field-name mismatch made every
+      // caller silently fall back to a non-tracked URL (see generateDeeplink
+      // below, same bug, confirmed against a live raw API response).
+      affiliateUrl: typeof item.shortenUrl === "string" ? item.shortenUrl : null,
     };
   } catch (error) {
     if (error instanceof functions.https.HttpsError) throw error;
@@ -658,7 +662,11 @@ exports.generateDeeplink = functions.https.onCall(async (request) => {
 
     const links = (json?.data ?? []).map((item) => ({
       originalUrl: typeof item.originalUrl === "string" ? item.originalUrl : null,
-      shortUrl: typeof item.shortUrl === "string" ? item.shortUrl : null,
+      // Confirmed against a live raw Partners API response: the tracked
+      // short link comes back as "shortenUrl", not "shortUrl" — the old
+      // field name silently returned null on every single call, which
+      // is why the CTA button was opening non-tracked URLs.
+      shortUrl: typeof item.shortenUrl === "string" ? item.shortenUrl : null,
       name: typeof item.productName === "string" ? item.productName : null,
       price: typeof item.productPrice === "number" ? item.productPrice : null,
       image: typeof item.productImage === "string" ? item.productImage : null,

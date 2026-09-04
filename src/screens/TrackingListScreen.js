@@ -216,9 +216,15 @@ export default function TrackingListScreen({ navigation }) {
                 originalId:       p.originalId ?? null,
                 optionId:         link.optionId ?? null,
                 vendorItemId:     link.vendorItemId ?? null,
-                name:             p.name         ?? '상품',
-                brand:            p.brand        ?? null,
-                image:            p.image        ?? null,
+                // capturedName/Spec/Image/Brand (from THIS option's own
+                // registration scrape, stored on the link doc) win over the
+                // shared parent doc's fields — the parent's name/spec/image
+                // are only representative for legacy (no-option) items;
+                // for option-aware items they'd otherwise show whichever
+                // sibling option was registered/re-shared most recently.
+                name:             link.capturedName ?? p.name   ?? '상품',
+                brand:            link.capturedBrand ?? p.brand ?? null,
+                image:            link.capturedImage ?? p.image ?? null,
                 currentPrice:     intel?.currentPrice ?? p.currentPrice ?? 0,
                 wowPrice:         p.wowPrice ?? null,
                 priceDrop:        intel?.priceDrop ?? 0,
@@ -241,7 +247,7 @@ export default function TrackingListScreen({ navigation }) {
                 // absent data to 'normal' would misreport "확인 안 됨" as
                 // "일반배송으로 확인됨".
                 deliveryType:     p.deliveryType ?? null,
-                spec:             p.spec ?? null,
+                spec:             link.capturedSpec ?? p.spec ?? null,
                 targetPrice:      link.targetPrice ?? undefined,
                 isPriceAlertOn:   alertActiveByProductId[link.productGroupId] ?? false,
                 isRestockAlertOn: link.isRestockAlertOn ?? false,

@@ -78,8 +78,30 @@ export async function registerProductFromClient(productId, details, uid) {
 
   if (isNew) {
     await setDoc(docRef, { ...baseFields, createdAt: serverTimestamp() });
-  } else {
+  } else if (!optionId) {
+    // Legacy path — re-sharing the exact same base listing again is a
+    // genuine refresh of the parent's representative identity, same as
+    // before optionId existed.
     await setDoc(docRef, baseFields, { merge: true });
+  } else {
+    // Registering ANOTHER option of an already-known parent must NOT
+    // overwrite the shared parent doc's name/spec/image/brand with THIS
+    // option's values — different quantities/sizes usually have different
+    // titles on Coupang (e.g. "...48개입" vs "...72개입"), and every
+    // tracked card of this parent reads name/spec from this one doc. Doing
+    // so previously made all of a parent's tracked cards flip to whichever
+    // option was registered most recently. Each option's own display
+    // fields are captured on its own user_saved_products link below
+    // instead — only price-adjacent fields are safe to refresh here.
+    await setDoc(docRef, {
+      currentPrice: price,
+      ...(wowPrice != null ? { wowPrice } : {}),
+      isRocket,
+      deliveryType,
+      isOutOfStock: false,
+      stockStatus:  'in_stock',
+      updatedAt:    serverTimestamp(),
+    }, { merge: true });
   }
 
   // Records the price observation in products/{id}/offers AND today's
@@ -114,16 +136,29 @@ export async function registerProductFromClient(productId, details, uid) {
 
     console.log('[Registrar] Existing linkage docs found:', savedSnap.size);
 
+    // Each option's own scraped name/spec/image/brand — captured here
+    // (not on the shared parent doc) so this specific card always shows
+    // what THIS option actually is, regardless of which other option of
+    // the same parent gets registered later.
+    const capturedFields = optionId != null
+      ? { optionId, vendorItemId, capturedName: name, capturedSpec: spec, capturedImage: image, capturedBrand: brand }
+      : {};
+
     if (savedSnap.empty) {
       const userSegment = await getCurrentUserSegment(uid);
       await addDoc(collection(db, 'user_saved_products'), {
         userId:         uid,
         productGroupId: productGroupId,
         userSegment,
-        ...(optionId != null ? { optionId, vendorItemId } : {}),
+        ...capturedFields,
         createdAt:      serverTimestamp(),
       });
       console.log('[Registrar] Linkage doc successfully created in user_saved_products for UID:', uid);
+    } else if (optionId != null) {
+      // Re-sharing an already-tracked option — refresh its own captured
+      // display fields (never touches the parent doc or other options).
+      await setDoc(doc(db, 'user_saved_products', savedSnap.docs[0].id), capturedFields, { merge: true });
+      console.log('[Registrar] Refreshed captured fields for existing option link.');
     } else {
       console.log('[Registrar] Linkage already exists — skipping duplicate write.');
     }
