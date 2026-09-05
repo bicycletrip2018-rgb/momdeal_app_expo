@@ -126,95 +126,53 @@ service cloud.firestore {
       allow update: if false;
     }
 
-    // ─── product catalog (client-side registration architecture, RULE-05) ────
-    // NOTE: products/offers stay writable by any signed-in user because the
-    // app's core "1-pixel webview scraper" flow writes directly from the
-    // client. This is a known residual risk (a malicious client could tamper
-    // with prices) accepted for v1 — see launch notes. Tightening this
-    // properly means moving product/offer writes behind a callable Function.
+    // ─── product catalog (server-mediated writes) ─────────────────────────────
+    // Was: any signed-in client wrote products/offers/daily_prices/
+    // trackedOptions directly from its own scrape ("1픽셀 웹뷰" flow, RULE-05).
+    // Now: the client still does the scrape (that's still how RULE-12 beats
+    // Akamai — a server-origin fetch stays blocked), but submits it to
+    // submitScrapedProduct instead of writing it — that Cloud Function
+    // independently re-fetches the same page via Bright Data, only writes
+    // (via Admin SDK, which bypasses these rules) if the two prices roughly
+    // agree. So client create/update is closed here across the board; every
+    // path below is Admin-SDK-only now. See the price-trust audit memo's
+    // "정식 출시 전" milestone.
     match /products/{productId} {
       allow read: if true;
-      allow create, update: if isSignedIn();
+      allow create: if false;
+      // reviewStats.* (reviewService.js, recomputed after each review) and
+      // optionStats.* (productActionService.js, click/conversion counters)
+      // are the only fields an ordinary signed-in client still legitimately
+      // updates on this doc — everything price/identity-related (name,
+      // currentPrice, image, ...) is submitScrapedProduct-only now.
+      allow update: if isAdmin() || (isSignedIn() && onlyChangedFields(['reviewStats', 'optionStats', 'updatedAt']));
       allow delete: if isAdmin();
 
-      // Price history — write-once by design (every check adds a NEW doc via
-      // addDoc/.add(), client and server both; nothing ever updates an
-      // existing offer, confirmed by grep across the app). update is closed
-      // so a past observation can never be edited after the fact — an
-      // append-only ledger is the whole point of a price *history*. create
-      // still requires a plausible price, since this doc directly feeds the
-      // marketing-average / discount-% shown to every viewer of the product.
+      // Price history — append-only (every check adds a NEW doc; nothing
+      // ever updates an existing offer). Client writes closed entirely now
+      // that submitScrapedProduct (Admin SDK) is the only path in.
       match /offers/{offerId} {
         allow read: if true;
-        // submittedByUid must equal the actual writer's own uid — cannot be
-        // set to spoof a different user. This isn't a preventive control by
-        // itself (a malicious user can still tamper, just under their own
-        // name), but it's the forensic trail the anomaly-review Cloud
-        // Function trigger and future manual investigation both key off —
-        // "which account wrote this" has to be un-spoofable for either to
-        // mean anything.
-        allow create: if isSignedIn()
-                      && request.resource.data.price is number
-                      && request.resource.data.price > 0
-                      && request.resource.data.price < 50000000
-                      && request.resource.data.submittedByUid == request.auth.uid;
-        allow update: if false;
+        allow create, update: if false;
         allow delete: if isAdmin();
       }
 
-      // Daily max/min price bucket — written client-side on registration
-      // (priceTrackingService.recordPrice) in addition to the scheduled
-      // server-side price checks. Unlike offers this doc IS legitimately
-      // updated (today's running max/min), so it can't be append-only —
-      // instead the update rule enforces the one invariant every real write
-      // already follows (_updateDailyPrice: maxPrice = Math.max(existing,
-      // new), minPrice = Math.min(existing, new)): the range can only ever
-      // widen, never move backwards or reset.
+      // Daily max/min price bucket. Client writes closed entirely — see
+      // products/{productId} note above.
       match /daily_prices/{dateId} {
         allow read: if true;
-        // submittedByUid — see offers above for why it must be un-spoofable.
-        // Stamped on every write (not just creation) so "who touched this
-        // bucket last" survives across the day's create → update → update
-        // sequence, which is what the anomaly trigger reads.
-        allow create: if isSignedIn()
-                      && request.resource.data.maxPrice is number
-                      && request.resource.data.minPrice is number
-                      && request.resource.data.maxPrice > 0
-                      && request.resource.data.maxPrice < 50000000
-                      && request.resource.data.minPrice > 0
-                      && request.resource.data.minPrice <= request.resource.data.maxPrice
-                      && request.resource.data.submittedByUid == request.auth.uid;
-        allow update: if isSignedIn()
-                      && request.resource.data.maxPrice is number
-                      && request.resource.data.minPrice is number
-                      && request.resource.data.maxPrice >= resource.data.maxPrice
-                      && request.resource.data.minPrice <= resource.data.minPrice
-                      && request.resource.data.maxPrice < 50000000
-                      && request.resource.data.minPrice > 0
-                      && request.resource.data.submittedByUid == request.auth.uid;
+        allow create, update: if false;
         allow delete: if isAdmin();
       }
 
       // Denormalized registry of which options (color/size/quantity) of
-      // this parent are actively tracked — written only by
-      // onSavedProductCreate/Delete and scheduledPriceUpdate (Admin SDK
-      // bypasses rules entirely), read by DetailScreen to show the option
-      // label and by the price scheduler to enumerate what to check.
+      // this parent are actively tracked. Client writes closed entirely —
+      // submitScrapedProduct now writes sibling-option entries too (see its
+      // file-header note on why those stay unverified-but-authenticated
+      // rather than Bright-Data-confirmed like the primary price).
       match /trackedOptions/{optionId} {
         allow read: if true;
-        // trackingCount is the one field only onSavedProductCreate/Delete
-        // (Admin SDK, bypasses rules) may ever move — everything else
-        // (optionId/vendorItemId/optionLabel/lastPrice) a signed-in client
-        // can create/refresh directly when it discovers a sibling option
-        // by click-simulating through the product page (see
-        // clientProductRegistrar.js). diff().affectedKeys() (not a plain
-        // "in" check) so a merge write that leaves an existing
-        // trackingCount untouched isn't rejected just for that field being
-        // present in the post-merge document.
-        allow create: if isSignedIn() && !('trackingCount' in request.resource.data)
-                      && request.resource.data.submittedByUid == request.auth.uid;
-        allow update: if isSignedIn() && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['trackingCount'])
-                      && request.resource.data.submittedByUid == request.auth.uid;
+        allow create, update: if false;
         allow delete: if false;
       }
     }

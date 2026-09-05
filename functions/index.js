@@ -35,6 +35,25 @@ function deriveSegmentFromBirthDate(birthDate, userType) {
   return `child_${yyyy}-${half}`;
 }
 
+// Server-side mirror of saveService.js's getCurrentUserSegment — same
+// selectedChildId → children[0] fallback, needed here because
+// submitScrapedProduct writes user_saved_products itself now instead of
+// leaving that to the client.
+async function getServerUserSegment(firestoreDb, uid) {
+  if (!uid) return "unknown_segment";
+  try {
+    const userSnap = await firestoreDb.collection("users").doc(uid).get();
+    const selectedChildId = userSnap.exists ? userSnap.data().selectedChildId ?? null : null;
+    const childrenSnap = await firestoreDb.collection("children").where("userId", "==", uid).get();
+    const children = childrenSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    const child = (selectedChildId ? children.find((c) => c.id === selectedChildId) : null) ?? children[0] ?? null;
+    if (!child) return "unknown_segment";
+    return deriveSegmentFromBirthDate(child.birthDate, child.type);
+  } catch (_) {
+    return "unknown_segment";
+  }
+}
+
 admin.initializeApp();
 
 // ─── In-memory cache for home-screen API calls (TTL: 20 minutes) ─────────────
@@ -309,52 +328,84 @@ const tryV4Api = async (productId, itemId) => {
 };
 
 // ---------------------------------------------------------------------------
-// Bright Data Web Unlocker — optionName fallback ONLY
+// Bright Data Web Unlocker
 // tryV4Api is blocked by Akamai from GCP origins nearly 100% of the time
-// (confirmed live: HTTP 200 with content-length 0 and an _abck cookie), so
-// a tracked option's optionLabel would otherwise never get backfilled once
-// the client's own one-time click-simulation capture (see
-// clientProductRegistrar.js) didn't cover it. Bright Data's Web Unlocker
-// proxies the request through residential IPs that Akamai doesn't flag —
-// confirmed live against a real product page. Scoped deliberately narrow
-// (option label text only, not price/stock) because it's billed per call;
-// see RULE-12.
+// (confirmed live: HTTP 200 with content-length 0 and an _abck cookie).
+// Bright Data's Web Unlocker proxies the request through residential IPs
+// that Akamai doesn't flag — confirmed live against a real product page.
+// Two callers share this one fetch+parse:
+//   1. fetchOptionNameViaBrightData — narrow optionName-only fallback used
+//      by scheduledPriceUpdate when v4Api can't resolve a tracked option's
+//      label (unchanged from before). Runs in a background cron, so a long
+//      timeout costs nothing.
+//   2. submitScrapedProduct (below) — a best-effort corroboration check on
+//      registration, NOT a gate. See the file-header note above
+//      submitScrapedProduct for why this stopped being a blocking check:
+//      repeated automated requests to the same handful of Coupang pages
+//      from one shared proxy zone is exactly the traffic pattern Akamai
+//      exists to slow down (confirmed live — response time climbed from
+//      ~5s to 15+ minutes with zero response over a couple hours of
+//      testing tonight). A real user's own client-side scrape never has
+//      this problem (organic, one device, one session) — see RULE-12.
+//      Blocking registration on this proxy path just imports Akamai's
+//      bot-detection risk into the one flow that used to be immune to it.
 // ---------------------------------------------------------------------------
 
-const fetchOptionNameViaBrightData = async (productId, vendorItemId) => {
+const fetchListingViaBrightData = async (productId, vendorItemId, timeoutMs = 25000) => {
   const apiKey = process.env.BRIGHTDATA_API_KEY;
   const zone = process.env.BRIGHTDATA_ZONE;
-  if (!apiKey || !zone || !vendorItemId) return null;
+  if (!apiKey || !zone) return null;
 
   try {
-    const targetUrl = `https://www.coupang.com/vp/products/${productId}?vendorItemId=${vendorItemId}`;
+    const targetUrl = `https://www.coupang.com/vp/products/${productId}` +
+      (vendorItemId ? `?vendorItemId=${vendorItemId}` : "");
     const response = await axios.post(
       "https://api.brightdata.com/request",
       { zone, url: targetUrl, format: "raw" },
       {
         headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-        timeout: 25000,
+        timeout: timeoutMs,
         validateStatus: () => true,
       }
     );
     if (response.status !== 200 || typeof response.data !== "string") {
-      console.log(`[BrightData] optionName fallback failed: HTTP ${response.status}`);
+      console.log(`[BrightData] fetch failed: HTTP ${response.status}`);
       return null;
     }
 
     const $ = cheerio.load(response.data);
-    const selected = $(".option-table-list__option--selected .option-table-list__option-name").first().text().trim();
-    if (selected) return selected;
+    const selectedName = $(".option-table-list__option--selected .option-table-list__option-name").first().text().trim();
+    const selectedPriceRaw = $(".option-table-list__option--selected .option-table-list__option-price span").first().text().trim();
+    const selectedPrice = selectedPriceRaw ? parseInt(selectedPriceRaw.replace(/[^0-9]/g, ""), 10) : NaN;
 
-    // Selected-option class not found (page structure changed, or the
-    // vendorItemId didn't match any option) — fall back to the page title,
-    // which Coupang always renders as "<option-specific name> | 쿠팡".
+    // Selected-option markup covers the common case (a product with an
+    // option table). Single-SKU products have no option table at all, so
+    // fall back to the same total-price selector extractFromHtml() and the
+    // client's own click-simulation script already trust.
+    let price = Number.isFinite(selectedPrice) && selectedPrice > 0 ? selectedPrice : null;
+    if (price == null) {
+      const totalPriceRaw = $("span.total-price strong").first().text().replace(/[^0-9]/g, "");
+      if (totalPriceRaw) { const p = Number(totalPriceRaw); if (p > 0) price = p; }
+    }
+
     const title = $("title").first().text().replace(/\s*\|\s*쿠팡\s*$/, "").trim();
-    return title || null;
+    const ogImage = ($('meta[property="og:image"]').attr("content") || "").trim();
+
+    return {
+      name: selectedName || title || null,
+      price,
+      image: ogImage ? forceHttps(ogImage) : null,
+    };
   } catch (e) {
-    console.log("[BrightData] optionName fallback error:", e?.message);
+    console.log("[BrightData] fetch error:", e?.message);
     return null;
   }
+};
+
+const fetchOptionNameViaBrightData = async (productId, vendorItemId) => {
+  if (!vendorItemId) return null;
+  const result = await fetchListingViaBrightData(productId, vendorItemId);
+  return result?.name ?? null;
 };
 
 // ---------------------------------------------------------------------------
@@ -1778,6 +1829,178 @@ async function refreshOneOffer(firestoreDb, productDoc, product, market, origina
   }
   await productDoc.ref.collection("trackedOptions").doc(option.id).set(optFields, { merge: true }).catch(() => {});
 }
+
+// ---------------------------------------------------------------------------
+// submitScrapedProduct — server-mediated replacement for the old
+// clientProductRegistrar.js direct-Firestore-write flow. RULE-05's "1픽셀
+// 웹뷰" client scrape stays the actual source of truth (a real user's own
+// device/session organically loading the real page — Akamai never flags
+// this, per RULE-12); this function's job is to write it, not to gate it.
+// firestore.rules closes client create/update on products/offers/
+// daily_prices/trackedOptions entirely — Admin SDK here bypasses rules as
+// always, so this is now the ONLY path in for those collections.
+//
+// Bright Data corroboration is best-effort, NOT a gate (see the file-header
+// note above fetchListingViaBrightData for why: a shared-proxy-zone re-fetch
+// on every registration is exactly the repeated-automated-request pattern
+// that gets an IP pool throttled by Akamai — confirmed live, response time
+// climbed from ~5s to 15+ minutes over a couple hours of testing). A short
+// timeout is tried; if it doesn't answer in time or disagrees with the
+// client, the client's own value is written anyway and priceVerified:false
+// records that it went in unconfirmed. onDailyPriceAnomaly (the Firestore
+// trigger, unrelated to this call) still catches an implausible jump
+// regardless of whether this corroboration ran at all.
+// ---------------------------------------------------------------------------
+
+// invoker: "public" — v2 onCall functions are Cloud Run-backed, and unlike
+// v1 (functions.https.onCall, used elsewhere in this file) the CLI doesn't
+// automatically grant public invoke access. Without this, Cloud Run itself
+// rejects the request before it ever reaches request.auth — confirmed live
+// ("The request was not authorized to invoke this service", a Cloud Run IAM
+// error, not a Firebase auth-context one). Per-user auth is still fully
+// enforced inside the handler via request.auth?.uid.
+exports.submitScrapedProduct = onCall({ timeoutSeconds: 20, invoker: "public" }, async (request) => {
+  const uid = request.auth?.uid;
+  if (!uid) throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
+
+  const { productId, details } = request.data || {};
+  if (
+    !productId || typeof productId !== "string" ||
+    !details || typeof details.price !== "number" || details.price <= 0
+  ) {
+    throw new HttpsError("invalid-argument", "필수 정보가 누락되었습니다.");
+  }
+
+  const firestoreDb = admin.firestore();
+  const productGroupId = "coupang_" + productId;
+  const vendorItemId = typeof details.vendorItemId === "string" && details.vendorItemId ? details.vendorItemId : null;
+  const optionId = vendorItemId;
+
+  // ── Best-effort corroboration — never blocks the write ──────────────────
+  // 8s budget: long enough to catch the common case where Bright Data
+  // answers quickly, short enough that a slow/throttled moment doesn't make
+  // the user sit through what used to be an instant "상품 추가".
+  let price = details.price;
+  let priceVerified = false;
+  try {
+    const verified = await fetchListingViaBrightData(productId, vendorItemId, 8000);
+    if (verified && verified.price != null) {
+      const diffPct = Math.abs(details.price - verified.price) / verified.price;
+      if (diffPct <= 0.05) {
+        price = verified.price;
+        priceVerified = true;
+      } else {
+        console.warn(
+          `[submitScrapedProduct] price mismatch (writing client value, unverified) uid=${uid} ` +
+          `product=${productId} option=${optionId} client=${details.price} verified=${verified.price}`
+        );
+      }
+    } else {
+      console.log(`[submitScrapedProduct] corroboration unavailable, writing client value unverified: product=${productId} option=${optionId}`);
+    }
+  } catch (_) { /* best-effort only — never fails the registration */ }
+
+  const name        = cleanName(details.name || verified.name);
+  const image       = details.image ?? verified.image ?? null;
+  const wowPrice    = typeof details.wowPrice === "number" && details.wowPrice > 0 ? details.wowPrice : null;
+  const isRocket    = details.isRocket === true;
+  const deliveryType = typeof details.deliveryType === "string" ? details.deliveryType : "normal";
+  const spec        = typeof details.spec === "string" && details.spec.trim() ? details.spec.trim() : null;
+  const brand       = (typeof details.brand === "string" && details.brand.trim())
+    ? details.brand.trim()
+    : (name.split(" ")[0] || null);
+
+  // ── products/{id} upsert — option-aware, see clientProductRegistrar.js's
+  // original comment for why the shared parent doc's name/spec/image/brand
+  // must NOT be overwritten once optionId is present. ──────────────────────
+  const docRef = firestoreDb.collection("products").doc(productGroupId);
+  const existing = await docRef.get();
+  const isNew = !existing.exists;
+
+  const baseFields = {
+    productGroupId, market: "coupang", originalId: productId, name,
+    currentPrice: price, ...(wowPrice != null ? { wowPrice } : {}),
+    image, isRocket, deliveryType,
+    ...(spec != null ? { spec } : {}), ...(brand != null ? { brand } : {}),
+    isOutOfStock: false, stockStatus: "in_stock", status: "active",
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+  };
+
+  if (isNew) {
+    await docRef.set({ ...baseFields, createdAt: admin.firestore.FieldValue.serverTimestamp() });
+  } else if (!optionId) {
+    await docRef.set(baseFields, { merge: true });
+  } else {
+    await docRef.set({
+      currentPrice: price, ...(wowPrice != null ? { wowPrice } : {}),
+      isRocket, deliveryType, isOutOfStock: false, stockStatus: "in_stock",
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    }, { merge: true });
+  }
+
+  // ── price history ────────────────────────────────────────────────────────
+  // priceVerified records whether the Bright Data corroboration above
+  // actually confirmed this number or just timed out/disagreed and got
+  // written anyway — a false here isn't itself suspicious (most writes will
+  // be, given the 8s budget), it's just the honest record for whoever
+  // reviews price_anomaly_review later.
+  await docRef.collection("offers").add({
+    price, source: "client_fetch", priceVerified, submittedByUid: uid,
+    ...(optionId ? { optionId } : {}), ...(wowPrice != null ? { wowPrice } : {}),
+    checkedAt: admin.firestore.FieldValue.serverTimestamp(),
+  });
+  await updateDailyPriceBucket(productGroupId, price, optionId);
+
+  // ── sibling options (unverified, see file-header note above) ───────────
+  if (Array.isArray(details.siblingOptions) && details.siblingOptions.length > 0) {
+    const batch = firestoreDb.batch();
+    let count = 0;
+    for (const o of details.siblingOptions) {
+      if (!o || typeof o.vendorItemId !== "string" || !o.vendorItemId || o.vendorItemId === vendorItemId) continue;
+      const sibPrice = typeof o.priceText === "string" ? parseInt(o.priceText.replace(/[^0-9]/g, ""), 10) : NaN;
+      batch.set(
+        docRef.collection("trackedOptions").doc(o.vendorItemId),
+        {
+          optionId: o.vendorItemId, vendorItemId: o.vendorItemId, submittedByUid: uid,
+          ...(typeof o.label === "string" && o.label.trim() ? { optionLabel: o.label.trim() } : {}),
+          ...(Number.isFinite(sibPrice) && sibPrice > 0 ? { lastPrice: sibPrice } : {}),
+        },
+        { merge: true }
+      );
+      count++;
+    }
+    if (count > 0) await batch.commit();
+  }
+
+  // ── user_saved_products linkage — dedup on (userId, productGroupId[, optionId]) ──
+  let dedupQuery = firestoreDb.collection("user_saved_products")
+    .where("userId", "==", uid).where("productGroupId", "==", productGroupId);
+  if (optionId) dedupQuery = dedupQuery.where("optionId", "==", optionId);
+  const savedSnap = await dedupQuery.get();
+
+  const capturedFields = optionId != null
+    ? { optionId, vendorItemId, capturedName: name, capturedSpec: spec, capturedImage: image, capturedBrand: brand }
+    : {};
+
+  let isNewSave = false;
+  if (savedSnap.empty) {
+    const userSegment = await getServerUserSegment(firestoreDb, uid);
+    await firestoreDb.collection("user_saved_products").add({
+      userId: uid, productGroupId, userSegment, ...capturedFields,
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+    isNewSave = true;
+  } else if (optionId != null) {
+    await firestoreDb.collection("user_saved_products").doc(savedSnap.docs[0].id).set(capturedFields, { merge: true });
+  }
+
+  console.log(
+    `[submitScrapedProduct] OK uid=${uid} product=${productGroupId} option=${optionId ?? "-"} ` +
+    `price=${price} isNew=${isNew} isNewSave=${isNewSave}`
+  );
+
+  return { productGroupId, name, price, wowPrice, image, isNew, optionId, vendorItemId };
+});
 
 exports.scheduledPriceUpdate = onSchedule("every 3 hours", async () => {
     const firestoreDb = admin.firestore();

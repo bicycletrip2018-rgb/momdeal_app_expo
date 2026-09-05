@@ -1,59 +1,12 @@
 import {
-  addDoc,
   collection,
-  doc,
   getDocs,
   limit,
   orderBy,
   query,
-  serverTimestamp,
-  setDoc,
   where,
 } from 'firebase/firestore';
-import { auth, db } from '../firebase/config';
-
-// ─── Daily Price Helpers ──────────────────────────────────────────────────────
-
-// Returns today's date string in YYYY-MM-DD (UTC).
-function todayKey() {
-  return new Date().toISOString().slice(0, 10);
-}
-
-// Updates (or creates) the daily max/min record for a product under
-// products/{productId}/daily_prices/{YYYY-MM-DD}, or
-// products/{productId}/daily_prices/{YYYY-MM-DD}_{optionId} when optionId is
-// given — different options (colors/sizes/quantities) of the same parent
-// product can sell at very different prices, so mixing them into one bucket
-// would make the 60일 평균/차트 mean nothing specific. optionId omitted keeps
-// the original parent-level bucket exactly as before (legacy items with no
-// captured option keep working unchanged).
-// Called automatically by recordPrice whenever a valid price is observed.
-async function _updateDailyPrice(productId, price, optionId = null, submittedByUid = null) {
-  const dateKey = todayKey();
-  const docId = optionId ? `${dateKey}_${optionId}` : dateKey;
-  const ref = doc(db, 'products', productId, 'daily_prices', docId);
-  // Use setDoc with merge so we only overwrite max/min if the new price beats them.
-  // Firestore doesn't support conditional field updates in a single write without
-  // a transaction, so we fetch first then write — acceptable for low-frequency calls.
-  const { getDoc } = await import('firebase/firestore');
-  const snap = await getDoc(ref);
-  if (snap.exists()) {
-    const existing = snap.data();
-    const newMax = Math.max(existing.maxPrice, price);
-    const newMin = Math.min(existing.minPrice, price);
-    if (newMax !== existing.maxPrice || newMin !== existing.minPrice) {
-      await setDoc(ref, {
-        maxPrice: newMax, minPrice: newMin, date: dateKey,
-        ...(optionId ? { optionId } : {}), ...(submittedByUid ? { submittedByUid } : {}),
-      }, { merge: true });
-    }
-  } else {
-    await setDoc(ref, {
-      maxPrice: price, minPrice: price, date: dateKey,
-      ...(optionId ? { optionId } : {}), ...(submittedByUid ? { submittedByUid } : {}),
-    });
-  }
-}
+import { db } from '../firebase/config';
 
 // ─── Marketing Average (Tech Spec V7) ────────────────────────────────────────
 
@@ -105,43 +58,6 @@ export function calcMarketingDiscountPct(marketingAverage, currentPrice) {
   if (!marketingAverage || !currentPrice || marketingAverage <= 0) return null;
   const pct = ((marketingAverage - currentPrice) / marketingAverage) * 100;
   return Math.round(pct * 10) / 10; // 1 decimal place
-}
-
-// Records a price observation for a product, in products/{id}/offers — the
-// same subcollection ProductDetail.js, recommendationService.js and every
-// Cloud Function registration/refresh path already write/read. This used to
-// write a separate flat product_price_history collection instead, which
-// only this service actually read — two collections holding the same kind
-// of record, kept in sync by hand. Also updates today's daily_prices bucket.
-// Does nothing if price is missing or 0.
-// optionId: stamps the offer with which option (color/size/quantity) this
-// price belongs to, and routes the daily bucket accordingly. Omitted keeps
-// writing to the shared parent-level bucket exactly as before.
-export async function recordPrice(productId, price, source, extraFields = {}, optionId = null) {
-  if (!productId || typeof price !== 'number' || price <= 0) return;
-
-  // submittedByUid: who actually wrote this observation — required by
-  // firestore.rules (must equal request.auth.uid, so it can't be spoofed to
-  // frame another user) and read back by the price-anomaly Cloud Function
-  // trigger when a jump gets flagged for review. Not a security control on
-  // its own — it's the forensic trail a real security control (App Check,
-  // manual review) needs to act on.
-  const submittedByUid = auth.currentUser?.uid ?? null;
-  if (!submittedByUid) return;
-
-  await Promise.all([
-    addDoc(collection(db, 'products', productId, 'offers'), {
-      ...extraFields,
-      ...(optionId ? { optionId } : {}),
-      price,
-      source: source || 'unknown',
-      submittedByUid,
-      checkedAt: serverTimestamp(),
-    }),
-    _updateDailyPrice(productId, price, optionId, submittedByUid),
-  ]);
-
-  intelCache.delete(intelCacheKey(productId, optionId));
 }
 
 // Returns all recorded offers for a product, newest first.

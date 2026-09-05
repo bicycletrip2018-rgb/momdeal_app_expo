@@ -305,8 +305,13 @@ export default function GlobalMagicNudge({ navigationRef }) {
         }
         navigationRef?.current?.navigate('관심상품');
         setTimeout(() => { Linking.openURL('coupang://').catch(() => {}); }, 300);
-      } catch (_) {
-        ToastAndroid.show('등록 중 오류가 발생했습니다.', ToastAndroid.SHORT);
+      } catch (err) {
+        console.error('[MagicNudge] Registration failed:', err?.code, err?.message);
+        // submitScrapedProduct throws HttpsError with a Korean, user-facing
+        // message for the two expected failure modes (Bright Data unreachable,
+        // price mismatch) — surface that instead of a generic toast so a
+        // rejected registration doesn't look identical to a network blip.
+        ToastAndroid.show(err?.message || '등록 중 오류가 발생했습니다.', ToastAndroid.LONG);
         clearAll();
       }
     } else if (data.type === 'SCRAPE_ERROR') {
