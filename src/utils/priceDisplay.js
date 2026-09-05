@@ -41,8 +41,18 @@ export function resolveAgingPriceDisplay(item, isWowMember = false) {
     item.trackingStartDate ?? item.savedAt ?? item.createdAt ?? null
   );
 
-  const { price: currentPrice, isWow } = getEffectivePrice(item, isWowMember);
+  const { price: currentPrice, isWow, hasRealWowPrice } = getEffectivePrice(item, isWowMember);
   const averagePrice = item.averagePrice ?? item.originalPrice ?? item.original ?? null;
+  // Raw pair for the "other membership tier's price" comparison line —
+  // TrackingCard/DetailScreen show whichever one ISN'T currentPrice, so both
+  // need to be available regardless of which one got picked above. Only
+  // meaningful when hasRealWowPrice (a captured wowPrice that actually
+  // differs is common but not universal — many Coupang WOW items are
+  // free-shipping-only with an identical price, and this line would be
+  // redundant/confusing there, so callers should also check wowPrice !==
+  // regularPrice before rendering it).
+  const regularPrice = item.currentPrice ?? item.price ?? null;
+  const wowPrice = hasRealWowPrice ? item.wowPrice : null;
 
   if (startMs !== null) {
     const daysTracked = Math.floor((Date.now() - startMs) / MS_PER_DAY);
@@ -52,6 +62,9 @@ export function resolveAgingPriceDisplay(item, isWowMember = false) {
         mode: 'blind',
         currentPrice,
         isWow,
+        hasRealWowPrice,
+        regularPrice,
+        wowPrice,
         revealLabel: `${revealDate.getMonth() + 1}월 ${revealDate.getDate()}일`,
       };
     }
@@ -61,6 +74,9 @@ export function resolveAgingPriceDisplay(item, isWowMember = false) {
     mode: 'active',
     currentPrice,
     isWow,
+    hasRealWowPrice,
+    regularPrice,
+    wowPrice,
     averagePrice,
     discountPct: calcDiscountPct({ ...item, currentPrice }),
   };

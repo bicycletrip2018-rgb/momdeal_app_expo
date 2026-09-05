@@ -125,6 +125,25 @@ function TargetPriceBar({ currentPrice, targetPrice }) {
   );
 }
 
+// ─── WowCompareLine ───────────────────────────────────────────────────────────
+// Coupang's 일반회원가/와우회원가 aren't always different — many WOW items are
+// free-shipping-only with an identical price, and showing "와우회원가 5,000원"
+// next to an already-showing "5,000원" reads as a bug, not a benefit. Only
+// renders when a real, DIFFERENT WOW price was actually captured (see
+// clientProductRegistrar → submitScrapedProduct), same restraint as
+// DetailScreen.js's equivalent block: never estimates, never shows a
+// same-value "comparison".
+function WowCompareLine({ aging }) {
+  if (!aging.hasRealWowPrice || aging.wowPrice == null || aging.regularPrice == null) return null;
+  if (aging.wowPrice === aging.regularPrice) return null;
+
+  return aging.isWow ? (
+    <Text style={styles.wowCompareText}>일반 회원가 ₩{aging.regularPrice.toLocaleString('ko-KR')}</Text>
+  ) : (
+    <Text style={styles.wowCompareTextHighlight}>와우 회원가 ₩{aging.wowPrice.toLocaleString('ko-KR')}</Text>
+  );
+}
+
 // ─── OutOfStockOverlay ────────────────────────────────────────────────────────
 // Darkens the product image and stamps "품절" on it — isOutOfStock is real,
 // server-refreshed stock state (see functions/index.js scheduledPriceUpdate),
@@ -268,6 +287,7 @@ export const TrackingCard = React.memo(function TrackingCard({
               )}
             </View>
           )}
+          <WowCompareLine aging={aging} />
           <TargetPriceBar currentPrice={item.currentPrice} targetPrice={item.targetPrice} />
         </View>
       </TouchableOpacity>
@@ -377,6 +397,7 @@ export const TrackingCard = React.memo(function TrackingCard({
             )}
           </View>
         )}
+        <WowCompareLine aging={aging} />
         <TargetPriceBar currentPrice={item.currentPrice} targetPrice={item.targetPrice} />
       </View>
     </TouchableOpacity>
@@ -517,4 +538,12 @@ const styles = StyleSheet.create({
   agingDiscountText:    { fontSize: 13, fontWeight: '800', color: '#2E6FF2', marginTop: 2 },
   agingBlindText:       { fontSize: 10, color: '#94a3b8', marginTop: 2, lineHeight: 14 },
   agingBlindTextCompact: { fontSize: 9, color: '#94a3b8', marginTop: 1 },
+
+  // WowCompareLine — muted when showing "the other tier is cheaper than
+  // what you're already seeing isn't true" (regular member seeing their own
+  // regular price, WOW price shown as reference); highlighted blue when
+  // showing a WOW member a price they're NOT currently paying, to nudge
+  // upgrade — same color WOW badges use elsewhere in this file.
+  wowCompareText:          { fontSize: 11, color: '#94a3b8', marginTop: 4 },
+  wowCompareTextHighlight: { fontSize: 11, fontWeight: '700', color: '#2E6FF2', marginTop: 4 },
 });
