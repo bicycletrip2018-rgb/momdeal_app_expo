@@ -47,13 +47,20 @@ const WV_STYLE = {
 };
 
 // Plain string concatenation — no template literals.
-// Price strategy: DOM elements are unreliable when the WebView is off-screen
-// (lazy-load, obfuscation, layout culling). We extract price exclusively from
-// the raw HTML string which is always fully present regardless of rendering state.
+// Price strategy: the selected-option table's own price DOM element first
+// (.option-table-list__option--selected ... — confirmed reliably populated
+// in this webview since the sibling-option click-simulation below already
+// depends on the same table). Falls back to a raw-HTML regex scan ONLY when
+// there's no option table at all (single-SKU product) — that scan is a
+// known accuracy risk (it matches the first "price"-shaped JSON key or
+// "NN,NNN원" text ANYWHERE on the page, which can belong to an unrelated
+// recommended-item widget rather than the product actually being viewed;
+// confirmed live via a 16,900원 mis-scrape on an 8,550원 product), kept only
+// as a last resort for pages the primary selector can't reach.
 // Readiness gate: only og:title meta tag — it is in the <head> and available
 // the moment the HTML is parsed, before any JS executes. Once it exists we scrape.
-// Price regex order:
-//   1. JSON field "salePrice", "price", or "originalPrice" — most accurate.
+// Price fallback order (when no option table exists):
+//   1. JSON field "salePrice", "price", or "originalPrice" — approximate at best.
 //   2. Fallback: any "NN,NNN원" pattern in raw HTML — covers text rendered into
 //      script blocks or data attributes.
 // Wow price: tried via real rendered DOM selectors first (this WebView actually
@@ -88,12 +95,29 @@ const SCRAPE_SCRIPT =
     'let vendorItemId=vendorItemIdMatch?vendorItemIdMatch[1]:((pathMatch&&itemIdMatch)?itemIdMatch[1]:null);' +
     'let priceStr="0";' +
     'let rawHtml=document.body.innerHTML||document.documentElement.innerHTML;' +
-    'let jsonMatch=rawHtml.match(/"(?:salePrice|price|originalPrice)"\\s*:\\s*["\']?([\\d,]+)["\']?/i);' +
-    'if(jsonMatch){' +
-      'priceStr=jsonMatch[1];' +
+    // Selected-option DOM price FIRST — the same element the sibling-option
+    // click-simulation below already reads successfully on every run, so
+    // it's confirmed populated in this webview despite being off-screen
+    // (the "DOM is unreliable off-screen" concern below is real for OTHER
+    // elements, just not this one). Scoped to the actual product being
+    // viewed, unlike the JSON/regex fallbacks — those scan the ENTIRE raw
+    // HTML for the first "price"-shaped value on the page, which is often a
+    // DIFFERENT product entirely (a recommended-item carousel, a related-
+    // products widget, etc. rendered elsewhere on the same page). Confirmed
+    // live: a real registration came back 16,900원 for a product actually
+    // selling at 8,550원 — a recommendation widget's price, not the target
+    // product's.
+    'let selectedPriceEl=document.querySelector(".option-table-list__option--selected .option-table-list__option-price span");' +
+    'if(selectedPriceEl&&selectedPriceEl.textContent&&selectedPriceEl.textContent.trim()){' +
+      'priceStr=selectedPriceEl.textContent;' +
     '}else{' +
-      'let fallbackMatch=rawHtml.match(/([\\d,]+)\\s*원/);' +
-      'if(fallbackMatch)priceStr=fallbackMatch[1];' +
+      'let jsonMatch=rawHtml.match(/"(?:salePrice|price|originalPrice)"\\s*:\\s*["\']?([\\d,]+)["\']?/i);' +
+      'if(jsonMatch){' +
+        'priceStr=jsonMatch[1];' +
+      '}else{' +
+        'let fallbackMatch=rawHtml.match(/([\\d,]+)\\s*원/);' +
+        'if(fallbackMatch)priceStr=fallbackMatch[1];' +
+      '}' +
     '}' +
     'let price=parseInt(priceStr.replace(/[^0-9]/g,""),10);' +
     'if(isNaN(price))price=0;' +
