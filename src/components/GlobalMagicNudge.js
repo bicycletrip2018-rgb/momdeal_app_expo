@@ -63,6 +63,12 @@ const WV_STYLE = {
 //   1. JSON field "salePrice", "price", or "originalPrice" — approximate at best.
 //   2. Fallback: any "NN,NNN원" pattern in raw HTML — covers text rendered into
 //      script blocks or data attributes.
+// WOW price strategies, in order: (1) known DOM selectors for an absolute
+// WOW-tier price element, (2) an inline JSON key, (3) a "와우...-N,NNN원"
+// discount-AMOUNT label read from innerText and subtracted from the regular
+// price — confirmed live as the format a non-WOW member actually sees on
+// the PDP (regular members don't get shown an absolute WOW price element at
+// all, only the discount they'd save by upgrading).
 // Wow price: tried via real rendered DOM selectors first (this WebView actually
 // renders the page, unlike the old server-side regex-only scraper), then the
 // same inline-JSON key fallback. Absent entirely for non-Wow-eligible products —
@@ -134,6 +140,22 @@ const SCRAPE_SCRIPT =
     'if(!wowPrice){' +
       'let wowJsonMatch=rawHtml.match(/"(?:wowPrice|couponPrice|membersPrice|wowMemberPrice)"\\s*:\\s*["\']?([\\d,]+)["\']?/i);' +
       'if(wowJsonMatch)wowPrice=parseInt(wowJsonMatch[1].replace(/[^0-9]/g,""),10)||0;' +
+    '}' +
+    // A regular (non-WOW) member viewing the PDP often doesn't see an
+    // absolute WOW price element at all — instead the page shows a discount
+    // AMOUNT next to a "와우" label (e.g. "와우할인 -2,000원"), confirmed
+    // live on a real product (10,500원 정가, 표시된 와우할인 -2,000원 =
+    // 8,550원 실제 판매가). innerText (not innerHTML) here deliberately —
+    // tag-stripped visible text is what actually reads like "와우...원" in
+    // reading order, which a raw-HTML regex can't reliably do since tags
+    // sit between the label and the number.
+    'if(!wowPrice&&price){' +
+      'let bodyText=(document.body&&document.body.innerText)||"";' +
+      'let wowDiscountMatch=bodyText.match(/와우[^0-9\\n]{0,20}-\\s*([\\d,]+)\\s*원/);' +
+      'if(wowDiscountMatch){' +
+        'let discountAmount=parseInt(wowDiscountMatch[1].replace(/[^0-9]/g,""),10)||0;' +
+        'if(discountAmount>0&&discountAmount<price)wowPrice=price-discountAmount;' +
+      '}' +
     '}' +
     'let name=nameEl.content||document.title;' +
     'let imgEl=document.querySelector("meta[property=\'og:image\']");' +

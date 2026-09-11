@@ -767,6 +767,14 @@ exports.generateDeeplink = functions.https.onCall(async (request) => {
       // field name silently returned null on every single call, which
       // is why the CTA button was opening non-tracked URLs.
       shortUrl: typeof item.shortenUrl === "string" ? item.shortenUrl : null,
+      // landingUrl — also a link.coupang.com redirect (a "/re/AFFSDP" one),
+      // not a bypass of the affiliate hop the way its name suggests. Kept
+      // for reference: investigated as a possible fix for the CTA opening a
+      // login wall instead of the product, but confirmed live that the
+      // actual cause was the device's Coupang app being logged out — the
+      // exact same shortUrl went straight to the product, no login wall,
+      // once logged back in. Not currently used by the client.
+      landingUrl: typeof item.landingUrl === "string" ? item.landingUrl : null,
       name: typeof item.productName === "string" ? item.productName : null,
       price: typeof item.productPrice === "number" ? item.productPrice : null,
       image: typeof item.productImage === "string" ? item.productImage : null,
@@ -1882,13 +1890,36 @@ exports.submitScrapedProduct = onCall({ timeoutSeconds: 20, invoker: "public" },
   // the user sit through what used to be an instant "상품 추가".
   let price = details.price;
   let priceVerified = false;
+  // Filled in when the mismatch below looks like a WOW-membership gap
+  // rather than noise/staleness/fraud — see the branch below for why.
+  let inferredWowPrice = null;
   try {
     const verified = await fetchListingViaBrightData(productId, vendorItemId, 8000);
     if (verified && verified.price != null) {
-      const diffPct = Math.abs(details.price - verified.price) / verified.price;
+      const diff = verified.price - details.price;
+      const diffPct = Math.abs(diff) / verified.price;
       if (diffPct <= 0.05) {
         price = verified.price;
         priceVerified = true;
+      } else if (diff > 0) {
+        // Bright Data always fetches with no Coupang session at all (see
+        // fetchListingViaBrightData's file-header note), so whatever price
+        // it sees is necessarily the regular-member price — WOW membership
+        // is the only thing that changes what price the SAME listing shows.
+        // A client that reported a lower number than that is most likely a
+        // WOW member's own device seeing its own WOW-discounted price
+        // (confirmed live: a WOW-member test account's scrape didn't
+        // surface a "와우 -N원" label at all, because Coupang only shows
+        // that comparison copy to non-WOW members — this is how a WOW
+        // member's client can still contribute a wowPrice despite never
+        // seeing that label itself).
+        price = verified.price;
+        priceVerified = true;
+        inferredWowPrice = details.price;
+        console.log(
+          `[submitScrapedProduct] inferred WOW price from anonymous-vs-client price gap uid=${uid} ` +
+          `product=${productId} option=${optionId} regular(verified)=${verified.price} wow(client)=${details.price}`
+        );
       } else {
         console.warn(
           `[submitScrapedProduct] price mismatch (writing client value, unverified) uid=${uid} ` +
@@ -1902,7 +1933,13 @@ exports.submitScrapedProduct = onCall({ timeoutSeconds: 20, invoker: "public" },
 
   const name        = cleanName(details.name || verified.name);
   const image       = details.image ?? verified.image ?? null;
-  const wowPrice    = typeof details.wowPrice === "number" && details.wowPrice > 0 ? details.wowPrice : null;
+  // Client's own direct capture (a "와우...-N원" label it actually saw) wins
+  // when present — it's a more direct signal than the anonymous-corroboration
+  // inference above, which only fires as a fallback for WOW-member clients
+  // that never saw that label to begin with.
+  const wowPrice    = typeof details.wowPrice === "number" && details.wowPrice > 0
+    ? details.wowPrice
+    : inferredWowPrice;
   const isRocket    = details.isRocket === true;
   const deliveryType = typeof details.deliveryType === "string" ? details.deliveryType : "normal";
   const spec        = typeof details.spec === "string" && details.spec.trim() ? details.spec.trim() : null;
